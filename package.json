@@ -1,0 +1,59 @@
+{
+  "name": "kodo-local",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "Kodo local agent harness — development preview",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "kodo": "dist/cli/index.js"
+  },
+  "exports": "./dist/application/index.js",
+  "files": [
+    "dist",
+    "src",
+    "tests",
+    "docs",
+    "examples",
+    "scripts",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "vitest.config.mjs",
+    "eslint.config.mjs",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "npm run build && node dist/cli/index.js",
+    "check": "tsc --noEmit -p tsconfig.json && eslint src tests scripts",
+    "test": "npm run build && vitest run",
+    "test:integration": "vitest run tests/storage.test.ts tests/runtime.test.ts tests/provider.test.ts tests/responses.test.ts tests/anthropic.test.ts tests/tools.test.ts tests/collaboration.test.ts tests/lifecycle.test.ts tests/context.test.ts tests/recovery.test.ts tests/kernel-acceptance.test.ts",
+    "test:e2e": "npm run build && vitest run tests/cli.test.ts tests/model-protocol.test.ts tests/kernel-demo.test.ts",
+    "test:provider": "node scripts/verify-provider.mjs",
+    "test:protocols": "node scripts/verify-protocols.mjs",
+    "eval:tasks": "npm run build && node scripts/evaluate-tasks.mjs",
+    "demo:kernel": "npm run build && node scripts/demo-kernel.mjs --scripted",
+    "demo:kernel:local": "npm run build && node scripts/demo-kernel.mjs",
+    "demo:kernel:recovery": "npm run build && node scripts/demo-kernel-recovery.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "test:assessment": "node --test scripts/comparison/*.test.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "better-sqlite3": "13.0.3",
+    "openai": "7.39.0",
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.2",
+    "eslint": "10.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
+    "vitest": "5.0.5"
+  }
+}
