@@ -40,9 +40,18 @@ export function resolveAgentReference(store: Store, run: Run, reference: string)
   const [, id, version] = match;
   if (store.cards.rosterSnapshot(run.sessionId)) {
     const member = store.cards.rosterMember(run.sessionId, id!, version);
-    if (!member) throw new KodoError('CARD_NOT_FOUND', 'agent is not a member of this session snapshot');
-    if (member.availability !== 'available') throw new KodoError('CARD_UNAVAILABLE', member.reasons.join('; '));
-    return member.card;
+    if (member) {
+      if (member.availability !== 'available') throw new KodoError('CARD_UNAVAILABLE', member.reasons.join('; '));
+      return member.card;
+    }
+    // Published inline methods live in the session method catalog, not in the frozen roster.
+    const published = store.session(run.sessionId).methodCards?.find(item => item.id === id && (version === undefined || item.version === version));
+    if (published) {
+      const card = store.card(published.id, published.version);
+      if (card?.digest === published.digest) return card;
+      throw new KodoError('CARD_NOT_FOUND', 'the session method version is no longer registered');
+    }
+    throw new KodoError('CARD_NOT_FOUND', 'agent is not a member of this session snapshot');
   }
   if (!version) throw new KodoError('CARD_VERSION', 'an exact registered version is required without a session roster');
   return store.card(id!, version);

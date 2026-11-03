@@ -6,6 +6,7 @@ import { parseCard, serializeCard } from '../agents/card.js';
 import { safeOutput, writeAgentDraft } from '../agents/authoring.js';
 import { saveConfigurationDraft } from '../agents/configuration-save.js';
 import { builtinAgentCards } from '../agents/presets.js';
+import { methodCatalogDigest } from '../extensions/methods.js';
 import { CaseRunStore } from '../cases/store.js';
 import { exportPackage, inspectPackage } from '../packages/archive.js';
 import type { PackageBindings } from '../packages/runtime.js';
@@ -273,9 +274,9 @@ export async function agentCommand(context: AgentCommandContext, args: string[])
   if (['methods', 'install-method', 'disable-method'].includes(command)) {
     if (!context.runId) fail('Open an inline-method session first.');
     const run = context.app.store.run(context.runId!);
-    const roster = context.app.store.cards.rosterSnapshot(run.sessionId);
-    if (!roster) fail('No session method catalog.');
-    if (command === 'methods') return { title: 'Session methods', lines: [`Revision: ${roster!.digest}`, 'Install: /agents install-method FILE --digest REVISION', 'Disable future activation: /agents disable-method ID --digest REVISION', ...roster!.members.filter(member => member.card.execution?.modes.includes('inline')).map(member => `${identity(member.card)} · ${member.availability}`)] };
+    const session = context.app.store.session(run.sessionId);
+    const revision = methodCatalogDigest(session.methodCards);
+    if (command === 'methods') return { title: 'Session methods', lines: [`Revision: ${revision}`, 'Install: /agents install-method FILE --digest REVISION', 'Disable future activation: /agents disable-method ID --digest REVISION', ...(session.methodCards ?? []).map(ref => `${ref.id}@${ref.version}`)] };
     const options = parse(rest, ['digest']); exact(options, 1);
     const expectedDigest = option(options, 'digest');
     if (!expectedDigest) fail('Use /agents methods to read the current revision, then supply --digest.');

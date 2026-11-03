@@ -10,7 +10,7 @@ import type { Message, Provider, Run, ToolSpec } from './types.js';
 import { declareTasks } from './task-declare.js';
 import type { TaskDeclaration } from './task-declare.js';
 import { currentDependencies, dependenciesCurrent, descendants, moveTaskNode, predecessorsSatisfied, readTaskGraph, requireTaskNode, writeTaskNode } from './task-graph.js';
-import { activeMethod, methodContract, methodSkillId } from '../extensions/methods.js';
+import { activeMethod, methodContract, methodSkillId, sessionMethodCards } from '../extensions/methods.js';
 import { reportCompleteness, validateReport } from './report.js';
 import { validateSlots } from '../agents/contracts.js';
 import { assertFileScope, intersectFileScopes } from './scope.js';
@@ -113,18 +113,19 @@ export function executeMethodStage(store: Store, run: Run, callId: string, args:
   if (node.state === 'running' && (active?.nodeId === node.id || node.runId)) return { ...node, note: 'Already activated; current binding is unchanged.' };
   if (node.state !== 'pending' || !predecessorsSatisfied(graph, node)) throw new KodoError('TASK_NODE_BLOCKED', 'stage must be pending with completed prerequisites');
   if (active?.nodeId && active.nodeId !== node.id) throw new KodoError('METHOD_ACTIVE', 'finish or drop the current explicit stage before activating another');
-  let member = store.cards.rosterSnapshot(session.id)?.members.find(item => item.card.id === args.card || methodSkillId(item.card) === args.card);
+  let card = sessionMethodCards(store, session).find(item => item.card && (item.card.id === args.card || methodSkillId(item.card) === args.card))?.card;
+  let pinnedScope: Run['scope'];
   if (node.continuation?.mode === 'resume' && node.boundCard) {
     const pinned = store.card(node.boundCard.id, node.boundCard.version);
     if (pinned.digest !== node.boundCard.digest) throw new KodoError('METHOD_IDENTITY', 'the original stage card is unavailable');
     if (args.card !== pinned.id && args.card !== methodSkillId(pinned)) throw new KodoError('METHOD_IDENTITY', 'resume keeps the original card; use redo to select another method');
-    member = { card: pinned, availability: 'available', reasons: [], source: 'user', catalogPath: pinned.catalog?.path ?? 'methods/general', resolvedScope: node.boundScope };
+    card = pinned;
+    pinnedScope = node.boundScope;
   }
-  if (!member || member.availability !== 'available') throw new KodoError('METHOD_UNAVAILABLE', 'select an available exact card from the current roster');
-  const card = member.card;
+  if (!card) throw new KodoError('METHOD_UNAVAILABLE', 'select an available exact card from the current session methods');
   const requested = args.execution ?? node.needs?.execution ?? 'auto';
   const child = Boolean(requested === 'child' || requested === 'auto' && (card.model || card.members?.length || !card.execution?.modes.includes('inline')));
-  const contract = child ? { tools: [], skills: [], permissions: run.permissions ?? session.permissions, scope: intersectFileScopes(run.scope, member.resolvedScope ?? card.constraints?.scope) } : methodContract(run, session, member);
+  const contract = child ? { tools: [], skills: [], permissions: run.permissions ?? session.permissions, scope: intersectFileScopes(run.scope, pinnedScope ?? card.constraints?.scope) } : methodContract(run, session, card);
   if (!child && (!card.execution?.modes.includes('inline') || card.model || card.members?.length)) throw new KodoError('METHOD_INCOMPATIBLE', 'this card requires independent execution');
   if (active) store.event(run.id, 'method.ended', { ...active, reason: 'replaced', replacedBy: methodSkillId(card) });
   if (!child) store.event(run.id, 'method.loaded', { id: methodSkillId(card), card: { id: card.id, version: card.version, digest: card.digest }, callId, contract, nodeId: node.id, generation: node.generation });

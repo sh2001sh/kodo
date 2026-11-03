@@ -9,6 +9,7 @@ import { PackageRegistry } from '../packages/registry.js';
 import { normalizeFileScope } from '../runtime/scope.js';
 import { KodoError, terminal } from '../runtime/types.js';
 import type { Run, RuntimeEvent } from '../runtime/types.js';
+import { methodCatalogDigest } from '../extensions/methods.js';
 import { collaborationView } from './collaboration.js';
 import { PackagePanel } from './packages.js';
 import type { PackageOverview, PackagePanelOptions } from './packages.js';
@@ -190,7 +191,7 @@ export async function createLocalServer(app: Application, options: LocalServerOp
         const collaborationRoute = /^\/api\/runs\/([^/]+)\/collaboration$/.exec(route);
         if (collaborationRoute) { const value = run(collaborationRoute[1]!); json(res, 200, collaborationView(app, value.id)); return; }
         const methodsRoute = /^\/api\/runs\/([^/]+)\/methods$/.exec(route);
-        if (methodsRoute) { const value = run(methodsRoute[1]!, true); json(res, 200, { roster: app.store.cards.rosterSnapshot(value.sessionId) }); return; }
+        if (methodsRoute) { const value = run(methodsRoute[1]!, true); const session = app.store.session(value.sessionId); json(res, 200, { methods: session.methodCards ?? [], digest: methodCatalogDigest(session.methodCards) }); return; }
         const draftsRoute = /^\/api\/runs\/([^/]+)\/agent-drafts$/.exec(route);
         if (draftsRoute) { const value = run(draftsRoute[1]!); json(res, 200, { drafts: app.retention.list(value.sessionId) }); return; }
         const contextRoute = /^\/api\/runs\/([^/]+)\/context$/.exec(route);

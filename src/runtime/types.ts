@@ -88,6 +88,8 @@ export interface Session {
   methodUnloading?: boolean;
   methodTools?: string[];
   methodSkills?: string[];
+  /** Session-scoped inline method catalog; replaced the frozen roster as the method source. */
+  methodCards?: CardReference[];
   methodToolView?: 'stable' | 'active';
   id: string; workspace: string; permissions: Permission[]; budget: Budget;
   tokens: number; modelCalls: number; toolCalls: number; usageEstimated: boolean; createdAt: string;

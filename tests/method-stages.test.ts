@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { parseCard, serializeCard } from '../src/agents/card.js';
-import { activeMethod, methodSkillId } from '../src/extensions/methods.js';
+import { activeMethod, methodCatalogDigest, methodSkillId } from '../src/extensions/methods.js';
 import { readTaskGraph } from '../src/runtime/task-graph.js';
 import { unloadMethods } from '../src/runtime/method-context.js';
 import { agentCommand } from '../src/tui/agents.js';
@@ -24,7 +24,7 @@ function create(provider: Provider, view: 'stable' | 'active' = 'stable') {
   const app = new Application(path.join(root, 'state'), provider, undefined, { ...options, methodToolView: view }); apps.add(app);
   const method = card(); app.registerCard(method);
   const run = app.createRun({ workspace: root, objective: 'Check the report.', binding, permissions: ['read', 'write', 'exec'] });
-  app.updateSessionMethods(run.id, { expectedDigest: app.store.cards.rosterSnapshot(run.sessionId)!.digest, install: [method] });
+  app.updateSessionMethods(run.id, { expectedDigest: methodCatalogDigest(app.store.session(run.sessionId).methodCards), install: [method] });
   return { app, root, run, method };
 }
 const declare = task('declare', { tasks: [{ id: 'report', goal: 'Check the report.', needs: {} }] });
@@ -36,7 +36,7 @@ describe('method stages', () => {
     const installed = card({ id: 'test/installed' });
     const file = path.join(root, 'AGENT.md'); writeFileSync(file, serializeCard(installed));
     const context = { app, workspace: root, runId: run.id, registry: new PackageRegistry(path.join(root, 'packages')), startTask: async () => {}, wake: () => {} };
-    const initial = app.store.cards.rosterSnapshot(run.sessionId)!.digest;
+    const initial = methodCatalogDigest(app.store.session(run.sessionId).methodCards);
     await agentCommand(context, ['install-method', file, '--digest', initial]);
     expect((await agentCommand(context, ['methods'])).lines.join('\n')).toContain('test/installed@1.0.0');
     const server = await createLocalServer(app, { workspace: root, binding, permissions: ['read', 'write', 'exec'] });
@@ -47,13 +47,13 @@ describe('method stages', () => {
       const headers = { Cookie: cookie, Origin: server.origin, 'Content-Type': 'application/json', 'X-Kodo-CSRF': csrf, 'Idempotency-Key': 'methods-disable-fixture' };
       const listed = await fetch(`${server.origin}/api/runs/${run.id}/methods`, { headers });
       expect(listed.status).toBe(200);
-      const { roster } = await listed.json() as { roster: { digest: string } };
-      const body = JSON.stringify({ expectedDigest: roster.digest, disable: [installed.id] });
+      const { digest } = await listed.json() as { digest: string };
+      const body = JSON.stringify({ expectedDigest: digest, disable: [installed.id] });
       const revised = await fetch(`${server.origin}/api/runs/${run.id}/methods`, { method: 'POST', headers, body });
       expect(revised.status, await revised.clone().text()).toBe(202);
       const replayed = await fetch(`${server.origin}/api/runs/${run.id}/methods`, { method: 'POST', headers, body });
       expect(replayed.status).toBe(200);
-      expect(app.store.cards.rosterMember(run.sessionId, installed.id)?.availability).toBe('unavailable');
+      expect(app.store.session(run.sessionId).methodCards?.some(ref => ref.id === installed.id)).toBe(false);
     } finally { await server.close(); }
   });
 
@@ -78,7 +78,7 @@ describe('method stages', () => {
       const done = app.store.calls(run.id).filter(item => item.name === 'task').at(-1)!;
       return calls(app.store.readBlob(done.requestRef));
     }, answer()));
-    app.updateSessionMethods(run.id, { expectedDigest: app.store.cards.rosterSnapshot(run.sessionId)!.digest, install: [card({ id: 'test/reader', routing: { use_when: ['Read reports'], mode: 'read' }, tools: ['file.read'] })] });
+    app.updateSessionMethods(run.id, { expectedDigest: methodCatalogDigest(app.store.session(run.sessionId).methodCards), install: [card({ id: 'test/reader', routing: { use_when: ['Read reports'], mode: 'read' }, tools: ['file.read'] })] });
     const unsubscribe = app.store.subscribe(event => { if (event.type === 'method.loaded' && event.runId === run.id) app.coordinator.interrupt(run.id); });
     expect((await app.run(run.id)).status).toBe('interrupted'); unsubscribe();
     const resumed = await app.recover(run.id);
@@ -106,7 +106,7 @@ describe('method stages', () => {
         default: return answer('The child report was checked.');
       }
     } });
-    app.updateSessionMethods(run.id, { expectedDigest: app.store.cards.rosterSnapshot(run.sessionId)!.digest, install: [card({ id: 'test/reader', routing: { use_when: ['Read reports'], mode: 'read' }, tools: ['file.read'] })] });
+    app.updateSessionMethods(run.id, { expectedDigest: methodCatalogDigest(app.store.session(run.sessionId).methodCards), install: [card({ id: 'test/reader', routing: { use_when: ['Read reports'], mode: 'read' }, tools: ['file.read'] })] });
     const result = await app.run(run.id);
     expect(result.status, result.error).toBe('completed');
     expect(app.store.listRuns(run.sessionId).filter(owner => owner.parentId === run.id)).toHaveLength(1);
@@ -144,7 +144,7 @@ describe('method stages', () => {
         return task('drop', { reason: 'Required business input is unavailable.' });
       }, answer(), answer('The report stage was dropped because required input is missing.')));
     const required = card({ id: 'test/inputs', inputs: [{ name: 'budget', kind: 'text', required: true }] });
-    app.updateSessionMethods(run.id, { expectedDigest: app.store.cards.rosterSnapshot(run.sessionId)!.digest, install: [required] });
+    app.updateSessionMethods(run.id, { expectedDigest: methodCatalogDigest(app.store.session(run.sessionId).methodCards), install: [required] });
     const result = await app.run(run.id);
     expect(result.status, JSON.stringify(app.store.calls(run.id).filter(c => c.status !== 'succeeded').map(c => c.resultRef && app.store.readBlob(c.resultRef)))).toBe('completed');
     expect(app.store.events(run.id, { types: ['method.loaded'] })).toHaveLength(1);
@@ -167,10 +167,10 @@ describe('method stages', () => {
       signal.addEventListener('abort', () => reject(signal.reason), { once: true }); app.coordinator.interrupt(run.id);
     })));
     expect((await app.run(run.id)).status).toBe('interrupted');
-    const before = app.store.cards.rosterSnapshot(run.sessionId)!.digest;
+    const before = methodCatalogDigest(app.store.session(run.sessionId).methodCards);
     const revised = app.updateSessionMethods(run.id, { expectedDigest: before, install: [next] });
     expect(activeMethod(app.store, run.id)?.card.digest).toBe(first.digest);
-    expect(() => app.updateSessionMethods(run.id, { expectedDigest: before, disable: [first.id] })).toThrow('roster');
+    expect(() => app.updateSessionMethods(run.id, { expectedDigest: before, disable: [first.id] })).toThrow(/method catalog/);
     app.updateSessionMethods(run.id, { expectedDigest: revised.digest, disable: [first.id] });
     await app.shutdown(); apps.delete(app);
     const reopened = new Application(path.join(root, 'state'), scripted(calls(call('skill.list', {})), answer()), undefined, options); apps.add(reopened);
@@ -178,7 +178,9 @@ describe('method stages', () => {
     const recovered = await reopened.recover(run.id);
     expect(recovered.status).toBe('completed');
     const listed = reopened.store.calls(recovered.id).find(item => item.name === 'skill.list')!;
-    expect(reopened.store.readBlob(listed.resultRef!)).toMatchObject({ skills: [expect.objectContaining({ id: methodSkillId(first) })], unavailableMethods: [expect.objectContaining({ id: methodSkillId(next) })] });
+    const skills = reopened.store.readBlob<{ skills: { id: string }[]; unavailableMethods: unknown[] }>(listed.resultRef!);
+    expect(skills.skills.map(skill => skill.id)).toEqual([methodSkillId(first)]);
+    expect(skills.unavailableMethods).toEqual([]);
   });
 
   it('publishes reusable main-run observations even when exploration scheduling is disabled', async () => {

@@ -7,6 +7,7 @@ import type { Budget, CompletionValidator, Permission, Run } from '../runtime/ty
 import { interactive } from './interactive.js';
 import { terminalText } from './terminal.js';
 import type { ReadOnlyCommand } from '../tools/index.js';
+import { methodCatalogDigest } from '../extensions/methods.js';
 import { runWorkspace } from '../runtime/execution-workspace.js';
 import { parseAgentScope, parseAgentSlots } from './agent-input.js';
 import { reviewAgentDrafts } from './agent-review.js';
@@ -314,8 +315,8 @@ async function main(): Promise<void> {
     }
     if (command === 'methods') {
       const run = app.store.run(argument!);
-      const roster = app.store.cards.rosterSnapshot(run.sessionId);
-      if (!values.card && !values.disable) { console.log(JSON.stringify(roster, null, 2)); return; }
+      const session = app.store.session(run.sessionId);
+      if (!values.card && !values.disable) { console.log(JSON.stringify({ methods: session.methodCards ?? [], digest: methodCatalogDigest(session.methodCards) }, null, 2)); return; }
       if (!values.digest) throw new KodoError('ARGUMENTS', 'method publication requires the current --digest shown by kodo methods');
       const install = values.card ? [app.parseCard(readFileSync(path.resolve(values.card), 'utf8'))] : [];
       console.log(JSON.stringify(app.updateSessionMethods(run.id, { expectedDigest: values.digest, install, disable: values.disable })));

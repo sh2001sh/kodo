@@ -8,7 +8,7 @@ import { resolveModelLimits, validateModelBinding } from '../providers/model-lim
 import { discoverModelLimits } from '../providers/model-discovery.js';
 import { defaultCompactionPolicy, followUpContext, initialContext, updateTaskProgress, validateAssemblyPolicy, validateCompactionPolicy } from '../runtime/context.js';
 import { inspectContextReport } from '../runtime/context-inspection.js';
-import { intersectFileScopes, normalizeFileScope, resolveScopeVariables } from '../runtime/scope.js';
+import { normalizeFileScope, resolveScopeVariables } from '../runtime/scope.js';
 import { validateDeliverables } from '../runtime/deliverables.js';
 import { initialInstructions, instructionMessage, recordInstructions, runInstructionCapacity } from '../runtime/instruction-layer.js';
 import { defaultGlobalInstructions } from '../runtime/project-instructions.js';
@@ -24,7 +24,7 @@ import { Store, digest } from '../storage/index.js';
 import type { Page, PageOptions, SubscriberError } from '../storage/index.js';
 import { ModelProvider } from '../providers/index.js';
 import { connectMcp, skillTools } from '../extensions/index.js';
-import { withCardMethods } from '../extensions/methods.js';
+import { methodCatalogDigest, withCardMethods } from '../extensions/methods.js';
 import { roleAllows } from '../runtime/role-view.js';
 import type { McpConfig, McpConnection, Skill } from '../extensions/index.js';
 import { cardDirectoryTool, cardSearchTool, searchCards } from '../agents/discovery.js';
@@ -251,33 +251,34 @@ export class Application {
     const run = this.store.run(runId), session = this.store.session(run.sessionId);
     if (!session.inlineMethods || run.parentId) throw new KodoError('METHOD_CONFIG', 'session method installation requires an enabled main run');
     if (this.store.listRuns(session.id).filter(owner => !owner.parentId).some(owner => this.store.calls(owner.id).some(call => call.status === 'running'))) throw new KodoError('METHOD_BUSY', 'publish methods at a model/tool boundary; interrupt the main run before installing');
-    const before = this.store.cards.rosterSnapshot(session.id);
-    if (!before || before.digest !== change.expectedDigest) throw new KodoError('ROSTER_CHANGED', 'read the current roster digest before publication');
+    const before = session.methodCards ?? [];
+    const beforeDigest = methodCatalogDigest(before);
+    if (beforeDigest !== change.expectedDigest) throw new KodoError('ROSTER_CHANGED', 'read the current method catalog digest before publication');
     const cards = change.install ?? [];
-    if (!cards.length && !change.disable?.length) return { digest: before.digest };
+    if (!cards.length && !change.disable?.length) return { digest: beforeDigest };
     if (new Set(cards.map(card => card.id)).size !== cards.length) throw new KodoError('METHOD_CONFIG', 'install each card ID at most once');
-    if (change.disable?.some(id => !before.members.some(member => member.card.id === id) && !cards.some(card => card.id === id))) throw new KodoError('METHOD_CONFIG', 'cannot disable an unknown session method');
+    if (change.disable?.some(id => !before.some(ref => ref.id === id) && !cards.some(card => card.id === id))) throw new KodoError('METHOD_CONFIG', 'cannot disable an unknown session method');
     for (const card of cards) this.validateCardRegistration(card, cards);
     const tools = [...new Set([...(session.methodTools ?? run.card.tools), ...cards.flatMap(card => [...card.tools, ...(card.mcp ?? []).flatMap(server => server.tools.map(tool => `mcp.${server.server}.${tool}`))])])];
     const skills = [...new Set([...(session.methodSkills ?? run.card.skills ?? []), ...cards.flatMap(card => card.skills ?? [])])];
     const bindings = this.coordinator.tools.bindingSnapshot(tools, skills);
     for (const [name, version] of Object.entries(run.toolBindings ?? {})) if (bindings[name] !== undefined && bindings[name] !== version) throw new KodoError('CAPABILITY_CHANGED', 'existing resource bindings must remain pinned during method installation');
-    const members = before.members.filter(member => !cards.some(card => card.id === member.card.id)).map(member => change.disable?.includes(member.card.id) ? { ...member, availability: 'unavailable' as const, reasons: ['disabled by host for future activations'] } : member);
+    const next = before.filter(ref => !cards.some(card => card.id === ref.id) && !change.disable?.includes(ref.id));
     for (const card of cards) {
       if (!card.execution?.modes.includes('inline')) throw new KodoError('METHOD_CONFIG', 'session method installation requires inline compatibility');
-      members.push({ card: structuredClone(card), source: 'user', availability: change.disable?.includes(card.id) ? 'unavailable' : 'available', reasons: change.disable?.includes(card.id) ? ['disabled by host for future activations'] : [], catalogPath: card.catalog?.path ?? 'methods/general', resolvedScope: intersectFileScopes(run.scope, resolveScopeVariables(card.constraints?.scope, session.projectRoots)) });
+      if (!change.disable?.includes(card.id)) next.push({ id: card.id, version: card.version, digest: card.digest });
     }
-    const next = { ...before, members, digest: digest(JSON.stringify([before.digest, members])) };
+    const nextDigest = methodCatalogDigest(next);
     this.store.transaction(() => {
-      if (this.store.cards.rosterSnapshot(session.id)?.digest !== change.expectedDigest) throw new KodoError('ROSTER_CHANGED', 'roster changed during preparation');
+      const current = this.store.session(session.id);
+      if (methodCatalogDigest(current.methodCards) !== change.expectedDigest) throw new KodoError('ROSTER_CHANGED', 'method catalog changed during preparation');
       for (const card of cards) this.store.registerCard(card);
-      this.store.cards.freezeRoster(next, change.expectedDigest);
-      this.store.putSession({ ...this.store.session(session.id), methodTools: tools, methodSkills: skills });
+      this.store.putSession({ ...current, methodCards: next, methodTools: tools, methodSkills: skills });
       for (const owner of this.store.listRuns(session.id).filter(owner => !owner.parentId)) this.store.updateRun(owner.id, { toolBindings: { ...owner.toolBindings, ...bindings } });
-      this.store.putMessage({ id: `methods:${session.id}:${next.digest}`, sessionId: session.id, from: 'runtime', to: run.id, kind: 'notice', content: `Session method catalog revised to ${next.digest}. Use skill.list or agent.directory to discover the current versions. The active stage remains pinned to its original version.` });
-      this.store.event(run.id, 'agent.roster.revised', { previous: before, digest: next.digest, installed: cards.map(card => ({ id: card.id, version: card.version, digest: card.digest })), disabled: change.disable ?? [] });
+      this.store.putMessage({ id: `methods:${session.id}:${nextDigest}`, sessionId: session.id, from: 'runtime', to: run.id, kind: 'notice', content: `Session method catalog revised to ${nextDigest}. Use skill.list to discover the current versions. The active stage remains pinned to its original version.` });
+      this.store.event(run.id, 'agent.methods.revised', { previous: before, digest: nextDigest, installed: cards.map(card => ({ id: card.id, version: card.version, digest: card.digest })), disabled: change.disable ?? [] });
     });
-    return { digest: next.digest };
+    return { digest: nextDigest };
   }
   private validateCardRegistration(card: Card, projectCards: readonly Card[] = []): void {
     if (card.schemaVersion === 2 || card.execution) {
@@ -506,6 +507,12 @@ export class Application {
       const available = this.coordinator.tools.availableNames();
       const registered = this.store.registeredCards().filter(candidate => !this.agentFactors.A || (candidate.id !== card.id && !candidate.id.startsWith('builtin/general') && ![...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards].some(preset => preset.id === candidate.id && preset.digest === candidate.digest)));
       freezeRoster(this.store, session, card, { projectCards: assets.cards, userCards: registered, builtinCards: this.agentFactors.A ? this.builtinCards : [], skills: [...this.registeredSkillIds], tools: available, mcpServers: [...new Set(available.filter(name => name.startsWith('mcp.')).map(name => name.split('.')[1]!))], projectVariables: projectRoots, catalogDescriptions: assets.descriptions, scope });
+      if (this.inlineMethods) {
+        const methodRefs = (this.store.cards.rosterSnapshot(session.id)?.members ?? [])
+          .filter(member => member.card.execution?.modes.includes('inline'))
+          .map(member => ({ id: member.card.id, version: member.card.version, digest: member.card.digest }));
+        this.store.putSession({ ...this.store.session(session.id), methodCards: methodRefs });
+      }
       const prepared = prepareInstructionContext(this.store, run, session, { global: this.globalInstructions, memory: this.projectMemory });
       run.contextRef = this.store.blob(prepared.messages);
       run.instructions = prepared.instructions;
