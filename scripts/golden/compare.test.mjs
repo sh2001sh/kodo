@@ -427,3 +427,19 @@ test('scopeSummary restricts the comparison to the listed cases and rejects unkn
   assert.throws(() => scopeSummary(summary, []), /non-empty/u);
   assert.throws(() => scopeSummary({ ...summary, cells: summary.cells.slice(0, 2) }, ['case-a', 'case-b']), /planned cells/u);
 });
+
+test('a usage gap explained by recorded provider failures does not block the gate', () => {
+  const metricsGap = { usageComplete: false, unknownCalls: 1, agentCancelledUnknown: 0, providerFailures: 1, totalTokens: 100, cost: { basis: 'tokens', value: 100, certain: true }, wallMs: 1000 };
+  // One explained gap among complete cells: still eligible for the gate (the gap
+  // cell is left out of the means, the others keep the sample non-empty).
+  const baseline = evidence('/runs/baseline', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 }), makeReport({ repeat: 3, metrics: metricsGap })]);
+  const candidate = evidence('/runs/candidate', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 }), makeReport({ repeat: 3 })]);
+  const report = compareGolden(baseline, candidate);
+  assert.equal(report.gate.status, 'passed', report.gate.summary);
+  assert.deepEqual(report.completeness.usageIncomplete.explained.baseline, ['case-a:r3']);
+  assert.deepEqual(report.completeness.usageIncomplete.baseline, []);
+  // An unexplained gap still blocks.
+  const unexplained = evidence('/runs/baseline', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 }), makeReport({ repeat: 3, metrics: { usageComplete: false, unknownCalls: 2, providerFailures: 1 } })]);
+  const blocked = compareGolden(unexplained, candidate);
+  assert.equal(blocked.gate.status, 'inconclusive');
+});

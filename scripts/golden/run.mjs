@@ -184,7 +184,10 @@ function fatalReason(context, state) {
     if (report.relay?.rejected?.length) return `RELAY_REJECTED: ${report.relay.rejected.join(', ')}`;
     if (report.protected && report.protected.ok === false) return 'PROTECTED_VIOLATION';
     if (report.metrics?.usageComplete === false) {
-      const excused = Math.max(report.metrics.agentCancelledUnknown ?? 0, report.pollution?.excused?.length ?? 0);
+      // An unknown-usage call is explained when it corresponds to a recorded
+      // provider failure (a retried transport error leaves one such attempt).
+      // Only unresolved missing usage is an accounting hole worth stopping for.
+      const excused = Math.max(report.metrics.agentCancelledUnknown ?? 0, report.pollution?.excused?.length ?? 0) + (report.metrics.providerFailures ?? 0);
       if ((report.metrics.unknownCalls ?? 0) > excused) return 'USAGE_UNRECONCILED';
     }
   }

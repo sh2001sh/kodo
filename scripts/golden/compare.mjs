@@ -104,8 +104,13 @@ export function scopeSummary(summary, cases) {
   if (cells.length !== plan.length) {
     throw new GoldenError('COMPARE_SCOPE', `scoped run for cases ${cases.join(',')} has ${cells.length} cells but ${plan.length} planned cells; rerun the same matrix for the scope`);
   }
+  // A stop recorded for an out-of-scope case (for example the coding case whose
+  // baseline is not established) must not poison the scoped comparison.
+  const stopInScope = summary.stop && keep.has(String(summary.stop.at ?? '').split(':')[0]) ? summary.stop : null;
+  const scopedStop = summary.stop && !stopInScope ? summary.stop : null;
   return {
     ...summary,
+    ...(scopedStop ? { stop: null, ignoredStop: scopedStop } : {}),
     plan,
     cells,
     cases: Object.fromEntries(Object.entries(summary.cases).filter(([caseId]) => keep.has(caseId))),
@@ -163,6 +168,9 @@ function buildCell(raw, report) {
     humanPending: Boolean(report?.humanPending ?? raw.humanPending),
     polluted: Boolean(report?.polluted ?? raw.polluted),
     usageComplete: Boolean(metrics?.usageComplete ?? raw.usageComplete),
+    unknownCalls: isFiniteNumber(metrics?.unknownCalls) ? metrics.unknownCalls : null,
+    agentCancelledUnknown: isFiniteNumber(metrics?.agentCancelledUnknown) ? metrics.agentCancelledUnknown : null,
+    providerFailures: isFiniteNumber(metrics?.providerFailures) ? metrics.providerFailures : null,
     violations,
     violationsKnown: violations !== null,
     totalTokens: metrics?.totalTokens ?? (isFiniteNumber(raw.totalTokens) ? raw.totalTokens : null),
@@ -377,7 +385,20 @@ function assessCompleteness(baseline, candidate) {
   if (humanPending.baseline.length || humanPending.candidate.length) {
     reason('HUMAN_PENDING_CELLS', `baseline=${JSON.stringify(listOf(humanPending.baseline))} candidate=${JSON.stringify(listOf(humanPending.candidate))}; fill human.json and rescore before gating`);
   }
-  const usageIncomplete = { baseline: baseline.usageIncompleteCells, candidate: candidate.usageIncompleteCells };
+  // A cell whose only missing usage is a recorded provider failure attempt is
+  // explained; it stays out of the cost means but does not block the gate.
+  const explainedUsage = side => side.cells
+    .filter(cell => {
+      if (cell.usageComplete) return false;
+      const excused = (cell.agentCancelledUnknown ?? 0) + (cell.providerFailures ?? 0);
+      return excused > 0 && (cell.unknownCalls ?? 0) <= excused;
+    })
+    .map(cell => cell.key);
+  const usageIncomplete = {
+    baseline: baseline.usageIncompleteCells.filter(key => !explainedUsage(baseline).includes(key)),
+    candidate: candidate.usageIncompleteCells.filter(key => !explainedUsage(candidate).includes(key)),
+    explained: { baseline: explainedUsage(baseline), candidate: explainedUsage(candidate) },
+  };
   if (usageIncomplete.baseline.length || usageIncomplete.candidate.length) {
     reason('USAGE_INCOMPLETE_CELLS', `baseline=${JSON.stringify(listOf(usageIncomplete.baseline))} candidate=${JSON.stringify(listOf(usageIncomplete.candidate))}; token/cost means have missing samples`);
   }
