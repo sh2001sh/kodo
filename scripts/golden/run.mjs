@@ -18,7 +18,7 @@
 //   node scripts/golden/run.mjs --dry
 //   node scripts/golden/run.mjs --run --provider-config test_api.json --provider codego1 \
 //     --model deepseek-v4.1-flash --repeat 3 --concurrency 4 --out .kodo/golden/<stamp>
-//   node scripts/golden/run.mjs --rescore .kodo/golden/<stamp>
+//   node scripts/golden/run.mjs --rescore .kodo/golden/<stamp> [--rerun-commands]
 //
 // Only `--run` spends money; `--dry` never opens a network connection.
 
@@ -457,6 +457,9 @@ async function runCell(entry, context) {
   const reply = finalText(app.store, app.store.run(runId));
   const eventCounts = collectEventCounts(app.store, sessionId);
   const reads = collectReads(app.store, sessionId);
+  const runShape = {
+    children: app.store.listRuns(sessionId).filter(run => run.parentId).map(run => ({ id: run.id, status: run.status })),
+  };
   await app.shutdown().catch(error => { runError ??= `shutdown: ${errorText(error)}`; });
   if (relay) await relay.close();
   const relayStats = relay
@@ -493,6 +496,7 @@ async function runCell(entry, context) {
     human,
     protectedResults,
     commandResults,
+    runShape,
     readFile: relativePath => readWorkspaceText(workspace, relativePath),
     listFiles: () => listWorkspaceFiles(workspace),
     statFile: relativePath => statWorkspaceFile(workspace, relativePath),
@@ -544,7 +548,7 @@ async function runCell(entry, context) {
     passed: score.passed,
     humanPending: score.humanPending,
     // Evidence needed to rescore later (after human.json is filled in) without rerunning.
-    scoring: { finalText: reply, protectedResults, commandResults },
+    scoring: { finalText: reply, protectedResults, commandResults, runShape },
   };
   report.smoke = { ok: !smokeFailure(caseData, report), failure: smokeFailure(caseData, report) };
   await writeJson(path.join(directory, 'report.json'), report, context.credentials?.key);
@@ -621,7 +625,7 @@ async function runMatrix(context) {
 // Rescore: recompute scores and summary from stored evidence after human.json.
 // ---------------------------------------------------------------------------
 
-async function rescore(outRoot) {
+async function rescore(outRoot, { rerunCommands = false } = {}) {
   const registration = readJsonFile(path.join(outRoot, 'registration.json'), 'registration.json');
   const storedCases = registration?.registration?.cases;
   if (!Array.isArray(storedCases)) throw new GoldenError('RESCORE', `${outRoot}/registration.json has no registration.cases list`);
@@ -643,6 +647,15 @@ async function rescore(outRoot) {
       if (!loaded) throw new GoldenError('RESCORE', `report ${reportFile} refers to unknown case ${report.caseId}`);
       const workspace = path.resolve(outRoot, report.workspace ?? path.join('runs', report.caseId, runDirectory, 'workspace'));
       const human = readHumanVerdicts(path.dirname(reportFile));
+      if (rerunCommands) {
+        // A checker fix must be applied to the stored workspace: re-stage the current
+        // verify files and re-execute command checks; other evidence stays as recorded.
+        applyGrading({ caseData: loaded.caseData, caseDir: loaded.caseDir, caseWorkspace: loaded.workspaceDir, verifyDir: loaded.verifyDir, workspace });
+        const commandResults = {};
+        for (const requirement of collectRequirements(loaded.rubric).commands) commandResults[requirement.id] = executeCommand(requirement.params, workspace, loaded.caseDir);
+        report.scoring = { ...report.scoring, commandResults };
+        report.commandsRerunAt = new Date().toISOString();
+      }
       const score = evaluateRubric({
         rubric: loaded.rubric,
         caseData: loaded.caseData,
@@ -650,6 +663,7 @@ async function rescore(outRoot) {
         human,
         protectedResults: report.scoring?.protectedResults ?? {},
         commandResults: report.scoring?.commandResults ?? {},
+        runShape: report.scoring?.runShape ?? null,
         readFile: relativePath => readWorkspaceText(workspace, relativePath),
         listFiles: () => listWorkspaceFiles(workspace),
         statFile: relativePath => statWorkspaceFile(workspace, relativePath),
@@ -713,7 +727,7 @@ const USAGE = `Kodo golden evaluation runner
       [--prices input,cacheRead,output[,cacheWrite]] [--seed N] [--out DIR] [--allow-unbuilt-dist]
       Paid matrix: the real key only reaches the per-cell loopback relay.
 
-  node scripts/golden/run.mjs --rescore .kodo/golden/<stamp>
+  node scripts/golden/run.mjs --rescore .kodo/golden/<stamp> [--rerun-commands]
       Recompute scores and summary from stored evidence after editing
       runs/<case-id>/r<n>/human.json.
 
@@ -747,7 +761,7 @@ async function main() {
     if (!value) throw new GoldenError('CLI', '--rescore requires an output directory');
     const outRoot = path.resolve(repoRoot, value);
     if (!existsSync(path.join(outRoot, 'registration.json'))) throw new GoldenError('RESCORE', `${outRoot} has no registration.json`);
-    await rescore(outRoot);
+    await rescore(outRoot, { rerunCommands: argv.includes('--rerun-commands') });
     return;
   }
   const cli = parseArgs(normalizeArgv(argv), OPTIONS);
