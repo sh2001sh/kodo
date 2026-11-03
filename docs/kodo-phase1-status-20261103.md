@@ -10,8 +10,8 @@
 | 1a | 任务图与 lean-team 调度删除 + 两个内核修复 | **已完成并合并** | [批次 1a 记录](kodo-phase1-batch1a-20261103.md)；merge `0032837`；主仓库全量测试 2403 passed / 14 skipped / 0 failed |
 | 1b | 隔离检出与集成删除（`execution-*`，约 1,050 行源码） | **已完成并合并** | [批次 1b 记录](kodo-phase1-batch1b-20261103.md)；merge `03edea1`；两次候选矩阵 24/27、21/27（基线 22/27），无新增违规 |
 | 1c | 名册、路由、留存、派生、预设与角色卡删除 | **已完成并合并** | [批次 1c 记录](kodo-phase1-batch1c-20261103.md)；merge `0e50fbd`；矩阵 21/27，report-01 的掉格在 1b 代码上同时段复现（归因后不计），token/耗时匹配格中位数 0.88 / 0.96 |
-| 1d | 协作工具精简（spawn/wait/inspect/cancel/ask_user 保留，fork 只追加），todo 改为纯清单 | **实施中**（worktree `phase1/batch1d`，S1–S4 已提交，门槛评测进行中） | [1d 删除地图](kodo-phase1-batch1d-map-20261103.md) |
-| 1e | 工具档位 / A–E 因素 / 任务协议收敛为一套；P1–P4 并入上下文存储加载策略 | 待开始（地图已就绪） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
+| 1d | 协作工具精简（spawn/wait/inspect/cancel/ask_user 保留，fork 只追加），todo 改为纯清单 | **已完成并合并** | [批次 1d 记录](kodo-phase1-batch1d-20261104.md)；merge `1eb0e45`；对同时段 1c 对照：无新增违规，token/耗时中位数 1.00/1.09，data-03 扩样 5/12 对 8/12（p≈0.4） |
+| 1e | 工具档位 / A–E 因素 / 任务协议收敛为一套；方法阶段 P1–P4 删除 | **实施中**（worktree `phase1/batch1e`；默认请求逐字节快照 `tests/default-request-invariants.test.ts` 已提交） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
 | 1f | 提示词审计 + 默认身份改为通用工作助手 | 待开始（地图已就绪） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
 
 ## 阶段 1 门槛口径（1a 之后修正）
@@ -24,7 +24,7 @@ A 相对基线的 +38% 与 B 的 −2.6% 差 0.89σ）。因此后续批次的�
 2. **合格数不得低于基线**（逐样例与总体，允许相同）。
 3. **无新增规则违规**（`(cell, rule)` 实例）。
 4. **匹配格 token 比值中位数 ≤ 1.10**，均值同时报告并标注方差；耗时同理。
-5. 单格翻转必须复测；同代码重跑也会翻转的不计为批次回归。`compare.mjs --recheck <dir>` 合并复测判定；
+5. 单格翻转必须复测；模型服务输出会随时间漂移（1c 归因），合格数差距大时改用**同时段上一批代码**的对照矩阵（1d 起），必要时对单个样例扩样。同代码重跑也会翻转的不计为批次回归。`compare.mjs --recheck <dir>` 合并复测判定；
    必要时用上一批代码在同一时段重跑做归因（1c 的 report-01 即如此）。
 8. 子运行样例 `sub-01-parallel-vendor-review`（1c 期间新增）每批一起跑：它是唯一会派生子运行的样例，
    `run-shape` 要求至少 4 个完成的子运行；基线来自 1a 之前的代码（`.kodo/golden/sub01-baseline-pre1a-20261103/`，2/3）。
@@ -34,8 +34,8 @@ A 相对基线的 +38% 与 B 的 −2.6% 差 0.89σ）。因此后续批次的�
 
 ## 当前工作区状态
 
-- main：1c 已合并（`0e50fbd`），之后只有评测工具与文档提交。
-- worktree：`.kodo/tmp/p1d-worktree`（branch `phase1/batch1d`，1d 实施中）；`p1a`/`p1b`/`p1c` 三个已合并分支的 worktree 可清理；
+- main：1d 已合并（`1eb0e45`）。
+- worktree：`.kodo/tmp/p1e-worktree`（branch `phase1/batch1e`，1e 实施中）；`p1a`–`p1d` 四个已合并分支的 worktree 可清理；
   `.kodo/tmp/pre1a-worktree`（`e839a68`，只用于 sub-01 基线）。
 - 评测证据：`baseline-20261103`、`phase1a-*`、`phase1b-*`、`phase1c-*`（含两次 report-01 复测）、`phase1b-attrib-report01-*`（1b 代码归因）、
   `sub01-baseline-pre1a-*`。
