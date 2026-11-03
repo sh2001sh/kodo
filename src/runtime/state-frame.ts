@@ -13,7 +13,6 @@ export const stateFrameCalls = 5;
 const unsettledOrder: Call['status'][] = ['unknown', 'running', 'planned', 'failed'];
 // Failed calls are settled outcomes, already delivered as tool results. Keep
 // their audit/history records without repeatedly labelling them pending work.
-const leanPendingOrder: Call['status'][] = ['unknown', 'running', 'planned'];
 const deliveryCache = new WeakMap<Store, Map<string, { key: string; observedAt: string; items: { deliverable: string; status: string }[] }>>();
 
 export interface ContextPressure { inputTokens: number; triggerTokens: number; hardCapacityTokens: number }
@@ -42,35 +41,6 @@ export function withEnvironment(context: Message[], block: Message): Message[] {
   let index = 0;
   while (index < context.length && (context[index]!.role === 'system' || ['agents', 'project-instructions'].includes(attachmentKind(context[index]!) ?? ''))) index++;
   return [...context.slice(0, index), block, ...context.slice(index)];
-}
-
-/**
- * Lean views send the state frame only while it carries dynamic work: active
- * children, waits, unsettled calls, pending messages, context pressure or a
- * nearly exhausted time budget. The objective is already in the task message.
- */
-export function leanStateFrame(host: StepHost, run: Run, session: Session, pressure?: ContextPressure): Message | undefined {
-  const { store } = host;
-  const unsettled = store.countCalls(run.id, { kind: 'tool', status: leanPendingOrder });
-  const children = store.listRuns(session.id).filter(child => child.parentId === run.id && !terminal(child.status));
-  const waits = store.waits(session.id, true).filter(wait => wait.runId === run.id);
-  const limit = session.budget.maxDurationMs;
-  const used = (session.activeMs ?? 0) + (session.activeSince === undefined ? 0 : Math.max(0, Date.now() - session.activeSince));
-  const remainingMs = limit === null ? null : Math.max(0, limit - used);
-  const lowTime = remainingMs !== null && limit !== null && remainingMs < limit * 0.25;
-  const overPressure = Boolean(pressure && pressure.inputTokens > pressure.triggerTokens);
-  if (!unsettled && !children.length && !waits.length && !store.countInbox(run.id) && !lowTime && !overPressure) return undefined;
-  const calls = store.queryCalls(run.id, { kind: 'tool', status: leanPendingOrder, limit: stateFrameCalls, statusOrder: leanPendingOrder });
-  return attachment('state', JSON.stringify({
-    step: run.step,
-    ...(calls.length ? { calls: calls.map(call => ({ id: call.id, name: call.name, status: call.status })), ...(unsettled > stateFrameCalls ? { moreCalls: unsettled - stateFrameCalls } : {}) } : {}),
-    ...(children.length ? { children: children.slice(0, 8).map(child => ({ id: child.id, status: child.status })) } : {}),
-    ...(waits.length ? { waits: waits.slice(0, 4).map(wait => ({ id: wait.id, mode: wait.mode })) } : {}),
-    ...(store.countInbox(run.id) ? { pendingMessages: store.countInbox(run.id) } : {}),
-    ...(lowTime ? { remainingMinutes: Math.round(remainingMs! / 60_000) } : {}),
-    ...(overPressure ? { context: { ...pressure, unit: 'estimated tokens' } } : {}),
-    note: 'Runtime status. Unknown writes are never repeated; the host verifies them.',
-  }));
 }
 
 /** L7: authoritative runtime status sent last on every request and never stored in history. */

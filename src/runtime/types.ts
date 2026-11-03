@@ -97,12 +97,6 @@ export interface Session {
   /** Freeze the approved child-model range and its short user descriptions for this session. */
   modelBindings?: Record<string, ModelBinding>;
   modelBindingDescriptions?: Record<string, string>;
-  /** Independent model-visible delegation experiments; omitted retains the host's default selection. */
-  agentFactors?: import('./agent-factors.js').AgentFactors;
-  /** Frozen task semantics: absent/1 is legacy, 2 adds parallel dependencies, 3 adds atomic graph updates. */
-  taskProtocol?: 1 | 2 | 3;
-  /** Frozen model-visible tool profile; absent preserves the original card view. */
-  toolProfile?: 'compact-v1' | 'compact-v2' | 'full' | 'lean-solo';
 }
 export interface Run {
   id: string; sessionId: string; objective: string; status: RunStatus; card: Card;

@@ -7,7 +7,7 @@ import { createLocalServer } from '../web/server.js';
 import { PackageRegistry } from '../packages/registry.js';
 import { verifyToolExamples } from '../packages/runtime.js';
 import { cliDataDirectory } from './packages.js';
-import { cliAgentPolicy, cliAssemblyPolicy, cliSandboxPolicy, cliToolPolicy, cliCompactionPolicy, defaultCompactionPolicy, readHostState, writeHostState } from './host-state.js';
+import { cliAssemblyPolicy, cliSandboxPolicy, cliToolPolicy, cliCompactionPolicy, defaultCompactionPolicy, readHostState, writeHostState } from './host-state.js';
 import type { CliHostSession } from './host-state.js';
 import { configuredAgentModels, hasModelCredentials, resolveConfiguredBinding } from './config-binding.js';
 import { readUserConfig } from './user-config.js';
@@ -18,7 +18,6 @@ const help = `kodo serve [--workspace PATH] [--port 0] [--data-dir PATH] [--json
   --shell-program ABSOLUTE_BASH_PATH --lsp-config JSON_FILE --webfetch [--web-hosts HOST,HOST]
   --compaction off|mask|summary|hybrid [--compaction-trigger-ratio 0.5-0.95 | --compaction-work-tokens N] (default: conditional summary at 0.8 of the effective window)
   --assembly deterministic [--assembly-work-tokens N] [--assembly-evidence-tokens N] (experimental, no extra model call)
-  --agent-factors A,B,C[,D,E]|none
   --packages (read-only capability-package panel: diagnostics, default-version and run-version views)
   --package-actions (requires --packages or --package; enables sandboxed dependency preparation and default-version switching)
   --npm-cli ABSOLUTE_PATH (requires --package-actions; trusted npm CLI module used for dependency preparation)
@@ -49,7 +48,6 @@ export async function serveCommand(args: string[]): Promise<void> {
       'sandbox-resources': { type: 'string' }, 'shell-program': { type: 'string' }, 'lsp-config': { type: 'string' }, webfetch: { type: 'boolean' }, 'web-hosts': { type: 'string' },
       compaction: { type: 'string' }, 'compaction-work-tokens': { type: 'string' }, 'compaction-trigger-ratio': { type: 'string' },
       assembly: { type: 'string' }, 'assembly-work-tokens': { type: 'string' }, 'assembly-evidence-tokens': { type: 'string' },
-      'agent-factors': { type: 'string' },
       packages: { type: 'boolean' }, 'package-actions': { type: 'boolean' }, 'npm-cli': { type: 'string' }, package: { type: 'string' },
       'max-tokens': { type: 'string' }, 'max-model-calls': { type: 'string' }, 'max-tool-calls': { type: 'string' }, 'max-context-tokens': { type: 'string' }, 'max-output-tokens': { type: 'string' },
       'max-active-children': { type: 'string' }, 'max-children': { type: 'string' }, 'max-concurrent-models': { type: 'string' },
@@ -74,7 +72,7 @@ export async function serveCommand(args: string[]): Promise<void> {
   const port = values.port === undefined ? 0 : Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535 || (values.port !== undefined && !/^\d+$/.test(values.port))) throw new KodoError('WEB_PORT', 'port must be an integer from 0 to 65535');
   const directory = cliDataDirectory(values['data-dir']); const workspace = path.resolve(values.workspace ?? process.cwd());
-  const sandbox = cliSandboxPolicy(values); const tools = cliToolPolicy(values); const compaction = cliCompactionPolicy(values) ?? { ...defaultCompactionPolicy }; const assembly = cliAssemblyPolicy(values); const agents = cliAgentPolicy(values);
+  const sandbox = cliSandboxPolicy(values); const tools = cliToolPolicy(values); const compaction = cliCompactionPolicy(values) ?? { ...defaultCompactionPolicy }; const assembly = cliAssemblyPolicy(values);
   const state = readHostState(directory); const permissions: Permission[] = ['read', ...(values['allow-write'] ? ['write' as const] : []), ...(values['allow-exec'] ? ['exec' as const] : [])];
   const budget: Partial<Budget> = {};
   const budgetFlags = { 'max-tokens': 'maxTokens', 'max-model-calls': 'maxModelCalls', 'max-tool-calls': 'maxToolCalls', 'max-context-tokens': 'maxContextTokens', 'max-output-tokens': 'maxOutputTokens', 'max-active-children': 'maxActiveChildren', 'max-children': 'maxChildren', 'max-concurrent-models': 'maxConcurrentModels' } as const;
@@ -84,7 +82,7 @@ export async function serveCommand(args: string[]): Promise<void> {
     if (!Number.isSafeInteger(value) || value < 1) throw new KodoError('ARGUMENTS', `${flag} must be a positive safe integer`);
     budget[field] = value;
   }
-  const app = new Application(directory, undefined, undefined, { ...tools, ...agents, ...configuredAgentModels(config), ...(sandbox ? { sandbox } : {}), compaction, ...(assembly ? { assembly } : {}) });
+  const app = new Application(directory, undefined, undefined, { ...tools, ...configuredAgentModels(config), ...(sandbox ? { sandbox } : {}), compaction, ...(assembly ? { assembly } : {}) });
   const controller = new AbortController(); const interrupt = (): void => controller.abort();
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   let server: Awaited<ReturnType<typeof createLocalServer>> | undefined;
@@ -118,13 +116,12 @@ export async function serveCommand(args: string[]): Promise<void> {
     // A session is visible only with the same trusted host capabilities and the same (or absent) package identity.
     const matching = (item: CliHostSession): boolean => JSON.stringify(item.package ?? null) === JSON.stringify(hostPackage ?? null)
       && JSON.stringify(item.sandbox) === JSON.stringify(sandbox) && JSON.stringify(item.tools) === JSON.stringify(tools)
-      && JSON.stringify(item.agents) === JSON.stringify(agents)
       && JSON.stringify(item.compaction) === JSON.stringify(compaction) && JSON.stringify(item.assembly) === JSON.stringify(assembly);
     const sessionIds = state.filter(matching).map(item => item.sessionId);
     const persist = (sessionId: string): void => {
       let item = state.find(entry => entry.sessionId === sessionId);
       if (item && !matching(item)) throw new KodoError('CAPABILITY_CHANGED', 'this session requires its original trusted host configuration');
-      if (!item) { item = { sessionId, runIds: [], questionIds: [], ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(tools ? { tools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(hostPackage ? { package: hostPackage } : {}) }; state.push(item); }
+      if (!item) { item = { sessionId, runIds: [], questionIds: [], ...(sandbox ? { sandbox } : {}), ...(tools ? { tools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(hostPackage ? { package: hostPackage } : {}) }; state.push(item); }
       item.runIds = app.store.listRuns(sessionId).map(run => run.id);
       item.questionIds = app.coordinator.mailbox.userQuestions(sessionId).map(question => question.id);
       writeHostState(directory, state);

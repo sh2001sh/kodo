@@ -19,6 +19,13 @@ export function isLegacyLeanSession(session: Session): boolean {
   return legacy.toolProfile === LEGACY_PROFILE || legacy.maxTaskNodes !== undefined;
 }
 
+/** Per-session tool profile, task protocol and A–E factor fields predate the single default configuration. */
+const LEGACY_CONFIGURATION_FIELDS = ['toolProfile', 'taskProtocol', 'agentFactors'] as const;
+export function isLegacyConfigurationSession(session: Session): boolean {
+  const legacy = session as unknown as Record<string, unknown>;
+  return LEGACY_CONFIGURATION_FIELDS.some(field => legacy[field] !== undefined);
+}
+
 /**
  * Runs and session events written by the deleted isolated-checkout subsystem.
  * This build can no longer create these markers, so one scan per session is
@@ -141,7 +148,8 @@ export function assertSessionCompatible(store: Store, session: Session): void {
   const roster = isLegacyRosterSession(store, session.id);
   const collaboration = isLegacyCollaborationSession(store, session.id);
   const methods = isLegacyMethodSession(store, session);
-  if (!execution && !lean && !roster && !collaboration && !methods) return;
+  const configuration = isLegacyConfigurationSession(session);
+  if (!execution && !lean && !roster && !collaboration && !methods && !configuration) return;
   const reason = execution
     ? 'This session uses the deleted isolated-checkout execution subsystem and is not compatible with this version.'
     : lean
@@ -150,6 +158,8 @@ export function assertSessionCompatible(store: Store, session: Session): void {
         ? 'This session was created by the deleted agent-roster subsystem (roster snapshots, derived agents or retention drafts) and is not compatible with this version.'
         : collaboration
           ? 'This session used deleted collaboration tools (explore, exploration plans, followup tasks or todo dispatch) and is not compatible with this version.'
-          : 'This session used deleted inline-method stages (card methods, task stages or method unloading) and is not compatible with this version.';
+          : methods
+            ? 'This session used deleted inline-method stages (card methods, task stages or method unloading) and is not compatible with this version.'
+            : 'This session was created with a per-session tool profile, task protocol or agent factors, which the single default configuration replaced; it is not compatible with this version.';
   throw new KodoError('SESSION_INCOMPATIBLE', `${reason} The product has not shipped; start a new task (use \`kodo inspect\` if the old evidence must be kept).`);
 }

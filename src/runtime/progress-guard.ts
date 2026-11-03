@@ -1,5 +1,4 @@
 import type { Store } from '../storage/index.js';
-import { collaborationTool } from '../messaging/index.js';
 import { scriptRead, scriptReadRequest } from './script-read.js';
 import type { Call } from './types.js';
 
@@ -36,8 +35,6 @@ export function repeatedReads(store: Store, runId: string, newCallIds: ReadonlyS
   return [...flagged];
 }
 
-/** Successful read/list/search calls a writable main run may make before its first action. */
-export const writeNudgeReadCalls = 30;
 /** Protocol 3 checks a recent exploration window rather than the run's entire history. */
 export const investigationNudgeReadCalls = 8;
 const investigationTools = new Set(['file.read', 'file.list', 'file.search']);
@@ -51,26 +48,19 @@ const investigationTools = new Set(['file.read', 'file.list', 'file.search']);
 export function writeNudge(store: Store, runId: string, writable: boolean): { text: string; readCalls: number } | undefined {
   const run = store.run(runId);
   if (run.parentId || !writable || store.hasEvent(runId, { types: ['progress.write_nudged'] })) return undefined;
-  const recentWindow = store.session(run.sessionId).taskProtocol === 3;
-  if (recentWindow && store.listRuns(run.sessionId).some(child => child.parentId === runId)) return undefined;
+  if (store.listRuns(run.sessionId).some(child => child.parentId === runId)) return undefined;
   let readCalls = 0;
   for (const call of store.calls(runId)) {
     if (call.kind !== 'tool') continue;
     // Inline read scripts (`node -e "fs.readFileSync(...)"`) are investigation, not an action.
     const scripted = scriptReadRequest(store, call) !== undefined;
-    if (recentWindow) {
-      // Failed reads, unknown commands, edits and management interrupt the window.
-      // A command's request alone cannot prove it completed a useful read.
-      const successfulRead = call.status === 'succeeded' && (scripted ? scriptRead(store, call) !== undefined : investigationTools.has(call.name));
-      readCalls = successfulRead ? readCalls + 1 : 0;
-      continue;
-    }
-    if (call.effect === 'write' && !scripted && !collaborationTool(call.name)) return undefined;
-    if (call.status === 'succeeded' && (scripted || investigationTools.has(call.name))) readCalls++;
+    // Failed reads, unknown commands, edits and management interrupt the window.
+    // A command's request alone cannot prove it completed a useful read.
+    const successfulRead = call.status === 'succeeded' && (scripted ? scriptRead(store, call) !== undefined : investigationTools.has(call.name));
+    readCalls = successfulRead ? readCalls + 1 : 0;
   }
-  if (readCalls < (recentWindow ? investigationNudgeReadCalls : writeNudgeReadCalls)) return undefined;
-  if (recentWindow) return { readCalls, text: `Runtime progress check: the last ${readCalls} tool calls continued project investigation. Reuse the evidence already collected. If it answers an analysis-only request, deliver the analysis; otherwise continue reading only to resolve a concrete missing fact. For implementation work, make the smallest useful edit once its entry point is known, or delegate an independent bounded outcome with the known paths and findings. Do not finish designing every module before starting independent work. This is advisory: further investigation may be necessary, and neither edits nor delegation are required for an analysis task. It does not change permissions or scope.` };
-  return { readCalls, text: `Runtime progress check: this run has made ${readCalls} read/list/search calls and no edit or command yet. Earlier reads remain valid evidence even when they are no longer in context. Settle the design now and start saving edits incrementally with file.patch or file.apply_patch, then use the advertised checks; read further only for a specific edit you are about to make. This is execution feedback, not permission to widen access.` };
+  if (readCalls < investigationNudgeReadCalls) return undefined;
+  return { readCalls, text: `Runtime progress check: the last ${readCalls} tool calls continued project investigation. Reuse the evidence already collected. If it answers an analysis-only request, deliver the analysis; otherwise continue reading only to resolve a concrete missing fact. For implementation work, make the smallest useful edit once its entry point is known, or delegate an independent bounded outcome with the known paths and findings. Do not finish designing every module before starting independent work. This is advisory: further investigation may be necessary, and neither edits nor delegation are required for an analysis task. It does not change permissions or scope.` };
 }
 
 export function rereadNotice(paths: readonly string[]): string {

@@ -17,8 +17,6 @@ export interface ToolResultSource {
   archivedRef: string;
   offsetOf(message: Message): number;
   call(message: ToolMessage): Call | undefined;
-  /** Frozen session tool profile; read pointers render for its model view. */
-  profile?: string;
 }
 
 export function excerpt(content: string, maxChars: number): string {
@@ -41,7 +39,7 @@ function toolName(source: ToolResultSource, group: Message[], message: ToolMessa
  */
 export function pruneToolMessage(message: Message, source: ToolResultSource): ToolMessage | undefined {
   if (message.role !== 'tool' || message.images?.length || message.content.length <= pruneThresholdChars) return undefined;
-  const read = JSON.stringify(historyReadPointer(source.profile, { ref: source.archivedRef, offset: source.offsetOf(message), limit: 1 }));
+  const read = JSON.stringify(historyReadPointer({ ref: source.archivedRef, offset: source.offsetOf(message), limit: 1 }));
   const content = `${message.content.slice(0, pruneHeadChars)}\n${prunedMarker} ${message.content.length - pruneHeadChars - pruneTailChars} characters omitted from model input, not deleted; full result: ${read}\n${message.content.slice(-pruneTailChars)}`;
   return { role: 'tool', tool_call_id: message.tool_call_id, content };
 }
@@ -64,6 +62,6 @@ export function maskToolMessage(message: Message, group: Message[], source: Tool
   } catch { /* Full text remains in the archive. */ }
   // A short head/tail preview keeps the observation recognizable without rereading it.
   metadata.preview = excerpt(body.replace(/\s+/g, ' ').trim(), maskPreviewChars);
-  const content = JSON.stringify({ contextHidden: true, tool: toolName(source, group, message), callId: call?.id ?? message.tool_call_id, status: call?.status ?? 'recorded', ...metadata, originalChars: message.content.length, coverage: 'recorded-message', read: historyReadPointer(source.profile, { ref: source.archivedRef, offset: source.offsetOf(message), limit: 1 }), note: 'Older observation hidden from model input, not deleted. Read original evidence instead of repeating the operation.' });
+  const content = JSON.stringify({ contextHidden: true, tool: toolName(source, group, message), callId: call?.id ?? message.tool_call_id, status: call?.status ?? 'recorded', ...metadata, originalChars: message.content.length, coverage: 'recorded-message', read: historyReadPointer({ ref: source.archivedRef, offset: source.offsetOf(message), limit: 1 }), note: 'Older observation hidden from model input, not deleted. Read original evidence instead of repeating the operation.' });
   return content.length < message.content.length ? { role: 'tool', tool_call_id: message.tool_call_id, content } : undefined;
 }

@@ -51,8 +51,6 @@ Options: Model context/output limits are resolved automatically; no budget prese
          --webfetch [--web-hosts HOST,HOST] (explicit host network grant)
          --compaction off|mask|summary|hybrid [--compaction-trigger-ratio 0.5-0.95 | --compaction-work-tokens N] (default: conditional summary at 0.8 of the effective window; persisted for resume)
          --assembly deterministic [--assembly-work-tokens N] [--assembly-evidence-tokens N] (experimental; no extra model call)
-         --agent-factors A,B,C[,D,E]|none
-         --tool-profile compact-v2|compact-v1|full|lean-solo --task-protocol 3|2|1 (new sessions; defaults compact-v2 and 3)
          --memory --lazy-tools (optional; disabled by default, persisted for resume)
          --verification-config JSON_FILE (fixed WSL/container command; enabled and approved by the host)
          --package author/name[@version] (activate imported/adopted package; persisted for resume)
@@ -107,8 +105,6 @@ async function main(): Promise<void> {
     assembly: { type: 'string' }, 'assembly-work-tokens': { type: 'string' }, 'assembly-evidence-tokens': { type: 'string' },
     memory: { type: 'boolean' }, 'lazy-tools': { type: 'boolean' }, 'verification-config': { type: 'string' },
     objective: { type: 'string' }, scope: { type: 'string' },
-    'agent-factors': { type: 'string' },
-    'tool-profile': { type: 'string' }, 'task-protocol': { type: 'string' },
     context: { type: 'boolean' }, to: { type: 'string' }, applied: { type: 'boolean' }, 'not-applied': { type: 'boolean' },
     'parent-id': { type: 'string' }, query: { type: 'string' }, in: { type: 'string' }, 'knowledge-id': { type: 'string' }, revision: { type: 'string' }, after: { type: 'string' }, offset: { type: 'string' },
   } }); } catch { throw new KodoError('ARGUMENTS', 'invalid options; use --help'); } })();
@@ -123,11 +119,6 @@ async function main(): Promise<void> {
   if (command === 'spawn') {
     if (!values.objective?.trim()) throw new KodoError('ARGUMENTS', 'spawn requires --objective');
   } else if (['objective', 'scope', 'model-binding'].some(key => values[key as keyof typeof values] !== undefined)) throw new KodoError('ARGUMENTS', '--objective, --scope and --model-binding are only valid for spawn');
-  if (['agent-factors', 'tool-profile', 'task-protocol'].some(key => values[key as keyof typeof values] !== undefined) && !['run', 'chat'].includes(command!)) throw new KodoError('ARGUMENTS', 'agent policies are only valid for run or chat; other commands use the saved policy');
-  const toolProfile = values['tool-profile'];
-  if (toolProfile !== undefined && toolProfile !== 'compact-v1' && toolProfile !== 'compact-v2' && toolProfile !== 'full' && toolProfile !== 'lean-solo') throw new KodoError('ARGUMENTS', '--tool-profile must be compact-v1, compact-v2, full or lean-solo');
-  const taskProtocol = values['task-protocol'];
-  if (taskProtocol !== undefined && taskProtocol !== '1' && taskProtocol !== '2' && taskProtocol !== '3') throw new KodoError('ARGUMENTS', '--task-protocol must be 1, 2 or 3');
   if (values.context !== undefined && command !== 'inspect') throw new KodoError('ARGUMENTS', '--context is only valid for inspect');
   if (command === 'rewind') {
     if (values.to === undefined || !/^(?:-1|\d+)$/.test(values.to) || !Number.isSafeInteger(Number(values.to))) throw new KodoError('ARGUMENTS', 'rewind requires --to with step -1 or a nonnegative step number');
@@ -176,7 +167,7 @@ async function main(): Promise<void> {
     if (!Array.isArray(declarations) || declarations.length > 128 || declarations.some(argv => !Array.isArray(argv) || !argv.length || argv.length > 129 || !argv[0] || argv.some(value => typeof value !== 'string' || value.length > 4096 || value.includes('\0')))) throw new KodoError('ARGUMENTS', '--read-only-commands requires at most 128 nonempty argv arrays, with a program and at most 128 arguments');
     readOnlyCommands = declarations.map((argv: string[]) => ({ program: argv[0]!, args: argv.slice(1) }));
   }
-  const [{ Application }, { unlockData }, { runProcess }, { cliDataDirectory, packageIdentity }, { cliSandboxPolicy, cliToolPolicy, cliCompactionPolicy, cliAssemblyPolicy, cliVerificationPolicy, cliAgentPolicy, defaultCompactionPolicy, readHostState, writeHostState }, { PackageRegistry }, { verifyToolExamples }, { createSandbox }] = await Promise.all([
+  const [{ Application }, { unlockData }, { runProcess }, { cliDataDirectory, packageIdentity }, { cliSandboxPolicy, cliToolPolicy, cliCompactionPolicy, cliAssemblyPolicy, cliVerificationPolicy, defaultCompactionPolicy, readHostState, writeHostState }, { PackageRegistry }, { verifyToolExamples }, { createSandbox }] = await Promise.all([
     import('../application/index.js'), import('../storage/index.js'), import('../tools/index.js'), import('./packages.js'), import('./host-state.js'), import('../packages/registry.js'), import('../packages/runtime.js'), import('../sandbox/execute.js'),
   ]);
   const directory = cliDataDirectory(values['data-dir']);
@@ -187,7 +178,6 @@ async function main(): Promise<void> {
   const requestedCompaction = cliCompactionPolicy(values);
   const requestedAssembly = cliAssemblyPolicy(values);
   const requestedVerification = cliVerificationPolicy(values);
-  const agents = persistedHost?.agents ?? cliAgentPolicy(values);
   if (persistedHost && requestedSandbox && JSON.stringify(requestedSandbox) !== JSON.stringify(persistedHost.sandbox)) throw new KodoError('CAPABILITY_CHANGED', 'resume must preserve the original sandbox policy');
   const sandbox = persistedHost?.sandbox ?? requestedSandbox;
   if (persistedHost && requestedTools && JSON.stringify(requestedTools) !== JSON.stringify(persistedHost.tools)) throw new KodoError('CAPABILITY_CHANGED', 'resume must preserve the original trusted tool configuration');
@@ -220,7 +210,7 @@ async function main(): Promise<void> {
     if (!currentRun || app.store.run(runId).sessionId !== app.store.run(currentRun).sessionId) return;
     if (values.json) console.log(JSON.stringify({ type: 'text.delta', runId, transient: true, data: { text } }));
     else if (runId === currentRun) process.stderr.write(terminalText(text));
-  }, { readOnlyCommands, ...agents, ...agentModels, ...(toolProfile ? { toolProfile } : {}), ...(taskProtocol ? { taskProtocol: taskProtocol === '3' ? 3 : taskProtocol === '2' ? 2 : 1 } : {}), ...(sandbox ? { sandbox } : {}), ...trustedTools, compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) });
+  }, { readOnlyCommands, ...agentModels, ...(sandbox ? { sandbox } : {}), ...trustedTools, compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) });
   const interrupt = (): void => {
     if (tui) return; // runTui owns terminal signals while its screen is mounted.
     if (currentRun) app.coordinator.cancel(currentRun); else startup.abort(new KodoError('CANCELLED', 'user cancelled before execution'));
@@ -397,7 +387,7 @@ async function main(): Promise<void> {
             activatePackage: (id, version) => packages.activate(app, id, version, { workspace, deny: runtimeDeny(workspace), stdio: { write: Boolean(values['allow-write']), network: sandbox?.network ?? 'none' }, verifyExamples: verifyToolExamples({ workspace, permissions: explicitPermissions }), reuseVerification: true, signal: startup.signal }),
             activatePackageAt: (id, version, caseWorkspace, signal) => packages.activate(app, id, version, { workspace: caseWorkspace, deny: runtimeDeny(caseWorkspace), stdio: { write: Boolean(values['allow-write']), network: sandbox?.network ?? 'none' }, verifyExamples: verifyToolExamples({ workspace: caseWorkspace, permissions: explicitPermissions }), signal }),
           },
-          policy: { ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) },
+          policy: { ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) },
           state: hostState, verificationCommand: values['verify-command'], finalResponse: values['allow-empty-response'] ? 'optional' : 'required', stdioWrite: Boolean(values['allow-write']),
           ...(selectedPackage ? { package: { ...selectedPackage, digest: (await packages.inspect(selectedPackage.id, selectedPackage.version)).digest, stdioWrite: Boolean(values['allow-write']), stdioNetwork: sandbox?.network ?? 'none' } } : {}),
           select: id => { currentRun = id; }, attachVerification, onHost: host => { activeHost = host; },
@@ -416,7 +406,7 @@ async function main(): Promise<void> {
         permissions, budget, finalResponse: values['allow-empty-response'] ? 'optional' : 'required', card: packageCard ?? (values.card ? app.parseCard(readFileSync(path.resolve(values.card), 'utf8')) : undefined) }, startup.signal);
       const session = app.store.session(run.sessionId);
       {
-        activeHost = { sessionId: session.id, runIds: [run.id], questionIds: [], ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}), ...(selectedPackage ? { package: { ...selectedPackage, digest: (await packages.inspect(selectedPackage.id, selectedPackage.version)).digest, stdioWrite: permissions.includes('write'), stdioNetwork: sandbox?.network ?? 'none' } } : {}) };
+        activeHost = { sessionId: session.id, runIds: [run.id], questionIds: [], ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}), ...(selectedPackage ? { package: { ...selectedPackage, digest: (await packages.inspect(selectedPackage.id, selectedPackage.version)).digest, stdioWrite: permissions.includes('write'), stdioNetwork: sandbox?.network ?? 'none' } } : {}) };
         hostState.push(activeHost);
         writeHostState(directory, hostState);
       }

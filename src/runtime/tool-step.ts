@@ -13,7 +13,6 @@ import { abortable, effectiveSession } from './step-host.js';
 import { commandFailed, siblingStopped, toolBatches } from './tool-batch.js';
 import type { StepHost } from './step-host.js';
 import { executionSession, runWorkspace } from './execution-workspace.js';
-import { canonicalRequest, isLeanProfile, viewResult, viewText } from './tool-view.js';
 import { normalizeFileScope, writeScopesOverlap } from './scope.js';
 import { errorText, KodoError, terminal } from './types.js';
 import type { Call, FileScope, Message, ModelResponse, Permission, Run, StepOutcome, ToolRequest } from './types.js';
@@ -32,7 +31,7 @@ function spawnWriteClaim(host: StepHost, run: Run, request: ToolRequest): SpawnW
   if (!(args.permissions ?? granted).includes('write')) return undefined;
   // Mirror assertNoWriteConflict: strict admission treats an omitted write side as the
   // whole workspace, and only a claim narrower than the inherited parent scope competes.
-  const strict = Boolean(session.agentFactors?.A || session.agentFactors?.C) || Boolean(args.card_id);
+  const strict = true;
   const write = normalizeFileScope(args.scope ?? {}, run.scope).write;
   const inherited = JSON.stringify([...(run.scope?.write ?? [])].sort());
   let claims = false;
@@ -131,7 +130,7 @@ async function admit(host: StepHost, run: Run, modelCall: Call, call: Call, requ
 async function execute(host: StepHost, run: Run, modelCall: Call, call: Call, request: ToolRequest, args: Record<string, unknown>, signal: AbortSignal, batchSignal?: AbortSignal): Promise<Outcome> {
   const { store } = host;
   const session = store.session(run.sessionId);
-  const deferredTimeout = (session.taskProtocol ?? 1) >= 2 && !internal(request.name);
+  const deferredTimeout = !internal(request.name);
   const executionController = new AbortController();
   const resourceController = new AbortController();
   const timeout = deferredTimeout ? executionController.signal : AbortSignal.timeout(session.budget.toolTimeoutMs);
@@ -252,7 +251,7 @@ function record(host: StepHost, run: Run, call: Call, outcome: Outcome): void {
 }
 
 /** Tool results in request order; native image results carry their attachment. */
-function resultMessages(host: StepHost, modelCall: Call, requests: ToolRequest[], profile?: string): Message[] {
+function resultMessages(host: StepHost, modelCall: Call, requests: ToolRequest[]): Message[] {
   return requests.map((request): Message => {
     const call = host.store.call(`${modelCall.id}:${request.id}`);
     const original = host.store.readBlob<unknown>(call.modelResultRef ?? call.resultRef!);
@@ -265,7 +264,7 @@ function resultMessages(host: StepHost, modelCall: Call, requests: ToolRequest[]
       validateImageInput(image);
       return { role: 'tool', tool_call_id: request.id, content: JSON.stringify(metadata), images: [image] };
     }
-    return { role: 'tool', tool_call_id: request.id, content: JSON.stringify(viewResult(profile, value)) };
+    return { role: 'tool', tool_call_id: request.id, content: JSON.stringify(value) };
   });
 }
 
@@ -305,11 +304,8 @@ function feedback(host: StepHost, run: Run, modelCall: Call, requests: ToolReque
  */
 export async function runToolStep(host: StepHost, run: Run, modelCall: Call, response: ModelResponse, signal: AbortSignal): Promise<StepOutcome> {
   const { store } = host;
-  // Every decision below reads canonical kernel calls; results still answer the model's call IDs.
-  const viewSession = effectiveSession(run, store.session(run.sessionId));
-  const resolved = (response.message.tool_calls ?? []).map(request => canonicalRequest(run, viewSession, request));
-  const requests = resolved.map(item => item.request);
-  const viewErrors = new Map(resolved.flatMap(item => item.error ? [[item.request.id, item.error] as const] : []));
+  const requests = response.message.tool_calls ?? [];
+  const viewErrors = new Map<string, KodoError>();
   for (const [id, error] of responseSpawnWriteConflicts(host, run, requests)) viewErrors.set(id, error);
   const controls = requests.filter(x => controlTool(x.name));
   const invalidBatch = controls.length > 1 || (controls.length === 1 && requests.at(-1) !== controls[0]);
@@ -404,10 +400,8 @@ export async function runToolStep(host: StepHost, run: Run, modelCall: Call, res
   if (settled.message) extra.messages.unshift(settled.message);
   // Instruction files reached by this batch follow its results, before advisory feedback.
   const touched = store.transaction(() => touchedInstructions(store, store.run(run.id), executionSession(store, store.run(run.id)), requests.map(request => ({ request, succeeded: store.call(`${modelCall.id}:${request.id}`).status === 'succeeded' }))));
-  // Lean views name tools as advertised; only runtime-authored text is rewritten.
-  const profile = !run.parentId && isLeanProfile(store.session(run.sessionId).toolProfile) ? store.session(run.sessionId).toolProfile : undefined;
-  const attachments = orderAttachments([...notices, ...(touched ? [touched] : []), ...extra.messages]).map(message => profile && typeof message.content === 'string' ? { ...message, content: viewText(profile, message.content) } : message);
-  const context = [...store.readBlob<Message[]>(run.contextRef), response.message, ...resultMessages(host, modelCall, requests, profile), ...attachments];
+  const attachments = orderAttachments([...notices, ...(touched ? [touched] : []), ...extra.messages]);
+  const context = [...store.readBlob<Message[]>(run.contextRef), response.message, ...resultMessages(host, modelCall, requests), ...attachments];
   const contextRef = store.blob(context);
   store.transaction(() => {
     const latest = store.run(run.id);

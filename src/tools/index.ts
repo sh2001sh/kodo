@@ -30,9 +30,6 @@ import { similarPaths } from './similar-paths.js';
 import { assertManagedShell, createShellTool, readOnlyProcess, readOnlyShell, resolveBashProgram, shellToolDescription, shellToolParameters } from './shell.js';
 import { windowsProcessTree } from './windows-process-tree.js';
 import { recordNativePreparation, recordNativeCompletion, probeNativeRecovery } from './native-recovery.js';
-import { isLeanProfile } from '../runtime/tool-view.js';
-import { recordCheckStart, recordSuitePass } from '../runtime/check-hint.js';
-import { checkOutputFiltered, parseCheckCommand } from '../runtime/check-command.js';
 import { prepareRunOutput } from '../runtime/run-output.js';
 import { workspaceGit, workspaceGitParameters } from '../runtime/workspace-git.js';
 import type { WorkspaceGitArgs } from '../runtime/workspace-git.js';
@@ -61,7 +58,6 @@ const progressItems = { type: 'array', items: { type: 'string', maxLength: 800 }
  * Lean default pages. Large windows with cached prefixes make a bigger page cheaper than another
  * model round; the result cap leaves room for JSON escaping of a full page.
  */
-export const leanPage = { readChars: 24_000, readLines: 600, stdoutChars: 12_000, stderrChars: 4000, resultBytes: 96 * 1024 } as const;
 const expectedHash = { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Copy the whole-file hash returned by file.read in this run. A shell read does not register this prerequisite.' };
 const maximumFileBytes = 16 * 1024 * 1024;
 const protectedPart = (part: string): boolean => /^(?:\.git|\.kodo|\.env(?:\..*)?|\.ssh|\.aws|\.npmrc|\.netrc|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*\.(?:pem|key|p12|pfx))$/i.test(part);
@@ -107,11 +103,6 @@ const definitions: Tool[] = [
 definitions.push(tool('process.run', 'Run a read-only command declared by the trusted host. Both program and the entire argument array must exactly match a host declaration. Output and timeout bounds match process.exec.', 'read', 'read', object({ program: text, args: { type: 'array', maxItems: 128, items: { type: 'string', maxLength: 4096 } } })));
 export const builtinToolNames = definitions.map(definition => definition.name);
 /** Lean views check freshness against the run's observed file versions; their calls carry no hash. */
-const observedValidators = new Map(definitions.filter(definition => hashGuarded.includes(definition.name)).map(definition => {
-  const properties = { ...(definition.parameters.properties as Record<string, unknown>) };
-  delete properties.expectedHash;
-  return [definition.name, ajv.compile({ ...definition.parameters, properties, required: (definition.parameters.required as string[]).filter(key => key !== 'expectedHash') })] as const;
-}));
 export interface ReadOnlyCommand { program: string; args: string[] }
 export interface ToolApprovalRequest {
   readonly runId: string;
@@ -178,7 +169,7 @@ export class Tools {
   /** Write lock over `roots` of the run's workspace; waits and takeovers become run events. */
   private writeLock(runId: string, roots: string[], signal?: AbortSignal, tryOnly = false): Promise<() => void> {
     const workspace = this.store.session(this.store.run(runId).sessionId).workspace;
-    return acquireWriteLock(workspace, roots, { directory: this.lockDirectory, tryOnly, ...((this.store.session(this.store.run(runId).sessionId).taskProtocol ?? 1) >= 2 ? { timeoutMs: 600_000 } : {}), ...(signal ? { signal } : {}), onEvent: event => { if (!this.storageStopped && !this.store.fault) this.store.event(runId, event.type, event.data); } });
+    return acquireWriteLock(workspace, roots, { directory: this.lockDirectory, tryOnly, timeoutMs: 600_000, ...(signal ? { signal } : {}), onEvent: event => { if (!this.storageStopped && !this.store.fault) this.store.event(runId, event.type, event.data); } });
   }
   environmentDescription(): string {
     return this.sandbox
@@ -238,28 +229,23 @@ export class Tools {
   stopForStorageFault(reason: unknown): Promise<void> { this.storageStopped = true; return this.background.stopAll(errorText(reason)); }
   /** Resolves once every background process started so far has settled and been recorded. */
   backgroundSettled(): Promise<void> { return this.background.settled(); }
-  /** Lean commands always keep a readable receipt; other profiles retain oversized output. */
-  private processResult(runId: string, output: ProcessOutput | ProcessFacts, command?: string): unknown {
-    const lean = isLeanProfile(this.store.session(this.store.run(runId).sessionId).toolProfile);
-    const tail = lean && command !== undefined && Boolean(parseCheckCommand(command));
-    const filtered = lean && command !== undefined && checkOutputFiltered(command);
-    const stdout = tail ? boundedTail(output.stdout, leanPage.stdoutChars) : boundedSlice(output.stdout, 0, lean ? leanPage.stdoutChars : 4000);
-    const stderr = tail ? boundedTail(output.stderr, leanPage.stderrChars) : boundedSlice(output.stderr, 0, lean ? leanPage.stderrChars : 4000);
+  /** Oversized command output is retained privately with a bounded projection. */
+  private processResult(runId: string, output: ProcessOutput | ProcessFacts): unknown {
+    const stdout = boundedSlice(output.stdout, 0, 4000);
+    const stderr = boundedSlice(output.stderr, 0, 4000);
     const truncated = stdout.length !== output.stdout.length || stderr.length !== output.stderr.length;
-    if (!truncated && !lean) return output;
+    if (!truncated) return output;
     // Store bounded captured output privately. The returned ID is readable with the same
     // ownership/provenance checks as user-created artifacts, without granting filesystem access.
     const ref = this.store.blob({ name: 'process-output', content: JSON.stringify(output) });
     const id = this.store.artifact(runId, ref);
-    return { ...output, stdout, stderr, ...(truncated ? { truncated: true } : {}),
-      ...(tail ? { preview: 'tail', note: 'stdout/stderr show at most the last 80 lines within character limits. Read outputArtifact for earlier failures or coverage gaps; do not rerun just to change the output view.' } : {}),
-      ...(filtered ? { outputFiltered: true, note: 'This command filters or redirects test output. outputArtifact preserves only the captured shell streams, not output removed by the command.' } : {}),
+    return { ...output, stdout, stderr, truncated: true,
       outputArtifact: { id, readWith: 'artifact.read', capturedComplete: !output.outputLimitExceeded } };
   }
   /** Records a settled background process: its call outcome, reconciliation evidence and the finish event that drives the notice. */
-  private finishBackground(finish: BackgroundFinish, command?: string): void {
+  private finishBackground(finish: BackgroundFinish): void {
     if (this.storageStopped || this.store.fault) return;
-    const result = finish.output ? this.processResult(finish.runId, finish.output, command) as Record<string, unknown> : { error: errorText(finish.error) };
+    const result = finish.output ? this.processResult(finish.runId, finish.output) as Record<string, unknown> : { error: errorText(finish.error) };
     const full = { ...result, background: { id: finish.id, state: finish.state, ...(finish.stopReason ? { stopReason: finish.stopReason } : {}) } };
     this.store.transaction(() => {
       const resultRef = this.store.blob(full);
@@ -282,7 +268,6 @@ export class Tools {
   }
   /** A delegated file claim only blocks operations touching that actual execution root. */
   private assertOwnership(run: Run, roots: string[]): void {
-    if ((this.store.session(run.sessionId).taskProtocol ?? 1) < 2) return;
     const holder = this.store.listRuns(run.sessionId).find(peer => peer.id !== run.id &&
       (peer.parentId === run.id || Boolean(run.parentId && peer.parentId === run.parentId)) &&
       ['running', 'waiting'].includes(peer.status) && !peer.cancelRequested &&
@@ -316,12 +301,6 @@ export class Tools {
   specs(allowed: string[], session: Session): ToolSpec[] {
     return [...definitions, ...this.registry.definitions()].filter(x => x.available !== false && (implied(x.name, allowed) || allowed.includes(x.name) || (this.lazyTools && x.name === 'tool.describe')) && (x.name !== 'tool.describe' || this.lazyTools) && (x.name !== 'recovery.inspect' || this.inspectRecovery) && (x.name !== 'process.run' || this.readOnlyCommands.length > 0) && session.permissions.includes(x.permission))
       .map(({ name, description, parameters }) => {
-        const legacy = !session.agentFactors?.A && !session.agentFactors?.C;
-        if (name === 'artifact.write' && legacy) {
-          const properties = { ...(parameters.properties as Record<string, unknown>) };
-          delete properties.kind;
-          parameters = { ...parameters, properties };
-        }
         return { name, description: this.describe(name, description), parameters };
       });
   }
@@ -337,8 +316,7 @@ export class Tools {
   boundResult(runId: string, name: string, result: unknown): unknown {
     if (name === 'image.read') return result;
     const serialized = JSON.stringify(result ?? null);
-    const leanPaged = (name === 'file.read' || name === 'shell.exec') && isLeanProfile(this.store.session(this.store.run(runId).sessionId).toolProfile);
-    const limit = this.registry.get(name)?.maxResultBytes ?? (leanPaged ? leanPage.resultBytes : 32 * 1024);
+    const limit = this.registry.get(name)?.maxResultBytes ?? 32 * 1024;
     const bytes = Buffer.byteLength(serialized);
     if (bytes <= limit) return result;
     const ref = this.store.blob({ name: `${name}-result`, content: serialized });
@@ -400,17 +378,12 @@ export class Tools {
   interrupt(name: string): 'cancel' | 'block' { return this.registry.get(name)?.interrupt ?? 'cancel'; }
   permission(name: string): Permission | undefined { return (definitions.find(x => x.name === name) ?? this.registry.get(name))?.permission; }
   validate(name: string, args: string, allowed: string[], session: Session, run: Pick<Run, 'parentId'> = {}): Record<string, unknown> {
-    if (!roleAllows(run, session, name)) throw new KodoError('TOOL_DENIED', isLeanProfile(session.toolProfile) && !run.parentId
-      ? `${name} is not part of this run's tool view; use the advertised tools.`
-      : session.toolProfile === 'compact-v2'
-      ? `${name} is unavailable in this run's tool view. Use the advertised tools; ordinary file-management commands can use shell.exec when authorized.`
-      : `${name} is delegated to child agents; assign the command, implementation and its checks to an implementation agent`);
+    if (!roleAllows(run, session, name)) throw new KodoError('TOOL_DENIED', `${name} is unavailable in this run's tool view. Use the advertised tools; ordinary file-management commands can use shell.exec when authorized.`);
     const definition = definitions.find(x => x.name === name) ?? this.registry.get(name);
-    const leanGit = name === 'workspace.git' && isLeanProfile(session.toolProfile) && !run.parentId && allowed.includes('shell.exec') && session.permissions.includes('exec');
-    if (!definition || (!leanGit && !implied(name, allowed) && !allowed.includes(name) && !(this.lazyTools && name === 'tool.describe')) || (name === 'tool.describe' && !this.lazyTools) || !session.permissions.includes(definition.permission)) throw new KodoError('TOOL_DENIED', 'tool is not authorized for this run');
+    if (!definition || (!implied(name, allowed) && !allowed.includes(name) && !(this.lazyTools && name === 'tool.describe')) || (name === 'tool.describe' && !this.lazyTools) || !session.permissions.includes(definition.permission)) throw new KodoError('TOOL_DENIED', 'tool is not authorized for this run');
     let value: unknown;
     try { value = JSON.parse(args); } catch { throw new KodoError('TOOL_ARGUMENTS', 'arguments must be complete JSON'); }
-    const check = isLeanProfile(session.toolProfile) && !run.parentId ? observedValidators.get(name) ?? definition.validate : definition.validate;
+    const check = definition.validate;
     if (!check(value)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the ${name} schema: ${schemaErrorText(check.errors)}`);
     if (name === 'shell.exec') {
       const command = (value as { command: string }).command;
@@ -478,7 +451,7 @@ export class Tools {
     // Private evidence and background handles do not access workspace files; locking them would block process.read behind its own background writer.
     const workspaceRead = effect === 'read' && !['artifact.read', 'history.read', 'history.search', 'process.read', 'tool.describe', 'recovery.inspect'].includes(name);
     const readRoots = ['file.read', 'file.list', 'file.search', 'image.read'].includes(name) && typeof args.path === 'string' ? [actualPath(path.resolve(session.workspace, args.path))] : (run.scope?.read ?? ['.']).map(root => actualPath(path.resolve(session.workspace, root)));
-    const release = effect === 'write' ? await this.writeLock(runId, this.effectRoots(runId, name, args), startSignal) : workspaceRead ? await acquirePathLock(this.store.session(run.sessionId).workspace, readRoots, 'read', { directory: this.lockDirectory, ...((session.taskProtocol ?? 1) >= 2 ? { timeoutMs: 600_000 } : {}), signal: startSignal, onEvent: event => { if (!this.storageStopped && !this.store.fault) this.store.event(runId, event.type, event.data); } }) : undefined;
+    const release = effect === 'write' ? await this.writeLock(runId, this.effectRoots(runId, name, args), startSignal) : workspaceRead ? await acquirePathLock(this.store.session(run.sessionId).workspace, readRoots, 'read', { directory: this.lockDirectory, timeoutMs: 600_000, signal: startSignal, onEvent: event => { if (!this.storageStopped && !this.store.fault) this.store.event(runId, event.type, event.data); } }) : undefined;
     let releaseOnProcessClose = false;
     let processStarted = false;
     let processClosed = false;
@@ -501,7 +474,6 @@ export class Tools {
     try {
       options.onExecutionReady?.();
       // Lean main runs only: records the check's code version and may return the repeated-check hint (7.2).
-      const checkHint = name === 'shell.exec' && options.callId ? recordCheckStart(this.store, run, session, options.callId, args.command as string) : undefined;
       const perform = async (): Promise<unknown> => {
       this.store.assertWritable();
       signal.throwIfAborted();
@@ -616,7 +588,7 @@ export class Tools {
                 backgroundOwned = true;
                 const id = this.background.adopt(runId, options.callId, capture, controller, running, {
                   readOnly: effect === 'read',
-                  onFinish: finish => this.finishBackground(finish, name === 'shell.exec' ? args.command as string : undefined),
+                  onFinish: finish => this.finishBackground(finish),
                   onSettled: releaseExecution,
                 });
                 return { background: { id, state: 'running', reason: mode.start ? 'requested' : 'foreground time limit reached', readWith: 'process.read', note: `The process continues and holds its ${effect === 'read' ? 'read' : 'write'} lock until it exits; a runtime notice reports its exit.` } };
@@ -628,7 +600,7 @@ export class Tools {
               processSignal.removeEventListener('abort', follow);
             }
           }
-          return this.processResult(runId, await running, name === 'shell.exec' ? args.command as string : undefined);
+          return this.processResult(runId, await running);
         };
         if ((name === 'process.exec' || name === 'shell.exec') && args.background === true && this.background.count(runId) >= maxBackgroundProcesses) throw new KodoError('PROCESS_LIMIT', `at most ${maxBackgroundProcesses} background processes may run per run; read or wait for one to exit first`);
         const movable = (name === 'process.exec' || name === 'shell.exec') && (args.background === true || (options.foreground !== undefined && this.background.count(runId) < maxBackgroundProcesses));
@@ -651,8 +623,7 @@ export class Tools {
       if (name === 'image.read') return await readImage(file, signal);
       if (name === 'file.read') {
         const before = await fileStat(file);
-        const lean = isLeanProfile(this.store.session(run.sessionId).toolProfile);
-        const page = await readPage(file, lean ? { maxChars: leanPage.readChars, limit: leanPage.readLines, ...args } : args, signal) as { hash: string };
+        const page = await readPage(file, args, signal) as { hash: string };
         recordSeen(this.store, runId, file, page.hash, before);
         return page;
       }
@@ -714,11 +685,7 @@ export class Tools {
         try { const before = await readText(file, maximum, signal); old = before.hash; original = before.content; }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
         const observed = args.expectedHash === undefined;
-        // Lean exact replacements can reuse content obtained outside file.read.
-        // An existing observation still requires freshness; whole-file writes retain the read prerequisite.
-        const unseenExactEdit = name === 'file.patch' && observed && isLeanProfile(session.toolProfile)
-          && !run.parentId && !this.store.fileStates.get(runId, file);
-        this.assertFresh(runId, file, old, args.path as string, !unseenExactEdit, observed && !unseenExactEdit ? name === 'file.apply_patch' ? 'create' : 'edit' : undefined);
+        this.assertFresh(runId, file, old, args.path as string, true, observed ? name === 'file.apply_patch' ? 'create' : 'edit' : undefined);
         // With read access the current hash is already disclosable; returning it lets a finalizing run correct the save without another read.
         if (!observed && old !== args.expectedHash) throw new KodoError('FILE_CONFLICT', `file content changed or expectedHash does not match${readable(run, session) ? `; current hash is ${old === null ? 'null (file absent)' : old}` : ''}`);
         let content = args.content as string;
@@ -757,10 +724,7 @@ export class Tools {
       throw new KodoError('TOOL_NOT_FOUND', 'tool implementation missing');
       };
       const bounded = this.boundResult(runId, name, await perform());
-      // A first whole-suite pass in a lean main run adds one convergence notice beside any repeat hint.
-      const suiteNotice = name === 'shell.exec' && options.callId && !backgroundOwned ? recordSuitePass(this.store, this.store.run(runId), options.callId, args.command as string, bounded) : undefined;
-      const hint = [checkHint, suiteNotice].filter(Boolean).join(' ');
-      const result = hint && !backgroundOwned && bounded && typeof bounded === 'object' && !Array.isArray(bounded) ? { ...bounded, hint } : bounded;
+      const result = bounded;
       if (!backgroundOwned) { callbackCalled = true; options.settle?.({ ok: true, result }); }
       return result;
     } catch (error) {
@@ -992,19 +956,6 @@ function boundedSlice(content: string, offset: number, maximum: number): string 
   let end = Math.min(content.length, offset + maximum);
   if (end < content.length && /[\uD800-\uDBFF]/.test(content[end - 1]!) && /[\uDC00-\uDFFF]/.test(content[end]!)) end--;
   return content.slice(offset, end);
-}
-/** A check's summary is normally at the end; keep the complete capture in its artifact. */
-function boundedTail(content: string, maximum: number): string {
-  let offset = Math.max(0, content.length - maximum);
-  let cursor = content.endsWith('\n') ? content.length - 1 : content.length;
-  for (let lines = 0; lines < 80; lines++) {
-    const previous = content.lastIndexOf('\n', cursor - 1);
-    if (previous < 0) break;
-    if (lines === 79) offset = Math.max(offset, previous + 1);
-    cursor = previous;
-  }
-  if (offset > 0 && /[\uD800-\uDBFF]/.test(content[offset - 1]!) && /[\uDC00-\uDFFF]/.test(content[offset] ?? '')) offset++;
-  return content.slice(offset);
 }
 function pageArtifact(value: unknown, args: Record<string, unknown>): unknown {
   if (!value || typeof value !== 'object' || !('content' in value) || typeof value.content !== 'string') return value;

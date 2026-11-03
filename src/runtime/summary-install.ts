@@ -161,7 +161,7 @@ export async function installSummary(job: SummaryJob, result: SummaryResult): Pr
   const coverageHash = digest(JSON.stringify(foldOffsets.map(index => job.archive.messages[index])));
   try {
     const state = run.parentId ? undefined : renderDeliveryState(deliveryState(store, store.run(run.id)));
-    const marker = summaryMarker({ text: result.text, archivedRef, coveredOffsets: foldOffsets, droppedGroups: result.droppedGroups, ...(state ? { deliveryState: state } : {}), ...(session.toolProfile ? { profile: session.toolProfile } : {}) });
+    const marker = summaryMarker({ text: result.text, archivedRef, coveredOffsets: foldOffsets, droppedGroups: result.droppedGroups, ...(state ? { deliveryState: state } : {}) });
     const prefix = rebuildSummaryPrefix(store, run, candidate(job, marker));
     const rebuilt = buildContext(store, { ...run, contextRef: store.blob(prefix.messages) }, budget.maxContextChars, tools, contextOptions);
     if (rebuilt.estimatedInputTokens >= built.estimatedInputTokens) throw new KodoError('SUMMARY_NO_GAIN', 'candidate does not reduce working context');
