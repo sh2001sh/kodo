@@ -43,6 +43,30 @@ describe('legacy lean-team session compatibility', () => {
     } finally { app.close(); }
   });
 
+  it('refuses to execute a session whose runs carry legacy execution state', () => {
+    const root = temp();
+    const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { instructions: { global: false } });
+    try {
+      const run = app.createRun({ objective: 'Legacy checkout task.', workspace: root, binding });
+      app.store.putRun({ ...run, execution: { kind: 'clone', root: `${root}/.kodo-executions/x/y`, sourceRoot: root, baseCommit: 'a'.repeat(40) } } as unknown as typeof run);
+      expect(caught(() => app.run(run.id))).toMatchObject({ code: 'SESSION_INCOMPATIBLE' });
+      expect(caught(() => app.spawnAgent(run.sessionId, { objective: 'Child of the old checkout' }))).toMatchObject({ code: 'SESSION_INCOMPATIBLE' });
+      expect(app.sessions().items.map(item => item.id)).toContain(run.sessionId);
+      expect(app.snapshot(run.id).runs[0]!.id).toBe(run.id);
+    } finally { app.close(); }
+  });
+
+  it('treats a legacy execution event as an incompatible marker', () => {
+    const root = temp();
+    const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { instructions: { global: false } });
+    try {
+      const run = app.createRun({ objective: 'Old prepared checkout.', workspace: root, binding });
+      app.store.event(run.id, 'execution.prepared', { synthetic: true });
+      expect(caught(() => app.run(run.id))).toMatchObject({ code: 'SESSION_INCOMPATIBLE' });
+      expect(caught(() => app.submitInput(run.id, 'Continue the old checkout'))).toMatchObject({ code: 'SESSION_INCOMPATIBLE' });
+    } finally { app.close(); }
+  });
+
   it('does not gate ordinary sessions', async () => {
     const root = temp();
     const app = new Application(path.join(root, '.state'), scripted(answer('ordinary')), undefined, { instructions: { global: false } });
