@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "sub-01-parallel-vendor-review",
+  "category": "subrun",
+  "title": "四家供应商方案并行提取 + 独立复核（子运行样例）",
+  "objective": "你是采购评审助手。materials/ 下有一份需求说明 materials/requirements.md 和四家供应商的方案：materials/vendor-a-xingheng.md（星衡科技）、materials/vendor-b-lanqiao.md（蓝桥数智）、materials/vendor-c-yuanfan.md（远帆信息）、materials/vendor-d-cloudway.md（云途 Cloudway）。四份方案互相独立，请按下面的分工完成评审。\n\n1. 并行提取：为每份供应商方案各启动一个子 Agent（共 4 个，用 spawn_agent 工具），每个子 Agent 只负责一家，阅读该方案和 materials/requirements.md，提取含三年运维的最终总价（万元）、交付周期（周）、SLA、数据驻留地点，并逐条判断是否满足需求说明的四项硬性要求。子 Agent 只汇报结果，不写交付物文件。\n2. 汇总：主 Agent 根据子 Agent 的结果写 deliverables/comparison.md。其中包含一张 Markdown 对比表，表头必须恰好为：供应商 | 含三年运维总价（万元） | 交付周期（周） | SLA | 数据驻留 | 是否满足全部硬性要求。每家供应商一行；“是否满足全部硬性要求”一列只写“是”或“否”，写“否”时在同一格用括号注明不满足的要求。表格之后写二级标题「## 推荐」小节，给出推荐的供应商和理由。\n3. 独立复核：汇总完成后，再启动一个独立的复核子 Agent。它不依赖前面子 Agent 的结论，只根据 materials/ 原文逐项核对 comparison.md 中每家供应商的总价、交付周期、SLA、数据驻留和是否满足判断，把复核结果写入 deliverables/review.md：每家供应商一个小节（小节标题含供应商名称），每项写“一致”或“不一致”，并用中文引号“”逐字摘录支持该判断的原文句子，写明来源路径（materials/<文件名>）。若发现不一致，由主 Agent 修正 comparison.md 后在 review.md 末尾记录修正内容。\n\n要求：数字以方案中的最终条款为准；只引用 materials/ 下真实存在的文件，不写外部链接，不联网；引号内的摘录必须逐字复制原文；不要修改 materials/ 下的任何文件。最终交付物为 deliverables/comparison.md 和 deliverables/review.md。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 120,
+    "maxTokens": 4000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "grading": { "restore": [], "stage": [{ "from": "verify/stage", "to": "_verify" }] },
+  "notes": "子运行样例（阶段 1 补充）：9 个文本样例从不派生子运行，删减协作子系统（1b–1d）时文本门槛测不到子运行路径。本例按定位方案认可的两种子运行（并行处理独立任务 + 独立复核）显式要求 4 个提取子 Agent + 1 个复核子 Agent。陷阱：A 的首轮报价 128 已作废（最终 116）；B 的 98 不含运维（含三年运维 134，超预算）；C 分两期 10+8=18 周（超工期）；D 主存储在新加坡（不满足驻留）。唯一满足全部硬性要求的是星衡科技。run-shape 检查要求 >= 4 个完成的子运行：主 Agent 绕过子 Agent 自己做完会被判不合格。"
+}

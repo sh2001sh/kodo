@@ -17,7 +17,7 @@ import { GoldenError } from './errors.mjs';
 export const CHECK_KINDS = Object.freeze([
   'file-exists', 'file-contains', 'final-contains', 'final-regex',
   'csv-columns', 'csv-rows', 'csv-cell', 'markdown-table', 'json-values',
-  'citation-sources', 'protected-unchanged', 'command', 'artifact-count', 'human',
+  'citation-sources', 'protected-unchanged', 'command', 'artifact-count', 'run-shape', 'human',
 ]);
 /** Rules are hard constraints; a human verdict cannot be a rule. */
 export const RULE_KINDS = Object.freeze(CHECK_KINDS.filter(kind => kind !== 'human'));
@@ -274,6 +274,12 @@ const PARAM_VALIDATORS = {
     if (typeof params.dir !== 'string' || !params.dir.trim()) return 'dir';
     if (!isNonEmptyString(params.glob)) return 'glob';
     if (!isNonNegativeInteger(params.min)) return 'min';
+    return null;
+  },
+  'run-shape': params => {
+    const bounds = ['minChildren', 'maxChildren', 'minCompletedChildren'];
+    if (!bounds.some(name => params[name] !== undefined)) return 'minChildren|maxChildren|minCompletedChildren';
+    for (const name of bounds) if (params[name] !== undefined && !isNonNegativeInteger(params[name])) return name;
     return null;
   },
   human: params => (isNonEmptyString(params.question) ? null : 'question'),
@@ -652,6 +658,22 @@ function checkArtifactCount(params, context) {
     : outcome(false, [`${directory}: ${matches.length} file(s) match ${params.glob}, needs >= ${params.min}`]);
 }
 
+/**
+ * Child-run shape of the scored session (subrun cases): how many child runs the
+ * main agent started and how many completed. Missing evidence (a report scored
+ * before runShape was recorded) fails instead of passing silently.
+ */
+function checkRunShape(params, context) {
+  const children = context.runShape?.children;
+  if (!Array.isArray(children)) return outcome(false, ['run shape not recorded for this run; rerun the cell (rescore cannot recover it)']);
+  const completed = children.filter(child => child.status === 'completed').length;
+  const reasons = [];
+  if (params.minChildren !== undefined && children.length < params.minChildren) reasons.push(`${children.length} child run(s), needs >= ${params.minChildren}`);
+  if (params.maxChildren !== undefined && children.length > params.maxChildren) reasons.push(`${children.length} child run(s), allows <= ${params.maxChildren}`);
+  if (params.minCompletedChildren !== undefined && completed < params.minCompletedChildren) reasons.push(`${completed} completed child run(s), needs >= ${params.minCompletedChildren}`);
+  return outcome(reasons.length === 0, reasons, { children: children.length, completed });
+}
+
 function checkHuman(params, context, id) {
   const verdict = context.human?.[id];
   if (typeof verdict !== 'boolean') return { status: 'pending', reasons: [`human verdict pending: write {"${id}": true|false} to runs/.../human.json and rescore`], detail: { question: params.question } };
@@ -674,6 +696,7 @@ function evaluateCheck(entry, context) {
     case 'protected-unchanged': return checkProtectedUnchanged(params, context, entry.id);
     case 'command': return checkCommand(params, context, entry.id);
     case 'artifact-count': return checkArtifactCount(params, context);
+    case 'run-shape': return checkRunShape(params, context);
     default:
       // validateRubric rejects unknown kinds first; this guard keeps the failure loud if a kind
       // is added to CHECK_KINDS without an implementation.
@@ -690,14 +713,14 @@ function evaluateCheck(entry, context) {
  *   rules: object[], checks: object[], counts: object
  * }}
  */
-export function evaluateRubric({ rubric, caseData = {}, finalText = '', human = {}, protectedResults = {}, commandResults = {}, readFile, listFiles, statFile }) {
+export function evaluateRubric({ rubric, caseData = {}, finalText = '', human = {}, protectedResults = {}, commandResults = {}, runShape = null, readFile, listFiles, statFile }) {
   const normalized = validateRubric(rubric);
   if (typeof readFile !== 'function') throw new GoldenError('SCORE_CONTEXT', 'evaluateRubric requires readFile(relativePath)');
   if (typeof listFiles !== 'function') throw new GoldenError('SCORE_CONTEXT', 'evaluateRubric requires listFiles()');
   if (typeof statFile !== 'function') throw new GoldenError('SCORE_CONTEXT', 'evaluateRubric requires statFile(relativePath)');
   const context = {
     caseData, finalText: String(finalText ?? ''), human: human ?? {},
-    protectedResults: protectedResults ?? {}, commandResults: commandResults ?? {},
+    protectedResults: protectedResults ?? {}, commandResults: commandResults ?? {}, runShape,
     read: readFile, list: () => listFiles() ?? [], stat: statFile,
   };
 

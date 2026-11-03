@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.95,
+  "checks": [
+    { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/comparison.md", "minBytes": 400 } },
+    { "id": "M02", "kind": "markdown-table", "weight": 2, "params": { "path": "deliverables/comparison.md", "requiredHeaders": ["供应商", "含三年运维总价（万元）", "交付周期（周）", "SLA", "数据驻留", "是否满足全部硬性要求"], "minRows": 4 } },
+    { "id": "M03", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/review.md", "minBytes": 600 } },
+    { "id": "M04", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/review.md", "all": ["星衡", "蓝桥", "远帆", "云途", "一致"] } },
+    { "id": "C01", "kind": "command", "weight": 6, "params": { "program": "node", "args": ["_verify/check-review.mjs"], "expectExit": 0, "timeoutMs": 120000 } },
+    { "id": "S01", "kind": "run-shape", "weight": 4, "params": { "minChildren": 4, "minCompletedChildren": 4 } },
+    { "id": "H01", "kind": "human", "weight": 1, "params": { "question": "对比表与推荐是否与材料一致（最终报价而非首轮报价、B 的运维费用已计入、C 两期周期已相加、D 的境外主存储判为不满足），review.md 是否逐家逐项给出可核对的原文依据，且复核结论与材料一致？" } }
+  ],
+  "rules": [
+    { "id": "R01", "kind": "citation-sources", "params": { "path": "deliverables/review.md", "allowedRoots": ["materials"], "requireExcerpt": true } },
+    { "id": "R02", "kind": "citation-sources", "params": { "path": "deliverables/comparison.md", "allowedRoots": ["materials"], "requireExcerpt": true } },
+    { "id": "R03", "kind": "protected-unchanged", "params": { "paths": ["materials"] } }
+  ]
+}

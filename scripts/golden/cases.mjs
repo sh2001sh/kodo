@@ -7,7 +7,7 @@ import path from 'node:path';
 import { GoldenError } from './errors.mjs';
 import { validateRubric } from './score.mjs';
 
-export const CATEGORIES = Object.freeze(['literature', 'data', 'report', 'coding']);
+export const CATEGORIES = Object.freeze(['literature', 'data', 'report', 'coding', 'subrun']);
 export const DEFAULT_LIMITS = Object.freeze({
   contextTokens: 1_048_576, outputTokens: 393_216, maxOutputTokens: 16_384,
   maxModelCalls: 100, maxTokens: 3_000_000, maxToolCalls: 300, maxDurationMs: 2_700_000,

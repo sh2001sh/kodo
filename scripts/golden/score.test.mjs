@@ -326,3 +326,25 @@ test('markdown tables accept pipe-less rows but stop at the declared cell count'
   const trailingWide = '| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 | 5 |\n';
   assert.equal(parseMarkdownTables(trailingWide)[0].rows.length, 1);
 });
+
+test('run-shape counts child runs and fails when the shape was not recorded', () => {
+  const rubric = {
+    schemaVersion: 1,
+    passThreshold: 1,
+    rules: [],
+    checks: [check('S1', 'run-shape', { minChildren: 2, maxChildren: 6, minCompletedChildren: 2 })],
+  };
+  const run = runShape => evaluateRubric({ rubric, ...makeReader({}), runShape });
+  const ok = run({ children: [{ status: 'completed' }, { status: 'completed' }, { status: 'failed' }] });
+  assert.equal(ok.passed, true);
+  assert.deepEqual(ok.checks[0].detail, { children: 3, completed: 2 });
+  const none = run({ children: [] });
+  assert.equal(none.passed, false);
+  assert.match(none.checks[0].reasons.join(' '), /0 child run\(s\), needs >= 2/u);
+  const tooMany = run({ children: Array.from({ length: 7 }, () => ({ status: 'completed' })) });
+  assert.match(tooMany.checks[0].reasons.join(' '), /allows <= 6/u);
+  const unrecorded = run(null);
+  assert.equal(unrecorded.passed, false);
+  assert.match(unrecorded.checks[0].reasons[0], /not recorded/u);
+  assert.throws(() => validateRubric({ ...rubric, checks: [check('S2', 'run-shape', {})] }), GoldenError);
+});

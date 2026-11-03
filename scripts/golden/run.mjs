@@ -457,6 +457,9 @@ async function runCell(entry, context) {
   const reply = finalText(app.store, app.store.run(runId));
   const eventCounts = collectEventCounts(app.store, sessionId);
   const reads = collectReads(app.store, sessionId);
+  const runShape = {
+    children: app.store.listRuns(sessionId).filter(run => run.parentId).map(run => ({ id: run.id, status: run.status })),
+  };
   await app.shutdown().catch(error => { runError ??= `shutdown: ${errorText(error)}`; });
   if (relay) await relay.close();
   const relayStats = relay
@@ -493,6 +496,7 @@ async function runCell(entry, context) {
     human,
     protectedResults,
     commandResults,
+    runShape,
     readFile: relativePath => readWorkspaceText(workspace, relativePath),
     listFiles: () => listWorkspaceFiles(workspace),
     statFile: relativePath => statWorkspaceFile(workspace, relativePath),
@@ -544,7 +548,7 @@ async function runCell(entry, context) {
     passed: score.passed,
     humanPending: score.humanPending,
     // Evidence needed to rescore later (after human.json is filled in) without rerunning.
-    scoring: { finalText: reply, protectedResults, commandResults },
+    scoring: { finalText: reply, protectedResults, commandResults, runShape },
   };
   report.smoke = { ok: !smokeFailure(caseData, report), failure: smokeFailure(caseData, report) };
   await writeJson(path.join(directory, 'report.json'), report, context.credentials?.key);
@@ -650,6 +654,7 @@ async function rescore(outRoot) {
         human,
         protectedResults: report.scoring?.protectedResults ?? {},
         commandResults: report.scoring?.commandResults ?? {},
+        runShape: report.scoring?.runShape ?? null,
         readFile: relativePath => readWorkspaceText(workspace, relativePath),
         listFiles: () => listWorkspaceFiles(workspace),
         statFile: relativePath => statWorkspaceFile(workspace, relativePath),
