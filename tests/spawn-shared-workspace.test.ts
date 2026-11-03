@@ -54,7 +54,7 @@ describe('card tool surface after the delivery-tool removal', () => {
     }
     expect(compactDefaultCard.version).toBe('1.2.0');
     expect(legacySimpleDefaultCard.version).toBe('1.2.0');
-    expect(simpleDefaultCard.version).toBe('1.3.0');
+    expect(simpleDefaultCard.version).toBe('1.4.0');
   });
 
   it('fails fast for a card that still declares a removed delivery tool', () => {

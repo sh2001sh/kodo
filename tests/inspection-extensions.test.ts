@@ -57,9 +57,11 @@ describe('authorized tool evidence', () => {
   it('preserves legacy builtin evidence and hides unpinned unknown or private records', () => {
     const { app, runId } = fixture();
     const legacy = ['file.mkdir', 'file.patch', 'file.rename', 'file.delete', 'history.read'];
-    for (const name of [...legacy, 'custom.unpinned', 'send_message', 'model']) app.store.putCall({ id: name, runId, step: 0, kind: name === 'model' ? 'model' : 'tool', name, status: 'succeeded', effect: 'read', requestRef: app.store.blob({}), resultRef: app.store.blob({ evidence: name }), reservedTokens: 0, ...(['send_message', 'model'].includes(name) ? { evidencePermission: 'read' } : {}) });
+    // spawn_agent is a current private coordination record even with a recorded permission; a historical
+    // send_message record (1d removed the tool) was never given an evidence permission and stays hidden.
+    for (const name of [...legacy, 'custom.unpinned', 'spawn_agent', 'send_message', 'model']) app.store.putCall({ id: name, runId, step: 0, kind: name === 'model' ? 'model' : 'tool', name, status: 'succeeded', effect: 'read', requestRef: app.store.blob({}), resultRef: app.store.blob({ evidence: name }), reservedTokens: 0, ...(['spawn_agent', 'model'].includes(name) ? { evidencePermission: 'read' } : {}) });
     expect(inspect(app, runId, runId).calls.map(item => item.name)).toEqual(legacy);
-    for (const id of ['custom.unpinned', 'send_message', 'model']) expect(() => inspect(app, runId, runId, id)).toThrow('authorized evidence permission');
+    for (const id of ['custom.unpinned', 'spawn_agent', 'send_message', 'model']) expect(() => inspect(app, runId, runId, id)).toThrow('authorized evidence permission');
   });
 
   it('exposes skill loading evidence with its pinned read grant', async () => {

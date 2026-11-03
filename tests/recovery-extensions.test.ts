@@ -327,7 +327,7 @@ describe('host recovery verifiers', () => {
       expect(() => restored.coordinator.recovery.plan(runId)).toThrow();
       expect(() => restored.recover(runId)).toThrow();
       const next = restored.createRun({ objective: 'Write a fresh file after the old effect was manually settled.', workspace: root, binding, permissions: ['read', 'write'] });
-      await restored.coordinator.tools.execute(next.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'fresh-write', content: 'Write and verify the new task file', status: 'in_progress', executor: 'main' }] }, new AbortController().signal);
+      await restored.coordinator.tools.execute(next.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'fresh-write', content: 'Write and verify the new task file', status: 'in_progress' }] }, new AbortController().signal);
       expect((await restored.run(next.id)).status).toBe('completed');
       expect(readFileSync(path.join(root, 'fresh-write.txt'), 'utf8')).toBe('new task completed');
       expect(execute).not.toHaveBeenCalled();

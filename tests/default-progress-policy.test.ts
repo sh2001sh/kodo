@@ -10,7 +10,7 @@ describe('versioned default progress policy', () => {
   it('keeps the frozen simple card version and enables advice only in the new version', () => {
     expect(legacySimpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.2.0' });
     expect(legacySimpleDefaultCard.nudges).toBeUndefined();
-    expect(simpleDefaultCard).toMatchObject({ id: legacySimpleDefaultCard.id, version: '1.3.0', nudges: true, tools: legacySimpleDefaultCard.tools, prompt: legacySimpleDefaultCard.prompt });
+    expect(simpleDefaultCard).toMatchObject({ id: legacySimpleDefaultCard.id, version: '1.4.0', nudges: true, tools: legacySimpleDefaultCard.tools, prompt: legacySimpleDefaultCard.prompt });
     expect(simpleDefaultCard.digest).not.toBe(legacySimpleDefaultCard.digest);
   });
 
@@ -24,7 +24,7 @@ describe('versioned default progress policy', () => {
     ), undefined, { instructions: { global: false }, memory });
     try {
       const run = app.createRun({ objective: 'Inspect the file and report the line structure without editing it.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxModelCalls: 20, maxTokens: 1_000_000 } });
-      expect(run.card).toMatchObject({ version: '1.3.0', nudges: true });
+      expect(run.card).toMatchObject({ version: '1.4.0', nudges: true });
       const final = await app.run(run.id);
       expect(final.status, final.error).toBe('completed');
       const notices = app.store.events(run.id, { types: ['progress.write_nudged'] });

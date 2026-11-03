@@ -1,20 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync } from 'node:fs';
-import { inspectRun } from '../src/runtime/inspection.js';
-import { submitReport } from '../src/runtime/report.js';
+import { childCompletionSummary, inspectRun } from '../src/runtime/inspection.js';
 import type { Call, Run } from '../src/runtime/types.js';
 import { fixture } from './helpers.js';
 
 type Options = Parameters<typeof inspectRun>[2];
 interface Page { text: string; complete: boolean; next: Options | null }
 interface Observation { id: string; command: string | null; exitCode?: number | null; evidenceAvailable: boolean; stale: boolean; outputPreview: Record<string, string>; previousSameCommand: { callId: string; status: string }[] }
-interface Bundle { observations: Observation[]; totalObservations: number; nextObservations: Options | null; limitations: string[]; report: { status: string }; parentJudgment: string; hostAcceptance: string }
+interface Bundle { observations: Observation[]; totalObservations: number; nextObservations: Options | null; limitations: string[]; parentJudgment: string; hostAcceptance: string; resultPreview: string | null }
 
 function setup() {
   const f = fixture(undefined, ['read', 'write', 'exec']);
   const { app, runId } = f;
   const parent = app.store.run(runId);
-  const child: Run = { ...parent, id: 'inspection-child', parentId: runId, status: 'completed', resultRef: app.store.blob({ text: 'Checks completed; see actual evidence.' }), card: { ...parent.card, report: [{ name: 'checks', kind: 'calls', required: true }, { name: 'unverified', kind: 'text', required: true }] } };
+  const child: Run = { ...parent, id: 'inspection-child', parentId: runId, status: 'completed', resultRef: app.store.blob({ text: 'Checks completed; see actual evidence.' }) };
   app.store.putRun(child);
   const record = (id: string, value: unknown, extra: Partial<Call> = {}, args: unknown = { command: 'npm test', cwd: '.' }) => {
     app.store.putCall({ id, runId: child.id, step: app.store.calls(child.id).length, kind: 'tool', name: 'shell.exec', effect: 'write', status: 'succeeded', requestRef: app.store.blob({ arguments: JSON.stringify(args) }), ...(value === undefined ? {} : { resultRef: app.store.blob(value) }), reservedTokens: 0, ...extra });
@@ -34,13 +33,14 @@ function setup() {
 
 describe('bounded acceptance evidence', () => {
   it('aggregates actual outcomes and repeated commands without inferring repairs or acceptance', () => {
-    const { app, child, record, bundle } = setup();
+    const { record, bundle } = setup();
     record('failed-check', { stdout: '1 failed', stderr: '', exitCode: 1 });
     record('edit', { changed: true }, { name: 'file.patch' }, { path: 'src/index.ts' });
     record('passed-check', { stdout: '12 passed', stderr: '', exitCode: 0 });
-    submitReport(app.store, child, { checks: ['failed-check', 'passed-check'], unverified: 'No external service checks.' });
     const result = bundle();
-    expect(result).toMatchObject({ report: { status: 'complete', claims: { unverified: 'No external service checks.' } }, hostAcceptance: 'not_checked', parentJudgment: 'not_checked', totalObservations: 2 });
+    expect(result).toMatchObject({ hostAcceptance: 'not_checked', parentJudgment: 'not_checked', totalObservations: 2, resultPreview: 'Checks completed; see actual evidence.' });
+    expect(result).not.toHaveProperty('report');
+    expect(result).not.toHaveProperty('task');
     expect(result.observations).toMatchObject([
       { id: 'passed-check', command: '{"command":"npm test","cwd":"."}', exitCode: 0, outputPreview: { stdout: '12 passed' }, previousSameCommand: [{ callId: 'failed-check', status: 'succeeded', exitCode: 1 }] },
       { id: 'failed-check', exitCode: 1, outputPreview: { stdout: '1 failed' }, previousSameCommand: [] },
@@ -57,7 +57,7 @@ describe('bounded acceptance evidence', () => {
     app.store.updateRun(child.id, { status: 'failed', error: 'MODEL_INCOMPLETE: check result missing' });
     expect(inspect({ section: 'acceptance' })).toMatchObject({ status: 'failed', stale: true, error: 'MODEL_INCOMPLETE: check result missing' });
     const result = bundle();
-    expect(result).toMatchObject({ report: { status: 'missing' }, observations: [{ id: 'missing-result', evidenceAvailable: false, exitCode: null, stale: true }] });
+    expect(result).toMatchObject({ observations: [{ id: 'missing-result', evidenceAvailable: false, exitCode: null, stale: true }] });
     expect(result.limitations.join(' ')).toContain('no recorded result');
     expect(result.limitations.join(' ')).toContain('not Git commits');
   });
@@ -134,27 +134,36 @@ describe('bounded acceptance evidence', () => {
     expect(acceptance).not.toHaveProperty('execution');
   });
 
-  it('reports task generations and obsolete prerequisites without mutating the run or confusing decision versions', () => {
-    const { app, runId, child, bundle, inspect } = setup();
-    const session = app.store.session(child.sessionId);
-    app.store.putSession({ ...session, taskProtocol: 2 });
-    const items = [
-      { id: 'design', content: 'Synthetic prerequisite', status: 'completed', executor: 'main' },
-      { id: 'verify', content: 'Synthetic verification', status: 'in_progress', executor: 'agent', dependsOn: ['design'] },
-    ];
-    app.store.event(runId, 'todo.updated', { snapshot: { ownerRunId: runId, revision: 1, items, generations: { design: 1, verify: 1 } } });
-    app.store.updateRun(child.id, { step: 1, todo: { id: 'verify', generation: 1, dependencies: [{ id: 'design', generation: 1 }], ready: true } });
-    expect(bundle()).toMatchObject({ task: { id: 'verify', generation: 1, assignmentCurrent: true, dependenciesCurrent: true, dependencies: [{ id: 'design', acceptedGeneration: 1, currentGeneration: 1, status: 'completed', current: true }] } });
-    app.store.event(runId, 'todo.updated', { snapshot: { ownerRunId: runId, revision: 2, items, generations: { design: 2, verify: 1 } } });
-    const before = app.store.run(child.id);
-    const events = app.store.events(child.id).length;
-    expect(inspect({ section: 'acceptance' })).toMatchObject({ stale: false, decisionVersion: 0 });
-    const changed = bundle();
-    expect(changed).toMatchObject({ task: { assignmentCurrent: true, dependenciesCurrent: false, dependencies: [{ acceptedGeneration: 1, currentGeneration: 2, status: 'completed', current: false }] } });
-    expect(changed.limitations.join(' ')).toContain('Prerequisite versions are not currently accepted');
-    expect(app.store.run(child.id)).toEqual(before);
-    expect(app.store.events(child.id)).toHaveLength(events);
-    app.store.event(runId, 'todo.updated', { snapshot: { ownerRunId: runId, revision: 3, items: [], generations: {} } });
-    expect(bundle()).toMatchObject({ task: { assignmentCurrent: false, currentGeneration: null, dependenciesCurrent: false, dependencies: [{ status: 'missing' }] } });
+  it('pages newest observations first and states that exit zero is not acceptance', () => {
+    const { child, record, bundle } = setup();
+    record('old', { exitCode: 1, stdout: 'old failure' });
+    for (let index = 0; index < 3; index++) record(`recent-${index}`, { exitCode: 0, stdout: 'passed' });
+    expect(bundle()).toMatchObject({ totalObservations: 4, parentJudgment: 'not_checked', hostAcceptance: 'not_checked' });
+    const page = bundle({ limit: 2 });
+    expect(page.observations.map(item => item.id)).toEqual(['recent-2', 'recent-1']);
+    expect(page.nextObservations).toMatchObject({ run_id: child.id, section: 'acceptance', offset: 2, limit: 2 });
+    expect(page.limitations.join(' ')).toContain('do not establish acceptance');
+  });
+
+  it('reports a missing child result without mutating the run', () => {
+    const { app, child, inspect } = setup();
+    app.store.updateRun(child.id, { resultRef: undefined, status: 'failed', error: 'Verification result is unavailable.' });
+    const before = app.store.events(child.id);
+    expect(inspect({ section: 'acceptance' })).toMatchObject({ status: 'failed', error: 'Verification result is unavailable.' });
+    expect(app.store.events(child.id)).toEqual(before);
+  });
+
+  it('keeps explicit pages and the completion projection bounded with an inspect pointer', () => {
+    const { app, runId, child, record, inspect, bundle } = setup();
+    for (let index = 0; index < 12; index++) record(`many-${index}`, { exitCode: 0, stdout: 'ok '.repeat(2000) });
+    const first = (inspect({ section: 'acceptance' }) as { acceptance: Page }).acceptance;
+    expect(first.text.length).toBeLessThanOrEqual(8000);
+    expect(bundle().observations.length).toBeLessThanOrEqual(8);
+    const summary = childCompletionSummary(app.store, app.store.run(runId), app.store.run(child.id)) as { acceptance: { observations: unknown[] }; inspect: Options; note: string };
+    expect(JSON.stringify(summary).length).toBeLessThan(9000);
+    expect(summary.acceptance.observations.length).toBeLessThanOrEqual(3);
+    expect(summary.inspect).toEqual({ run_id: child.id, section: 'acceptance' });
+    expect(summary.note).toContain('not task acceptance');
+    expect(summary.acceptance).not.toHaveProperty('report');
   });
 });

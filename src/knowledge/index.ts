@@ -101,9 +101,19 @@ export class ProjectKnowledge {
   /** No database changes: callers can validate before atomically completing a run. */
   prepare(runId: string, finalText: string, observationId?: string): PreparedKnowledge {
     const run = effectiveMethodRun(this.store, this.store.run(runId));
+    // 1d removed the exploration run field. Older records may still carry it; new
+    // observations name their identity explicitly or through the published JSON.
     const exploration = (run as Run & { exploration?: { questionId: string; decisionVersion?: number } }).exploration;
-    if (!exploration && !observationId) throw new KodoError('KNOWLEDGE_RESULT', 'project observations need an explicit identity');
-    const result = parseResult(finalText, observationId ?? exploration!.questionId);
+    let questionId = observationId ?? exploration?.questionId;
+    if (!questionId) {
+      let candidate: unknown;
+      try { candidate = JSON.parse(finalText); }
+      catch { throw new KodoError('KNOWLEDGE_RESULT', 'exploration completion must be a JSON object'); }
+      const id = (candidate as { question_id?: unknown } | null)?.question_id;
+      if (typeof id === 'string') questionId = id;
+    }
+    if (!questionId) throw new KodoError('KNOWLEDGE_RESULT', 'project observations need an explicit identity');
+    const result = parseResult(finalText, questionId);
     const project = this.project(runId);
     const evidence: Evidence[] = [];
     const evidenceIds = new Map<string, string>();

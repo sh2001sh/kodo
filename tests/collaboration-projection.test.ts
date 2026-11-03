@@ -18,7 +18,6 @@ type ChildOptions = {
   objective?: string;
   status?: RunStatus;
   createdAt?: string;
-  exploration?: Run['exploration'];
   requiresValidation?: boolean;
 };
 
@@ -36,7 +35,6 @@ function putChild(app: Application, main: Run, options: ChildOptions): Run {
     cancelRequested: false,
     decisionVersion: 0,
     createdAt: options.createdAt ?? new Date().toISOString(),
-    ...(options.exploration === undefined ? {} : { exploration: options.exploration }),
     ...(options.requiresValidation === undefined ? {} : { requiresValidation: options.requiresValidation }),
   };
   app.store.putRun(run);
@@ -116,11 +114,9 @@ describe('collaborationView', () => {
     expect(collaborationView(app, main.id).children).toMatchObject({ maximum: null, maximumActive: 1, created: 1, active: 1, remainingActive: 0 });
     finish(app, first.id, 'completed');
     expect(collaborationView(app, main.id).children).toMatchObject({ maximum: null, maximumActive: 1, created: 1, active: 0, remainingActive: 1 });
-    const next = putChild(app, main, { id: 'child-next' });
-    app.store.updateRun(next.id, { agentId: first.id });
+    putChild(app, main, { id: 'child-next' });
     const view = collaborationView(app, main.id);
     expect(view.children).toMatchObject({ created: 2, active: 1, remainingActive: 0 });
-    expect(agentOf(view, next.id).agentId).toBe(first.id);
   });
   it('anchors direct children behind the main task and ignores unrelated roots', () => {
     const { app, main } = setup();
@@ -360,11 +356,8 @@ describe('collaborationView', () => {
       putResult(app, plain.id, { text: `结果 kodo-secret-value-42 ${'字'.repeat(700)}`, quality: { status: 'passed' } });
       const surrogate = putChild(app, main, { id: 'child-surrogate' });
       putResult(app, surrogate.id, { text: `${'a'.repeat(599)}😀tail`, quality: { status: 'not_checked' } });
-      const exploration = putChild(app, main, {
-        id: 'child-exploration',
-        exploration: { questionId: 'q1', batchId: 'b1', decisionVersion: 0, consumer: 'main', deliverable: 'answer', knowledgeRefs: [] },
-      });
-      putResult(app, exploration.id, { text: JSON.stringify({ summary: '探索结论 kodo-secret-value-42', open_questions: [] }), quality: { status: 'not_checked' } });
+      const structured = putChild(app, main, { id: 'child-structured' });
+      putResult(app, structured.id, { text: JSON.stringify({ summary: '探索结论 kodo-secret-value-42', open_questions: [] }), quality: { status: 'not_checked' } });
 
       const view = collaborationView(app, main.id);
       const plainResult = agentOf(view, plain.id).result!;
@@ -379,8 +372,8 @@ describe('collaborationView', () => {
       expect(surrogateResult.summary).toBe('a'.repeat(599));
       expect(/[\uD800-\uDBFF]$/.test(surrogateResult.summary)).toBe(false);
 
-      expect(agentOf(view, exploration.id).result?.summary).toBe('探索结论 [REDACTED]');
-      expect(agentOf(view, exploration.id).result?.quality).toBe('not_checked');
+      expect(agentOf(view, structured.id).result?.summary).toBe('探索结论 [REDACTED]');
+      expect(agentOf(view, structured.id).result?.quality).toBe('not_checked');
 
       const asker = putChild(app, main, { id: 'child-long-question', status: 'running' });
       ask(app, asker, 'question-long', `你是否允许 kodo-secret-value-42 ${'问'.repeat(300)}`);

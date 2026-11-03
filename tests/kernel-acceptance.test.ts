@@ -24,6 +24,8 @@ function auditedRecovery(app: Application, sourceId: string): string {
   app.store.transaction(() => {
     app.store.event(sourceId, 'recovery.continued', { runId: next.id });
     app.store.event(next.id, 'run.queued', { continuationOf: sourceId, reason: 'verified effect recovery; source terminal records remain immutable' });
+    // The successor has consumed its fixture input, so a later wait is not woken by it.
+    app.store.updateRun(next.id, { inputCursor: app.store.inbox(next.id).at(-1)?.seq ?? app.store.run(next.id).inputCursor ?? 0 });
   });
   return next.id;
 }
@@ -321,55 +323,56 @@ describe('kernel design acceptance', () => {
     expect(app.store.events(peerId).filter(x => x.type === 'run.interrupted')).toHaveLength(0);
   });
 
-  it('routes peer replies and inherited questions only across an audited recovery mailbox', () => {
+  it('transfers inherited user questions and run waits only across an audited recovery mailbox', () => {
     const { app, runId } = fixture();
-    const peer = mailbox(app, runId, 'spawn_agent', { objective: 'peer with old questions' }).id as string;
-    const outgoing = mailbox(app, runId, 'send_message', { to: peer, kind: 'question', content: 'Please supply evidence' }, 'outgoing').id as string;
-    const incoming = mailbox(app, peer, 'send_message', { to: runId, kind: 'question', content: 'Please clarify acceptance' }, 'incoming').id as string;
+    const peer = mailbox(app, runId, 'spawn_agent', { objective: 'peer of the recovered main' }).id as string;
     mailbox(app, runId, 'ask_user', { question: 'Which label?' });
     const oldUserQuestion = app.coordinator.mailbox.userQuestions(app.store.run(runId).sessionId)[0]!;
     const recovered = auditedRecovery(app, runId);
     const source = app.store.run(runId);
     expect(app.coordinator.mailbox.recoveryTarget(source).id).toBe(recovered);
-    const reply = mailbox(app, peer, 'send_message', { to: runId, kind: 'answer', reply_to: outgoing, content: 'Peer evidence supplied' }, 'reply');
-    expect(reply).toMatchObject({ delivered: true, routed_from: runId, to: recovered });
-    expect(app.store.message(reply.id as string)).toMatchObject({ from: peer, to: recovered, replyTo: outgoing });
-    const visible = mailbox(app, recovered, 'list_agents', {}).open_questions as { id: string }[];
-    expect(visible.map(x => x.id)).toEqual(expect.arrayContaining([incoming, oldUserQuestion.id]));
-    mailbox(app, recovered, 'send_message', { to: peer, kind: 'answer', reply_to: incoming, content: 'New main clarified acceptance' }, 'recovered-answer');
-    const wait = mailbox(app, recovered, 'wait_for_events', { question_ids: [outgoing] });
-    expect(app.store.wait(wait.waitId as string)).toMatchObject({ status: 'settled', reason: 'conditions_met' });
-    expect(app.coordinator.mailbox.userQuestions(source.sessionId).map(x => x.id)).toContain(oldUserQuestion.id);
+    // The open user question stays visible because its owner recovered, and the successor owns it.
+    expect(app.coordinator.mailbox.userQuestions(source.sessionId).map(x => x.id)).toEqual([oldUserQuestion.id]);
+    const repeated = mailbox(app, recovered, 'ask_user', { question: 'Which  label?' }, 'repeated');
+    expect(app.store.wait(repeated.waitId as string)).toMatchObject({ status: 'registered', questionIds: [oldUserQuestion.id] });
+    app.answer(oldUserQuestion.id, 'release-v1');
+    app.coordinator.mailbox.refresh(recovered);
+    expect(app.store.wait(repeated.waitId as string)).toMatchObject({ status: 'settled', reason: 'conditions_met' });
+    const peerWait = mailbox(app, recovered, 'wait_for_events', { run_ids: [peer] });
+    expect(app.store.wait(peerWait.waitId as string)).toMatchObject({ status: 'registered', runIds: [peer] });
     expect(() => mailbox(app, recovered, 'wait_for_events', { run_ids: [runId] })).toThrow('own completion');
     expect(app.store.run(runId)).toEqual(source);
   });
 
   it('does not expose or transfer predecessor questions to an ordinary follow-up', () => {
     const { app, runId } = fixture();
-    const peer = mailbox(app, runId, 'spawn_agent', { objective: 'peer' }).id as string;
-    const outgoing = mailbox(app, runId, 'send_message', { to: peer, kind: 'question', content: 'Old request' }, 'old-request').id as string;
-    const incoming = mailbox(app, peer, 'send_message', { to: runId, kind: 'question', content: 'Old peer question' }, 'old-question').id as string;
+    const outgoing = (mailbox(app, runId, 'ask_user', { question: 'Old request' }, 'old-request').waitId as string);
+    const oldQuestion = app.store.wait(outgoing).questionIds[0]!;
     app.store.updateRun(runId, { status: 'completed', resultRef: app.store.blob({ text: 'Old main completed' }) });
     const followUp = app.submitInput(runId, 'Ordinary new task');
     expect(app.coordinator.mailbox.recoveryTarget(app.store.run(runId)).id).toBe(runId);
-    expect(mailbox(app, peer, 'send_message', { to: runId, kind: 'notice', content: 'Late message' })).toMatchObject({ delivered: false, target_status: 'completed' });
-    expect(mailbox(app, followUp.id, 'list_agents', {}).open_questions).toEqual([]);
-    expect(() => mailbox(app, followUp.id, 'send_message', { to: peer, kind: 'answer', reply_to: incoming, content: 'Must not inherit' })).toThrow('addressed to this sender');
-    expect(() => mailbox(app, followUp.id, 'wait_for_events', { question_ids: [outgoing] })).toThrow('your own questions');
+    expect(app.coordinator.mailbox.userQuestions(followUp.sessionId)).toEqual([]);
+    expect(() => mailbox(app, followUp.id, 'wait_for_events', { question_ids: [oldQuestion] })).toThrow('your own questions');
+    const fresh = mailbox(app, followUp.id, 'ask_user', { question: 'Old request' }, 'new-request');
+    expect(app.store.wait(fresh.waitId as string).questionIds).not.toContain(oldQuestion);
   });
 
   it('requires both sides of the same-session recovery audit and follows the latest audited successor', () => {
     const { app, runId } = fixture();
+    const asked = mailbox(app, runId, 'ask_user', { question: 'Confirm the release label' });
+    const question = app.store.wait(asked.waitId as string).questionIds[0]!;
     const first = auditedRecovery(app, runId);
     const latest = auditedRecovery(app, first);
-    const peer = mailbox(app, latest, 'spawn_agent', { objective: 'peer' }).id as string;
-    const sent = mailbox(app, peer, 'send_message', { to: runId, kind: 'notice', content: 'Route through two verified recoveries' });
-    expect(app.store.message(sent.id as string)?.to).toBe(latest);
+    expect(app.coordinator.mailbox.recoveryTarget(app.store.run(runId)).id).toBe(latest);
+    // Two verified recoveries carry question ownership and self-wait detection to the latest successor.
+    expect(app.store.wait(mailbox(app, latest, 'wait_for_events', { question_ids: [question] }).waitId as string)).toMatchObject({ status: 'registered' });
+    expect(() => mailbox(app, latest, 'wait_for_events', { run_ids: [runId] })).toThrow('own completion');
     const source = app.store.run(latest);
     app.store.updateRun(latest, { status: 'failed', error: 'UNKNOWN_WRITE: fixture' });
     const unaudited = app.submitInput(latest, 'Not an audited recovery');
     app.store.event(latest, 'recovery.continued', { runId: unaudited.id });
     expect(app.coordinator.mailbox.recoveryTarget(app.store.run(latest)).id).toBe(source.id);
+    expect(() => mailbox(app, unaudited.id, 'wait_for_events', { question_ids: [question] })).toThrow('your own questions');
   });
 
   it('pauses shared execution time while the session durably waits for its user', async () => {

@@ -11,7 +11,6 @@ import { declareTasks } from './task-declare.js';
 import type { TaskDeclaration } from './task-declare.js';
 import { currentDependencies, dependenciesCurrent, descendants, moveTaskNode, predecessorsSatisfied, readTaskGraph, requireTaskNode, writeTaskNode } from './task-graph.js';
 import { activeMethod, methodContract, methodSkillId, sessionMethodCards } from '../extensions/methods.js';
-import { reportCompleteness, validateReport } from './report.js';
 import { assertFileScope, intersectFileScopes } from './scope.js';
 import { ProjectKnowledge } from '../knowledge/index.js';
 import { createInputTokenEstimator, estimateTextTokens } from './context-tokens.js';
@@ -63,7 +62,7 @@ export function executeMethodStage(store: Store, run: Run, callId: string, args:
     end(action);
     for (const successor of descendants(graph, node.id)) if (successor.state === 'done') moveTaskNode(store, run.id, successor, 'stale', { reason: 'predecessor stage revised' });
     if (action === 'resume' && node.runId) {
-      const result = invoke('followup_task', { target: node.runId, objective: args.reason ?? node.goal }) as { id: string };
+      const result = invoke('spawn_agent', { fork_of: node.runId, objective: args.reason ?? node.goal }) as { id: string };
       return writeTaskNode(store, run.id, { ...node, state: 'running', runId: result.id, resultRef: undefined, artifactId: undefined, completionKey: undefined, activationCallId: callId, dependencies: currentDependencies(graph, node), resultDecisionVersion: session.decisionVersion ?? 0 });
     }
     return writeTaskNode(store, run.id, { ...node, state: 'pending', generation: action === 'redo' ? node.generation + 1 : node.generation, continuation: action === 'resume' ? { mode: 'resume', fromRunId: run.id } : undefined, resultRef: undefined, artifactId: undefined, completionKey: undefined, activationCallId: undefined, resultDecisionVersion: undefined, methodInstance: undefined, runId: undefined });
@@ -101,10 +100,8 @@ export function executeMethodStage(store: Store, run: Run, callId: string, args:
       return { callId: id, resultRef: call.resultRef, kind: reading ? 'source-inspection' : 'command-check' };
     });
     const childRun = node.runId ? store.run(node.runId) : undefined;
-    if (childRun && !reportCompleteness(store, childRun).passed) throw new KodoError('TASK_REPORT', 'the child report contract is incomplete');
-    const method = !childRun && active ? store.card(active.card.id, active.card.version) : undefined;
-    const report = method?.report?.length ? validateReport(store, { ...run, card: method }, args.fields) : undefined;
-    const resultRef = store.blob({ artifactId, artifact, checks, report, acceptance: { kind: 'model-review', criteria: node.acceptance ?? null, note: args.reason ?? null } });
+    void childRun;
+    const resultRef = store.blob({ artifactId, artifact, checks, acceptance: { kind: 'model-review', criteria: node.acceptance ?? null, note: args.reason ?? null } });
     end('stage_done');
     return moveTaskNode(store, run.id, node, 'done', { resultRef, artifactId, completionKey: digest(JSON.stringify(args)), resultDecisionVersion: session.decisionVersion ?? 0, reason: 'Stage accepted; its method is no longer active. Preserve project facts and work evidence.' }, { evidenceRef: resultRef });
   }

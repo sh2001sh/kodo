@@ -41,11 +41,11 @@ describe('persistent run-owned todo tools', () => {
       expect(recovered).toMatchObject({ outcome: 'succeeded', result: { revision: 1 } });
     } finally { await second.shutdown(); }
   });
-  it('rejects duplicate IDs, concurrent active work, blank content, foreign session, and cancellation without mutation', async () => {
+  it('rejects duplicate IDs, blank content, foreign session, and cancellation without mutation', async () => {
     const { app, runId, root } = fixture();
     const [read, write] = todoTools(app.store);
     const item = { id: 'one', content: 'work', status: 'in_progress' };
-    for (const items of [[item, item], [item, { ...item, id: 'two' }], [{ ...item, content: '  ' }]]) expect(() => write!.execute(context(app, runId), { expectedRevision: 0, items })).toThrow();
+    for (const items of [[item, item], [{ ...item, content: '  ' }]]) expect(() => write!.execute(context(app, runId), { expectedRevision: 0, items })).toThrow();
     const foreign = app.createRun({ objective: 'foreign', workspace: root, binding });
     expect(() => write!.execute({ ...context(app, runId), session: app.store.session(foreign.sessionId) }, { expectedRevision: 0, items: [] })).toThrow('different session');
     const controller = new AbortController(); controller.abort();
@@ -53,5 +53,13 @@ describe('persistent run-owned todo tools', () => {
     expect(await read!.execute(context(app, runId), {})).toMatchObject({ revision: 0, items: [] });
     app.store.updateRun(runId, { status: 'completed' });
     expect(() => write!.execute(context(app, runId), { expectedRevision: 0, items: [item] })).toThrow('finished run');
+  });
+  it('allows several in-progress items and patches by ID without executor or dependency fields', async () => {
+    const { app, runId } = fixture();
+    const [read, write] = todoTools(app.store);
+    await write!.execute(context(app, runId), { expectedRevision: 0, items: [{ id: 'one', content: 'work', status: 'in_progress' }, { id: 'two', content: 'more', status: 'in_progress' }] });
+    expect(await write!.execute(context(app, runId), { expectedRevision: 1, updates: [{ id: 'one', status: 'completed', note: 'done' }] })).toMatchObject({ revision: 2, changedIds: ['one'] });
+    expect(() => write!.execute(context(app, runId), { expectedRevision: 2, items: [{ id: 'x', content: 'x', status: 'pending', executor: 'agent' }] })).toThrow('schema');
+    expect(await read!.execute(context(app, runId), { full: true })).toMatchObject({ revision: 2, total: 2, items: [{ id: 'one', status: 'completed', note: 'done' }, { id: 'two', status: 'in_progress' }] });
   });
 });

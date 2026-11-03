@@ -41,10 +41,11 @@ export function historyRuns(store: Store, run: Run): Run[] {
       if (source.sessionId !== run.sessionId) continue;
       if (!owner.parentId && !source.parentId) visit(source);
       else if (owner.parentId && source.parentId && owner.continuationOf === source.id && terminal(source.status)) {
-        const parent = source.parentId === owner.parentId ? undefined
-          : store.listRuns(run.sessionId).find(candidate => candidate.id === owner.parentId && !candidate.parentId);
-        if (source.parentId === owner.parentId || (parent && owner.agentId === (source.agentId ?? source.id)
-          && historyRuns(store, parent).some(main => !main.parentId && main.id === source.parentId))) visit(source);
+        if (source.parentId === owner.parentId) visit(source);
+        else {
+          const parent = store.listRuns(run.sessionId).find(candidate => candidate.id === owner.parentId && !candidate.parentId);
+          if (parent && historyRuns(store, parent).some(main => !main.parentId && main.id === source.parentId)) visit(source);
+        }
       }
     }
   };

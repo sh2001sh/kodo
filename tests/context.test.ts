@@ -60,7 +60,7 @@ describe('bounded durable context', () => {
       expect(context).toHaveLength(3);
     }
     expect(main[0]!.content).toContain('Only you can spawn/cancel children and ask the user.');
-    expect(child[0]!.content).toContain('You cannot spawn agents, cancel peers or ask the user;');
+    expect(child[0]!.content).toContain('You cannot spawn children, cancel runs or ask the user;');
     expect(child[0]!.content).toContain('Main run ID: main-one.');
     expect(main[0]!.content).toContain('Workspace: /workspace/one. Permissions: read. Run ID: main-one.');
     expect(other[0]!.content).toContain('Workspace: /workspace/two. Permissions: read, write. Run ID: main-two.');
@@ -204,7 +204,7 @@ describe('bounded durable context', () => {
     const run = f.app.store.run(f.runId);
     f.app.store.updateRun(f.runId, { card: { ...run.card, tools: [] } });
     const session = f.app.store.session(run.sessionId);
-    expect(f.app.coordinator.tools.specs([], session).map(x => x.name)).toEqual(['artifact.read', 'history.search', 'history.read', 'recovery.inspect']);
+    expect(f.app.coordinator.tools.specs([], session).map(x => x.name)).toEqual(['artifact.read', 'history.search', 'history.read', 'recovery.inspect', 'update_progress']);
     const result = await f.app.coordinator.tools.execute(f.runId, 'history.read', { ref: built.archivedRef!, limit: 1 }, new AbortController().signal);
     expect(result).toMatchObject({ runId: f.runId, total: 19 });
     f.app.store.putSession({ ...session, permissions: ['write'] });

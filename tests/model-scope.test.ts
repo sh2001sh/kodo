@@ -18,13 +18,14 @@ describe('host-approved child models and file scopes', () => {
     const alternate = { ...binding, model: 'small-model', limits: { context: 16_000, output: 2048 } };
     const mailbox = new Mailbox(app.store, () => {}, { modelBindings: { small: alternate } });
     const parent = app.store.run(runId);
-    const childId = spawn(mailbox, parent, { model_binding: 'small', scope: { read: ['src'], write: [] } });
+    const spawned = mailbox.execute(parent, 'spawn', 'spawn_agent', mailbox.validate(parent, 'spawn_agent', JSON.stringify({ objective: 'Scoped child', model_binding: 'small', scope: { read: ['src'], write: [] } }))) as { id: string };
     alternate.model = 'mutated-after-host-registration';
-    const child = app.store.run(childId);
+    const child = app.store.run(spawned.id);
     expect(child).toMatchObject({ binding: { model: 'small-model' }, modelBindingId: 'small', modelLimits: { context: 16_000, output: 2048 }, scope: { read: ['src'], write: [] } });
-    const peers = mailbox.execute(parent, 'list', 'list_agents', {});
-    expect(JSON.stringify(peers)).toContain('small-model');
-    expect(JSON.stringify(peers)).not.toContain('apiKeyEnv');
+    // list_agents was removed; the spawn result is the model-visible child metadata.
+    expect(spawned).toMatchObject({ model: 'small-model', modelBinding: 'small' });
+    expect(JSON.stringify(spawned)).not.toContain('apiKeyEnv');
+    expect(JSON.stringify(spawned)).not.toContain(binding.baseURL);
     expect(mailbox.specs(parent).find(tool => tool.name === 'spawn_agent')?.parameters).toMatchObject({ properties: { model_binding: { enum: ['small'] } } });
   });
 
@@ -35,15 +36,16 @@ describe('host-approved child models and file scopes', () => {
     expect(app.store.listRuns()).toHaveLength(1);
   });
 
-  it('inherits narrowed permissions, scope and model in a child continuation', () => {
+  it('keeps narrowed permissions, scope and model in a child fork', () => {
     const { app, runId } = fixture();
     const mailbox = new Mailbox(app.store, () => {}, { modelBindings: { small: { ...binding, model: 'small', limits: { context: 20_000, output: 1000 } } } });
     const parent = app.store.run(runId);
     const childId = spawn(mailbox, parent, { model_binding: 'small', permissions: ['read'], scope: { read: ['src'], write: [] } });
     app.store.updateRun(childId, { status: 'completed' });
-    expect(() => spawn(mailbox, parent, { continuation_of: childId, permissions: ['write'] })).toThrow('subset');
-    expect(() => spawn(mailbox, parent, { continuation_of: childId, scope: { read: ['.'] } })).toThrow('contained');
-    const next = app.store.run(spawn(mailbox, parent, { continuation_of: childId }));
+    expect(() => spawn(mailbox, parent, { fork_of: childId, permissions: ['write'] })).toThrow('subset');
+    expect(() => spawn(mailbox, parent, { fork_of: childId, scope: { read: ['src'] } })).toThrowError(expect.objectContaining({ code: 'FORK_CONTRACT_CHANGED' }));
+    expect(() => spawn(mailbox, parent, { fork_of: childId, permissions: [] })).toThrowError(expect.objectContaining({ code: 'FORK_CONTRACT_CHANGED' }));
+    const next = app.store.run(spawn(mailbox, parent, { fork_of: childId }));
     expect(next).toMatchObject({ binding: { model: 'small' }, modelBindingId: 'small', modelLimits: { context: 20_000 }, permissions: ['read'], scope: { read: ['src'], write: [] } });
     expect(() => mailbox.validate(next, 'spawn_agent', JSON.stringify({ objective: 'escape' }))).toThrow('not available to a child');
   });
@@ -95,7 +97,7 @@ describe('host-approved child models and file scopes', () => {
       expect(request.maxOutputTokens).toBe(binding.limits.output);
       expect(serialized.split(marker)).toHaveLength(2);
       expect(serialized).toContain('PREDECESSOR_RESULT_END');
-      expect(serialized).toContain(`Previous run ${sourceId}`);
+      expect(serialized).toContain(`Fork of run ${sourceId}`);
       expect(request.messages.some(message => message.role === 'assistant' && message.content === largeResult)).toBe(true);
       return answer('continued with the same model and context');
     });
@@ -116,9 +118,9 @@ Read the predecessor evidence and report the result.
       sourceId = spawn(app.coordinator.mailbox, parent);
       expect(app.store.run(sourceId).historyFrom).toBeUndefined();
       expect((await app.coordinator.wake(sourceId)).status).toBe('completed');
-      expect(() => spawn(app.coordinator.mailbox, parent, { continuation_of: sourceId, model_binding: 'small' })).toThrow('fresh child');
-      const successorId = spawn(app.coordinator.mailbox, parent, { continuation_of: sourceId });
-      expect(app.store.run(successorId).historyFrom).toBe(sourceId);
+      expect(() => spawn(app.coordinator.mailbox, parent, { fork_of: sourceId, model_binding: 'small' })).toThrow('fresh child');
+      const successorId = spawn(app.coordinator.mailbox, parent, { fork_of: sourceId });
+      expect(app.store.run(successorId)).toMatchObject({ binding: { model: binding.model }, modelLimits: app.store.run(sourceId).modelLimits });
       const result = await app.coordinator.wake(successorId);
       expect(result.status, result.error).toBe('completed');
       expect(observed).toBe(true);
@@ -167,20 +169,26 @@ describe('canonical file scope boundaries', () => {
 });
 
 describe('agent task progress', () => {
-  it('records bounded working notes for main and child without widening authority', () => {
+  it('records bounded working notes for main and child without widening authority', async () => {
     const { app, runId } = fixture();
     const mailbox = app.coordinator.mailbox;
+    const tools = app.coordinator.tools;
+    const signal = new AbortController().signal;
     const main = app.store.run(runId);
     const child = app.store.run(spawn(mailbox, main, { scope: { read: [], write: [] } }));
+    // update_progress is a native tool now, no longer a collaboration operation.
+    expect(() => mailbox.validate(main, 'update_progress', '{}')).toThrow('not available');
+    const validate = (run: Run, args: Record<string, unknown>) => tools.validate('update_progress', JSON.stringify(args), run.card.tools, app.store.session(run.sessionId), run);
     for (const run of [main, child]) {
-      const args = mailbox.validate(run, 'update_progress', JSON.stringify({ facts: ['Input loaded'], pending: ['Check the boundary case'] }));
-      expect(mailbox.execute(run, 'progress', 'update_progress', args)).toEqual({ facts: ['Input loaded'], completed: [], pending: ['Check the boundary case'], evidence: [] });
+      const args = validate(run, { facts: ['Input loaded'], pending: ['Check the boundary case'] });
+      expect(await tools.execute(run.id, 'update_progress', args, signal)).toEqual({ facts: ['Input loaded'], completed: [], pending: ['Check the boundary case'], evidence: [] });
       expect(app.store.events(run.id).find(event => event.type === 'task.progress.updated')?.data.progress).toEqual({ facts: ['Input loaded'], completed: [], pending: ['Check the boundary case'], evidence: [] });
     }
     expect(app.store.run(child.id).scope).toEqual({ read: [], write: [] });
-    expect(() => mailbox.validate(child, 'update_progress', JSON.stringify({ run_id: main.id, facts: ['Forged peer progress'] }))).toThrow('schema');
-    expect(() => mailbox.validate(child, 'update_progress', JSON.stringify({ facts: ['x'.repeat(801)] }))).toThrow('schema');
-    expect(() => mailbox.execute(child, 'too-large', 'update_progress', { facts: Array.from({ length: 16 }, () => 'x'.repeat(800)) })).toThrow('8000');
+    expect(() => validate(child, { run_id: main.id, facts: ['Forged peer progress'] })).toThrow('schema');
+    expect(() => validate(child, { knowledge_uses: [] })).toThrow('schema');
+    expect(() => validate(child, { facts: ['x'.repeat(801)] })).toThrow('schema');
+    await expect(tools.execute(child.id, 'update_progress', { facts: Array.from({ length: 16 }, () => 'x'.repeat(800)) }, signal)).rejects.toThrow('8000');
     expect(app.store.events(child.id).filter(event => event.type === 'task.progress.updated')).toHaveLength(1);
   });
 });
@@ -241,7 +249,7 @@ Read the host value using custom.child and report its evidence.
     const provider: Provider = { complete(...args) { requests++; return delegate.complete(...args); } };
     const restored = new Application(directory, provider, undefined, { agentFactors: { D: false, E: false, B: false }, tools: [customTool(version, () => { executions++; return 'continued value'; })] });
     try {
-      const continuationId = spawn(restored.coordinator.mailbox, restored.store.run(parentId!), { continuation_of: childId! });
+      const continuationId = spawn(restored.coordinator.mailbox, restored.store.run(parentId!), { fork_of: childId! });
       const continuation = restored.store.run(continuationId);
       expect(continuation.card.id).toBe('tests/custom-child');
       expect(continuation.toolBindings).toEqual(originalBindings!);

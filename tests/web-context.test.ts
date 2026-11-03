@@ -44,11 +44,10 @@ function seedKnowledge(web: Web, options: { objective?: string; summary?: string
   const content = options.content ?? 'export const contract = "first";\n';
   writeFileSync(path.join(web.workspace, file), content);
   const owner = createRun(web, options.objective ?? 'Inspect the project contract.');
-  web.app.store.updateRun(owner.id, { exploration: { questionId, batchId: 'batch', decisionVersion: 0, consumer: 'implementation', deliverable: 'source constraints', knowledgeRefs: [] } });
   const request = call('file.read', { path: file }, randomUUID());
   web.app.store.putCall({ id: request.id, runId: owner.id, step: 0, kind: 'tool', name: 'file.read', status: 'succeeded', effect: 'read', evidencePermission: 'read', decisionVersion: 0, requestRef: web.app.store.blob(request), resultRef: web.app.store.blob({ content, hash: createHash('sha256').update(content).digest('hex'), offset: 1, contentOffset: 0 }), reservedTokens: 0 });
   const finalText = JSON.stringify({ question_id: questionId, summary: options.summary ?? 'The contract is declared in source.ts.', claims: [{ text: 'source.ts declares the contract.', basis: 'source_observation', evidence_ids: [request.id] }], hypotheses: [], open_questions: [] });
-  const ref = knowledge.persist(knowledge.prepare(owner.id, finalText));
+  const ref = knowledge.persist(knowledge.prepare(owner.id, finalText, questionId));
   return { ownerId: owner.id, ref, evidenceId: request.id, content };
 }
 

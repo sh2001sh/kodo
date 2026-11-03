@@ -212,7 +212,8 @@ describe('verified recovery of uncertain effects', () => {
     app.store.updateRun(runId, { status: 'interrupted' });
     writeFileSync(path.join(root, 'effect.txt'), 'applied exactly once');
     await app.reconcile(child.id);
-    expect((await app.recover(runId)).status).toBe('completed');
+    const recovered = await app.recover(runId);
+    expect(recovered.status, recovered.error).toBe('completed');
     const recoveredChild = app.store.listRuns().find(run => run.continuationOf === child.id)!;
     expect(recoveredChild.status).toBe('completed');
     expect(app.store.run(child.id).status).toBe('failed');

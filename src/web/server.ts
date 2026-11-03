@@ -129,7 +129,7 @@ export async function createLocalServer(app: Application, options: LocalServerOp
       if (anchor && !['completed', 'failed', 'cancelled', 'interrupted'].includes(anchor.status)) { await app.run(anchor.id); return; }
       if (current.status === 'queued' || current.status === 'waiting') await app.run(agentRunId);
     }).catch(error => {
-      const data = { action: 'agent_input', code: error instanceof KodoError ? error.code : 'WEB_EXECUTION', message: error instanceof KodoError ? error.message : 'Execution failed; inspect local runtime evidence' };
+      const data = { action: 'agent_spawn', code: error instanceof KodoError ? error.code : 'WEB_EXECUTION', message: error instanceof KodoError ? error.message : 'Execution failed; inspect local runtime evidence' };
       try { app.store.event(agentRunId, 'web.command_failed', data); } catch { /* The target became unreadable; the HTTP receipt remains the durable record. */ }
     }).finally(() => { jobs.delete(task); });
     jobs.add(task);
@@ -297,7 +297,7 @@ export async function createLocalServer(app: Application, options: LocalServerOp
         }
         let action = 'run'; let target: Run; let agent: Run | undefined; let agentRunId: string | undefined;
         const command = /^\/api\/runs\/([^/]+)\/(input|answer|cancel|resume)$/.exec(route);
-        const agentCommand = /^\/api\/runs\/([^/]+)\/agents\/([^/]+)\/(input|cancel)$/.exec(route);
+        const agentCommand = /^\/api\/runs\/([^/]+)\/agents\/([^/]+)\/cancel$/.exec(route);
         const spawnCommand = /^\/api\/runs\/([^/]+)\/agents\/spawn$/.exec(route);
         const methodsCommand = /^\/api\/runs\/([^/]+)\/methods$/.exec(route);
         const knowledgeCommand = /^\/api\/runs\/([^/]+)\/knowledge\/(folder|organize|remove-folder)$/.exec(route);
@@ -314,8 +314,8 @@ export async function createLocalServer(app: Application, options: LocalServerOp
             if (body.disable !== undefined && (!Array.isArray(body.disable) || body.disable.length > 32 || body.disable.some(value => typeof value !== 'string'))) throw new HttpError(400, 'ARGUMENTS', 'disable must be a list of method IDs');
             methodRevision = app.updateSessionMethods(target.id, { expectedDigest: textField(body, 'expectedDigest', 64), ...(body.card !== undefined ? { install: [app.parseCard(textField(body, 'card', 128000))] } : {}), disable: body.disable as string[] | undefined });
           } else if (spawnCommand) {
-            target = run(spawnCommand[1]!, true); onSession?.(target.sessionId); action = 'agent_input';
-            fields(body, ['objective', 'context', 'inputs', 'acceptance', 'permissions', 'model_binding', 'scope', 'continuation_of', 'todoId']);
+            target = run(spawnCommand[1]!, true); onSession?.(target.sessionId); action = 'agent_spawn';
+            fields(body, ['objective', 'fork_of', 'context', 'inputs', 'acceptance', 'permissions', 'model_binding', 'scope']);
             textField(body, 'objective', 32_000);
             agent = app.spawnAgent(target.sessionId, body as unknown as Parameters<typeof app.spawnAgent>[1]);
             agentRunId = agent.id;
@@ -346,19 +346,18 @@ export async function createLocalServer(app: Application, options: LocalServerOp
           } else if (agentCommand) {
             // Host policy is validated on the anchor main run; the Application then requires a same-session direct child.
             target = run(agentCommand[1]!, true); onSession?.(target.sessionId);
-            action = agentCommand[3] === 'input' ? 'agent_input' : 'agent_cancel';
-            const childId = decodeURIComponent(agentCommand[2]!);
-            if (action === 'agent_input') { fields(body, ['content']); agent = app.submitAgentInput(target.id, childId, textField(body, 'content')).agent; }
-            else { fields(body, []); agent = app.cancelAgent(target.id, childId); }
+            action = 'agent_cancel';
+            fields(body, []);
+            agent = app.cancelAgent(target.id, decodeURIComponent(agentCommand[2]!));
             agentRunId = agent.id;
           } else throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found');
-          const receipt = { requestId, runId: target.id, sessionId: target.sessionId, status: action === 'resume' || action === 'agent_input' ? 'accepted' : action === 'agent_cancel' ? agent?.status ?? target.status : target.status, ...(agent ? { agentRunId: agent.id } : {}), ...(node ? { node } : {}), ...(methodRevision ? { methodRevision } : {}) };
+          const receipt = { requestId, runId: target.id, sessionId: target.sessionId, status: action === 'resume' || action === 'agent_spawn' ? 'accepted' : action === 'agent_cancel' ? agent?.status ?? target.status : target.status, ...(agent ? { agentRunId: agent.id } : {}), ...(node ? { node } : {}), ...(methodRevision ? { methodRevision } : {}) };
           app.store.webRequests.insert({ request_id: requestId, fingerprint: signature, response: JSON.stringify(receipt), action, run_id: target.id });
           return receipt;
         });
         json(res, 202, response);
         if (['run', 'input', 'answer', 'resume'].includes(action)) launch(response.runId, action);
-        else if (action === 'agent_input' && agentRunId) launchAgent(agentRunId, response.runId);
+        else if (action === 'agent_spawn' && agentRunId) launchAgent(agentRunId, response.runId);
         return;
       }
       throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found');
@@ -373,9 +372,9 @@ export async function createLocalServer(app: Application, options: LocalServerOp
   for (const row of app.store.webRequests.byActions(['run', 'input', 'answer', 'resume'], true)) {
     try { const current = run(row.run_id, true); if (current.status === 'queued' || (row.action === 'resume' && current.status === 'interrupted')) launch(current.id, row.action); } catch { /* Prior workspace or policy is intentionally inaccessible to this server. */ }
   }
-  // Directed child input is anchored on the main run; re-drive queued/waiting children after a restart. Cancellation is never replayed.
+  // Spawned children are re-driven after a restart; cancellation is never replayed.
   const resumedAgents = new Set<string>();
-  for (const row of app.store.webRequests.byActions(['agent_input'])) {
+  for (const row of app.store.webRequests.byActions(['agent_spawn'])) {
     try {
       const current = run(row.run_id, true);
       const receipt = JSON.parse(row.response) as { agentRunId?: unknown };

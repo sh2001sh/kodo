@@ -38,9 +38,6 @@ Report the captured output.
     app.store.updateRun(peer, { status: 'completed', resultRef: app.store.blob({ text: 'child conclusion', quality: { status: 'not_checked' } }) });
     const proof = evidence(peer, 'file.read', { content: 'ACTUAL PROOF' });
     evidence(peer, 'private-model', { reasoning: 'PRIVATE REASONING' }, { id: 'private-model', kind: 'model' });
-    const listing = invoke(runId, 'list_agents', {});
-    expect(JSON.stringify(listing)).not.toContain('resultRef');
-    expect(listing).toMatchObject({ agents: expect.arrayContaining([expect.objectContaining({ id: peer, resultAvailable: true })]) });
     const summary = invoke(runId, 'inspect_run', { run_id: peer });
     expect(summary).toMatchObject({ runId: peer, status: 'completed', quality: { status: 'not_checked' }, result: { text: 'child conclusion', complete: true }, calls: [{ id: proof, name: 'file.read', status: 'succeeded' }] });
     expect(invoke(runId, 'inspect_run', { run_id: peer, call_id: proof })).toMatchObject({ call: { id: proof, status: 'succeeded' }, evidence: { text: JSON.stringify({ content: 'ACTUAL PROOF' }) } });
@@ -66,7 +63,7 @@ Report the captured output.
   });
 
   it('inherits the parent card and rejects removed card selectors without creating a child', () => {
-    const { app, runId, invoke, spawn } = setup();
+    const { app, runId, spawn } = setup();
     expect(() => spawn({ card_id: 'missing/agent', card_version: '1.0.0' })).toThrow(/unknown field "card_id"/);
     expect(() => spawn({ card_id: 'invented' })).toThrow(/unknown field "card_id"/);
     expect(app.store.listRuns()).toHaveLength(1);
@@ -77,9 +74,10 @@ Report the captured output.
     expect(inherited.tools).toEqual(parentCard.tools);
     const main = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(runId).contextRef));
     const sub = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(spawn()).contextRef));
-    expect(main).toContain('Use explore for read-only investigation');
-    expect(sub).not.toContain('Use explore for read-only investigation');
-    expect(invoke(runId, 'list_agents', {})).toHaveProperty('agents');
+    // Delegation guidance is main-only; the removed explore workflow is no longer advertised.
+    expect(main).toContain('fork_of continues a settled child');
+    expect(sub).not.toContain('fork_of continues a settled child');
+    expect(main).not.toContain('Use explore for read-only investigation');
   });
 
   it.each(['process.exec', 'process.run'])('pages complete %s capture without splitting Unicode and separates execution, exit and acceptance', name => {

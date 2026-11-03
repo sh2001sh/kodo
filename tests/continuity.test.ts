@@ -93,38 +93,44 @@ describe('ordinary task continuity', () => {
     expect(historyRuns(app.store, app.store.run(peer.id)).map(run => run.id)).toEqual([peer.id]);
   });
 
-  it('grants explicit managed child continuations predecessor evidence across a chain without inheriting mailboxes', () => {
+  it('gives managed child forks the predecessor context prefix across a chain without inheriting mailboxes', () => {
     const { app, runId } = fixture();
     const main = app.store.run(runId);
-    const spawn = (objective: string, continuationOf?: string): Run => {
-      const result = app.store.transaction(() => app.coordinator.mailbox.execute(main, objective, 'spawn_agent', { objective, permissions: ['read'], ...(continuationOf ? { continuation_of: continuationOf } : {}) })) as { id: string };
+    const spawn = (objective: string, forkOf?: string): Run => {
+      const result = app.store.transaction(() => app.coordinator.mailbox.execute(main, objective, 'spawn_agent', { objective, permissions: ['read'], ...(forkOf ? { fork_of: forkOf } : {}) })) as { id: string };
       return app.store.run(result.id);
     };
     const predecessor = spawn('original child');
     const sibling = spawn('unrelated sibling');
-    const archive = app.store.blob({ version: 1, runId: predecessor.id, sessionId: main.sessionId, messages: [{ role: 'assistant', content: 'PREDECESSOR ARCHIVED PROOF' }] });
-    app.store.event(predecessor.id, 'context.compacted', { archivedRef: archive });
-    app.store.putCall({ id: 'predecessor-proof', runId: predecessor.id, step: 0, kind: 'tool', name: 'file.read', status: 'succeeded', effect: 'read', requestRef: app.store.blob({ path: 'source.txt' }), resultRef: app.store.blob({ content: 'PREDECESSOR TOOL PROOF' }), reservedTokens: 0 });
+    app.store.updateRun(predecessor.id, { contextRef: app.store.blob([...app.store.readBlob<Message[]>(predecessor.contextRef), { role: 'assistant', content: 'PREDECESSOR CONTEXT PROOF' }]) });
     app.store.putMessage({ id: 'predecessor-open-question', sessionId: main.sessionId, from: predecessor.id, to: sibling.id, kind: 'question', content: 'OLD CHILD QUESTION' });
-    app.updateProgress(predecessor.id, { completed: ['Original child evidence collected'] });
     app.store.updateRun(predecessor.id, { status: 'completed', resultRef: app.store.blob({ text: 'PREDECESSOR RESULT' }) });
+    const source = app.store.readBlob<Message[]>(app.store.run(predecessor.id).contextRef);
     const next = spawn('continue original child', predecessor.id);
-    expect(next.historyFrom).toBe(predecessor.id);
-    expect(inspectRun(app.store, next, { run_id: predecessor.id, call_id: 'predecessor-proof' })).toMatchObject({ evidence: { text: '{"content":"PREDECESSOR TOOL PROOF"}' } });
-    expect(readHistory(app.store, next.id, { ref: archive }).messages[0]!.content).toBe('PREDECESSOR ARCHIVED PROOF');
+    // A fork is a new run, not a continuation: it gets the exact context prefix, no history or recovery alias.
+    expect(next.historyFrom).toBeUndefined();
+    expect(next.continuationOf).toBeUndefined();
+    const forked = app.store.readBlob<Message[]>(next.contextRef);
+    expect(JSON.stringify(forked.slice(0, source.length))).toBe(JSON.stringify(source));
+    // The source's final answer lives in resultRef, so the fork appends it before the new instruction.
+    expect(forked).toHaveLength(source.length + 2);
+    expect(forked.at(-2)).toEqual({ role: 'assistant', content: 'PREDECESSOR RESULT' });
+    expect(forked.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining(`Fork of run ${predecessor.id}`) });
+    expect(forked.at(-1)!.content).toContain('continue original child');
     expect(recoveryHistoryRuns(app.store, next).map(run => run.id)).toEqual([next.id]);
     expect(app.store.inbox(next.id)).toEqual([]);
     expect(() => app.store.transaction(() => app.coordinator.mailbox.execute(next, 'invalid-old-wait', 'wait_for_events', { question_ids: ['predecessor-open-question'] }))).toThrow('own questions');
     expect(() => inspectRun(app.store, next, { run_id: sibling.id })).toThrow('inspect only');
     expect(() => inspectRun(app.store, next, { run_id: main.id })).toThrow('inspect only');
     const built = buildContext(app.store, next, 16_000, []);
-    expect(JSON.stringify(built.messages)).toContain('Original child evidence collected');
+    expect(JSON.stringify(built.messages)).toContain('PREDECESSOR CONTEXT PROOF');
     expect(JSON.stringify(built.messages)).not.toContain('OLD CHILD QUESTION');
     app.store.updateRun(next.id, { status: 'completed' });
     const twice = spawn('continue again', next.id);
-    expect(historyRuns(app.store, twice).map(run => run.id)).toEqual([twice.id, next.id, predecessor.id]);
-    expect(readHistory(app.store, twice.id, { ref: archive }).runId).toBe(predecessor.id);
-    expect(inspectRun(app.store, twice, { run_id: predecessor.id, call_id: 'predecessor-proof' })).toMatchObject({ runId: predecessor.id });
+    const chained = app.store.readBlob<Message[]>(twice.contextRef);
+    expect(JSON.stringify(chained.slice(0, forked.length))).toBe(JSON.stringify(forked));
+    expect(chained.at(-1)!.content).toContain(`Fork of run ${next.id}`);
+    expect(historyRuns(app.store, twice).map(run => run.id)).toEqual([twice.id]);
   });
 
   it('rejects child history links lacking an exact terminal same-parent and same-session grant', () => {

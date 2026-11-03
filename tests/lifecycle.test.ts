@@ -147,8 +147,11 @@ describe('input, decisions and durable lifecycle', () => {
     app.store.updateRun(runId, { objective: 'PRIVATE_MAIN_ONLY_TASK_PACKET' });
     const main = app.store.run(runId);
     const child = internal(app, main, 'spawn_agent', { objective: 'minimal assigned task' }) as { id: string };
-    const discovery = internal(app, app.store.run(child.id), 'list_agents', {});
-    expect(JSON.stringify(discovery)).not.toContain('PRIVATE_MAIN_ONLY_TASK_PACKET');
+    // Agent discovery (list_agents) was removed; a child sees no discovery tool and no main task packet.
+    const surface = app.coordinator.mailbox.specs(app.store.run(child.id));
+    expect(surface.map(tool => tool.name)).not.toContain('list_agents');
+    expect(JSON.stringify(surface)).not.toContain('PRIVATE_MAIN_ONLY_TASK_PACKET');
+    expect(() => internal(app, app.store.run(child.id), 'list_agents', {})).toThrow('unknown collaboration tool');
     expect(JSON.stringify(app.store.readBlob(app.store.run(child.id).contextRef))).not.toContain('PRIVATE_MAIN_ONLY_TASK_PACKET');
   });
 

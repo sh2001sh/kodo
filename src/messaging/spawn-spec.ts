@@ -4,7 +4,6 @@ import type { CardModelRole, FileScope, ModelBinding, Permission, Run, ToolSpec 
 import { validateModelBinding } from '../providers/model-limits.js';
 import { writeScopesOverlap } from '../runtime/scope.js';
 import { recoveryResolution } from '../runtime/recovery-resolution.js';
-import { todoDependenciesSatisfied } from '../runtime/todo-dependencies.js';
 
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)): Record<string, unknown> => ({ type: 'object', additionalProperties: false, properties, required });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
@@ -12,7 +11,6 @@ const content = { type: 'string', minLength: 1, maxLength: 16_000 };
 const taskItems = { type: 'array', items: { type: 'string', minLength: 1, maxLength: 2000 }, maxItems: 16 };
 const roots = (description: string) => ({ type: 'array', items: { type: 'string', minLength: 1 }, uniqueItems: true, maxItems: 256, description });
 const modelAlias = { type: 'string', minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' };
-export const todoIdSchema = { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$', description: 'Explicit unfinished agent-owned task ID. Omit for unassociated work; task protocol 2 does not select an active task implicitly.' };
 
 /** Validate host-owned aliases before they become durable session policy or model-visible choices. */
 export function validateAgentModelPolicy(bindings?: Record<string, ModelBinding>, descriptions?: Record<string, string>, roles?: Partial<Record<CardModelRole, string>>): void {
@@ -31,54 +29,41 @@ export function validateAgentModelPolicy(bindings?: Record<string, ModelBinding>
 }
 
 /**
- * The description says when to delegate and shows a minimal call; constraints live
- * on the parameters, where models read them while filling arguments.
+ * One delegation tool with two child modes. A fresh child starts from a new
+ * initial context; a fork continues a settled child with its exact persisted
+ * context prefix, model, permissions and scope, appending only the new task.
  */
 export const spawnAgentSpec: ToolSpec & { main: true } = {
   name: 'spawn_agent',
   main: true,
   description: [
-    'Start a child agent that changes files in one independent module; it runs in parallel in the shared workspace.',
-    'The child inherits your card and permissions and may only narrow them.',
-    'For read-only investigation use explore instead.',
-    'The child has none of your history: give it everything needed and scope.write roots disjoint from yours and other children.',
-    'Keep working, then wait_for_events with its ID, inspect_run and verify before integrating.',
+    'Run one independent task in a child agent in the shared workspace.',
+    'Default is fresh: the child inherits your card and permissions, may only narrow them, and gets a new context with only this task packet.',
+    'Pass fork_of with a settled child run ID to continue that child: it keeps the child model, permissions, scope and exact context prefix, appending your new objective.',
+    'Use a fresh child for independent black-box review: give it the artifact, paths and acceptance checks, not the implementer conclusions.',
+    'Keep working, then wait_for_events with its ID and inspect_run the original evidence before integrating.',
     'Example: {"objective":"Add tests for src/parser.ts","inputs":["parse(text) is exported"],"acceptance":["npx vitest run tests/parser.test.ts passes"],"scope":{"write":["tests"]}}',
   ].join(' '),
   parameters: object({
     objective: { ...content, description: 'One concrete, self-contained goal.' },
+    fork_of: { ...id, description: 'A settled managed child run to continue with its exact context prefix, model, permissions and scope.' },
     context: { ...content, description: 'Background and constraints; the child cannot see your history.' },
     inputs: { ...taskItems, description: 'Facts, file paths or artifact IDs to start from.' },
     acceptance: { ...taskItems, description: 'Checks the child should run and report.' },
-    permissions: { type: 'array', uniqueItems: true, items: { enum: ['read', 'write', 'exec'] }, description: 'Subset of yours; omit to inherit.' },
-    model_binding: { ...modelAlias, description: 'Approved alias; omit to inherit. Reuse preserves the previous model.' },
+    permissions: { type: 'array', uniqueItems: true, items: { enum: ['read', 'write', 'exec'] }, description: 'Subset of yours; omit to inherit. A fork keeps the source permissions.' },
+    model_binding: { ...modelAlias, description: 'Approved alias; omit to inherit. A fork keeps the source model.' },
     scope: object({
       read: roots('Relative roots, e.g. "src"; omit to inherit.'),
       write: roots('Relative roots, e.g. "tests"; omit to inherit; [] denies writes.'),
     }, []),
-    continuation_of: { ...id, description: 'A finished child to continue.' },
-    todoId: todoIdSchema,
   }, ['objective']),
 };
 
 export interface SpawnAgentRequest {
-  objective: string; context?: string;
+  objective: string; fork_of?: string; context?: string;
   inputs?: string[]; acceptance?: string[];
   permissions?: Permission[]; model_binding?: string; scope?: FileScope;
-  continuation_of?: string;
-  todoId?: string;
 }
-
-export const followupTaskSpec: ToolSpec & { main: true } = {
-  name: 'followup_task', main: true,
-  description: 'Give a finished managed teammate another task, preserving its model, working context and agent identity in a new run. Supply its agent ID or any run ID in its lineage and a new objective. For another model, create a fresh child and explicitly hand off the necessary context. Returns the new run ID immediately. Busy teammates return AGENT_BUSY: use send_message for updates to their current task. Historical reports do not satisfy this task’s acceptance.',
-  parameters: object({
-    target: { ...id, description: 'Stable agent ID or a previous managed child run ID.' },
-    objective: content, context: content, inputs: taskItems, acceptance: taskItems,
-    model_binding: { ...modelAlias, description: 'Omit or repeat the teammate’s original alias; another alias requires a fresh child and explicit context handoff.' },
-    todoId: todoIdSchema,
-  }, ['target', 'objective']),
-};
 
 /** Keep unfinished work counted through cancellation and effect reconciliation. */
 export function childIsActive(store: Store, child: Run): boolean {
@@ -105,7 +90,7 @@ export function childCapacity(store: Store, sessionId: string) {
 
 export function assertChildCapacity(store: Store, sessionId: string, count = 1): void {
   const capacity = childCapacity(store, sessionId);
-  if (capacity.maximum !== null && capacity.created + count > capacity.maximum) throw new KodoError('CHILD_BUDGET', `session child creation limit reached (${capacity.created}/${capacity.maximum}, including finished runs and follow-ups)`);
+  if (capacity.maximum !== null && capacity.created + count > capacity.maximum) throw new KodoError('CHILD_BUDGET', `session child creation limit reached (${capacity.created}/${capacity.maximum}, including finished runs and forks)`);
   if (capacity.remainingActive !== null && count > capacity.remainingActive) throw new KodoError('CHILD_CAPACITY', `active child limit reached (${capacity.active}/${capacity.maximumActive}); wait for tasks to finish. Active run IDs: ${capacity.activeRunIds.join(', ')}`);
 }
 
@@ -119,7 +104,7 @@ export function delegationState(store: Store, run: Run) {
     canSpawn: !run.parentId && !terminal(run.status) && run.status !== 'interrupted' && !run.cancelRequested && !run.interruptRequested && (children.remaining === null || children.remaining > 0) && !sharedExhausted,
     children,
     sharedBudget: { modelCallsRemaining: session.budget.maxModelCalls === null ? null : Math.max(0, session.budget.maxModelCalls - session.modelCalls), tokensRemaining: session.budget.maxTokens === null ? null : Math.max(0, session.budget.maxTokens - session.tokens), toolCallsRemaining: session.budget.maxToolCalls === null ? null : Math.max(0, session.budget.maxToolCalls - session.toolCalls), maxConcurrentModels: session.budget.maxConcurrentModels },
-    budgetPolicy: 'canSpawn reports role, active capacity, any explicit cumulative creation cap and shared spending; admission is checked again atomically. Null means no configured limit. Finished settled tasks release active capacity; every new run, including a follow-up, counts toward an explicitly configured cumulative cap. Model concurrency is separate.',
+    budgetPolicy: 'canSpawn reports role, active capacity, any explicit cumulative creation cap and shared spending; admission is checked again atomically. Null means no configured limit. Finished settled tasks release active capacity; every new run, including a fork, counts toward an explicitly configured cumulative cap. Model concurrency is separate.',
     resultPolicy: 'Wait for terminal evidence, inspect_run for managed child results and tool evidence, then independently check acceptance. A completed child is not a verified deliverable.',
   };
 }
@@ -136,7 +121,6 @@ export function assertNoWriteConflict(store: Store, parent: Run, permissions: Pe
   if (!permissions.includes('write') || !claims(scope)) return;
   const sessionPermissions = store.session(parent.sessionId).permissions;
   const holder = store.listRuns(parent.sessionId).find(peer => peer.parentId === parent.id && !terminal(peer.status) && !peer.cancelRequested
-    && (peer.status !== 'queued' || todoDependenciesSatisfied(store, parent.id, peer.todo))
     && (peer.permissions ?? sessionPermissions).includes('write') && claims(peer.scope) && writeScopesOverlap(peer.scope, scope));
   if (!holder) return;
   throw new KodoError('WRITE_SCOPE_CONFLICT', `write scope ${JSON.stringify(scope.write)} overlaps child ${holder.id} (status ${holder.status}), which holds write scope ${JSON.stringify(holder.scope?.write ?? ['.'])}; wait for it, cancel it, or choose a disjoint scope`);

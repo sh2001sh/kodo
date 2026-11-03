@@ -74,7 +74,6 @@ export function prepareContext(host: StepHost, runId: string, force = false): Co
     if (hint) delivered.push(hint);
     // L4 joins the frozen prefix once; a changed environment is appended after the new input.
     const context = withEnvironment(delivered, environmentBlock(host, run, session));
-    if (run.step === 0 && run.continuationOf && !run.historyFrom) context.push({ role: 'user', content: `Previous run ${run.continuationOf}: ${JSON.stringify(host.mailbox.result(store.run(run.continuationOf)))}` });
     const specs = toolSpecs(host, run, session);
     const next = { ...run, contextRef: store.blob(context) };
     const budget = runBudget(run, session);

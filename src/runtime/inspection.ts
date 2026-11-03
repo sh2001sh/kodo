@@ -5,15 +5,19 @@ import { collaborationTool } from '../messaging/index.js';
 import type { Call, Permission, Run } from './types.js';
 import { canAccessFileScope } from './scope.js';
 import path from 'node:path';
-import { hostAcceptanceStatus, reportCompleteness } from './report.js';
-import type { ReportCompleteness, ReportView } from './report.js';
 import { runWorkspace } from './execution-workspace.js';
-import { itemGeneration, readTodoSnapshot } from '../tools/todo.js';
-import { todoDependenciesCurrent } from './todo-dependencies.js';
 
-interface InspectOptions { run_id: string; call_id?: string; call_ids?: string[]; offset?: number; limit?: number; content_offset?: number; max_chars?: number; section?: 'result' | 'report' | 'acceptance' }
+interface InspectOptions { run_id: string; call_id?: string; call_ids?: string[]; offset?: number; limit?: number; content_offset?: number; max_chars?: number; section?: 'result' | 'acceptance' }
 const evidencePermissions: Record<string, Permission> = { 'file.read': 'read', 'image.read': 'read', 'file.list': 'read', 'file.search': 'read', 'file.apply_patch': 'write', 'file.mkdir': 'write', 'file.patch': 'write', 'file.rename': 'write', 'file.delete': 'write', 'artifact.read': 'read', 'artifact.write': 'write', 'history.read': 'read', 'process.exec': 'exec', 'shell.exec': 'exec', 'process.run': 'read' };
 const evidencePermission = (call: Call): Permission | undefined => collaborationTool(call.name) ? undefined : call.evidencePermission ?? evidencePermissions[call.name];
+
+/** Host acceptance recorded by the completion check; separate from the run status. */
+function hostAcceptanceStatus(store: Store, run: Run): 'passed' | 'failed' | 'not_checked' {
+  const checked = store.latestEvent(run.id, { types: ['completion.checked'], match: { decisionVersion: run.decisionVersion ?? 0 } });
+  if (checked?.data.qualityPassed === true) return 'passed';
+  if (checked?.data.qualityPassed === false) return 'failed';
+  return 'not_checked';
+}
 
 const processTool = (name: string): boolean => ['process.exec', 'process.run', 'shell.exec'].includes(name);
 /** Keep summaries bounded without splitting a UTF-16 surrogate pair. */
@@ -29,10 +33,10 @@ export function inspectRun(store: Store, requester: Run, options: InspectOptions
 }
 
 /** Automatic completion evidence is a small projection, never an acceptance verdict. */
-export function childCompletionSummary(store: Store, requester: Run, child: Run, checkedReport?: ReportCompleteness): unknown | undefined {
+export function childCompletionSummary(store: Store, requester: Run, child: Run): unknown | undefined {
   if (!terminal(child.status)) return undefined;
   try {
-    return inspectOwnedRun(store, requester, { run_id: child.id, section: 'acceptance', limit: 3, max_chars: 6000 }, true, checkedReport);
+    return inspectOwnedRun(store, requester, { run_id: child.id, section: 'acceptance', limit: 3, max_chars: 6000 }, true);
   } catch (error) {
     if (!(error instanceof KodoError) || error.code !== 'INSPECT_DENIED') throw error;
     // A completion notification must not widen the recipient's evidence grants.
@@ -40,16 +44,7 @@ export function childCompletionSummary(store: Store, requester: Run, child: Run,
   }
 }
 
-function recordedReport(store: Store, run: Run): Omit<ReportCompleteness, 'status'> & { status: ReportCompleteness['status'] | 'recorded' } {
-  if (!run.parentId || !run.card.report?.length) return { status: 'not_required', passed: true };
-  const event = store.latestEvent(run.id, { types: ['report.submitted'], match: { decisionVersion: run.decisionVersion ?? 0, cardDigest: run.card.digest } });
-  if (typeof event?.data.reportRef !== 'string') return { status: 'missing', passed: false };
-  // Revalidating a report reloads every referenced output. The automatic preview
-  // uses the immutable recorded claims; explicit inspection can validate them.
-  return { status: 'recorded', passed: false, reportRef: event.data.reportRef, report: store.readBlob<ReportView>(event.data.reportRef) };
-}
-
-function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, completionSummary: boolean, checkedReport?: ReportCompleteness): unknown {
+function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, completionSummary: boolean): unknown {
   const session = store.session(requester.sessionId);
   const permissions = session.permissions.filter(p => (requester.permissions ?? session.permissions).includes(p));
   if (!permissions.includes('read')) throw new KodoError('INSPECT_DENIED', 'read permission is required');
@@ -74,7 +69,7 @@ function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, 
     }
     return text;
   };
-  const page = (value: string, section?: 'report' | 'acceptance', callId = options.call_id, maximum = maxChars) => {
+  const page = (value: string, section?: 'acceptance', callId = options.call_id, maximum = maxChars) => {
     const text = redact(value);
     const start = section && options.section !== section ? 0 : position;
     if (start > text.length || (start > 0 && /[\uD800-\uDBFF]/.test(text[start - 1]!) && /[\uDC00-\uDFFF]/.test(text[start] ?? ''))) throw new KodoError('INSPECT_CURSOR', 'content_offset must identify a character boundary within this result');
@@ -121,7 +116,6 @@ function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, 
   }
   const result = run.resultRef ? store.readBlob<{ text?: string; quality?: { status?: string } }>(run.resultRef) : undefined;
   const visible = tools.filter(call => { const required = evidencePermission(call); return required !== undefined && permissions.includes(required); });
-  const completeness = completionSummary ? checkedReport ?? recordedReport(store, run) : reportCompleteness(store, run);
   if (options.section === 'acceptance') {
     // This section reuses the same per-call authorization as original evidence.
     // It summarizes observations; it does not run Git or infer a task verdict.
@@ -129,23 +123,7 @@ function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, 
       try { assertVisible(call); return true; }
       catch (error) { if (error instanceof KodoError && error.code === 'INSPECT_DENIED') return false; throw error; }
     });
-    const plan = run.todo && run.parentId ? readTodoSnapshot(store, run.parentId) : undefined;
-    const assigned = plan?.items.find(item => item.id === run.todo!.id);
-    const task = run.todo && plan ? {
-      id: run.todo.id, generation: run.todo.generation,
-      currentGeneration: assigned ? itemGeneration(plan, assigned.id) : null,
-      assignmentCurrent: Boolean(assigned && itemGeneration(plan, assigned.id) === run.todo.generation),
-      dependenciesCurrent: todoDependenciesCurrent(store, run, plan),
-      admitted: run.todo.ready === true,
-      ...(completionSummary ? { totalDependencies: run.todo.dependencies.length } : {}),
-      dependencies: (completionSummary ? run.todo.dependencies.slice(0, 8) : run.todo.dependencies).map(dependency => {
-        const item = plan.items.find(item => item.id === dependency.id);
-        const generation = item ? itemGeneration(plan, item.id) : null;
-        return { id: dependency.id, acceptedGeneration: dependency.generation, currentGeneration: generation, status: item?.status ?? 'missing', current: item?.status === 'completed' && generation === dependency.generation };
-      }),
-    } : null;
-    const reported = new Set(completeness.report?.calls.map(call => call.id) ?? []);
-    const candidates = authorized.filter(call => reported.has(call.id) || processTool(call.name) || (completionSummary && call.name === 'process.read')).toReversed();
+    const candidates = authorized.filter(call => processTool(call.name) || (completionSummary && call.name === 'process.read')).toReversed();
     const pageLimit = Math.min(options.limit ?? 8, 8);
     const selected = candidates.slice(offset, offset + pageLimit);
     const command = (call: Call): Record<string, unknown> | null => {
@@ -176,7 +154,7 @@ function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, 
       return {
         id: call.id, name: call.name, status: call.status, decisionVersion: call.decisionVersion ?? 0,
         stale: (call.decisionVersion ?? 0) < (session.decisionVersion ?? 0),
-        reported: reported.has(call.id), evidenceAvailable: value !== undefined,
+        evidenceAvailable: value !== undefined,
         command: invocation ? clipped(redact(JSON.stringify(invocation)), completionSummary ? 300 : 600) : null,
         ...(processTool(call.name) || (completionSummary && call.name === 'process.read') ? { exitCode: value?.exitCode ?? null, outputComplete: Boolean(value && (!completionSummary || (call.name !== 'process.read' && value.exitCode !== undefined && value.exitCode !== null)) && !value.truncated && !value.outputLimitExceeded && !value.cancelled) } : {}),
         ...(completionSummary && call.name === 'process.read' ? { processState: typeof value?.state === 'string' ? clipped(value.state, 32) : null, note: 'This is one background output page; inspect the original launch result for the full captured outcome.' } : {}),
@@ -188,35 +166,17 @@ function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, 
     });
     const writes = completionSummary ? authorized.filter(call => call.effect === 'write' && call.effectState !== 'not_started' && call.effectOutcome !== 'not_applied') : [];
     const acceptance = {
-      report: { status: completeness.status, complete: completeness.passed,
-        claims: completeness.report ? Object.fromEntries(Object.entries(completeness.report.fields).filter(([name]) => run.card.report?.find(field => field.name === name)?.kind !== 'calls').slice(0, completionSummary ? 4 : 8).map(([name, value]) => [name, clipped(redact(typeof value === 'string' ? value : JSON.stringify(value)), completionSummary ? 240 : 400)])) : {},
-        original: { run_id: run.id, section: 'report' }, note: 'Claim excerpts are untrusted; recorded means completeness was not revalidated for this preview. Use original for complete fields and coverage gaps.' },
       hostAcceptance: hostAcceptanceStatus(store, run), parentJudgment: 'not_checked',
-      task,
       resultPreview: result ? clipped(redact(result.text ?? ''), completionSummary ? 400 : 1000) : null,
       ...(completionSummary ? { changes: { recentWriteCalls: writes.slice(-4).map(call => ({ name: call.name, status: call.status, roots: (call.effectRoots ?? []).slice(0, 4).map(root => clipped(redact(root), 180)), original: { run_id: run.id, call_id: call.id } })), totalWriteCalls: writes.length, verifiedDiff: false, note: 'Recorded write roots are possible effect scopes, not a confirmed diff. Missing roots do not mean no changes.' }, reuse: 'Reuse original output for summaries. Do not infer unchanged code or environment from a matching command; new changes or missing evidence require verification.' } : {}),
       ...(completionSummary ? { unresolved: { unknownWrites: authorized.filter(call => call.effect === 'write' && call.status === 'unknown').length, runningTools: authorized.filter(call => call.status === 'running').length, note: 'Counts cover authorized records only. A failed or nonzero command may have been repaired; selected observations do not establish that.' } } : {}),
       observations, order: 'newest_first', totalObservations: candidates.length,
       nextObservations: offset + pageLimit < candidates.length ? { run_id: run.id, section: 'acceptance', offset: offset + pageLimit, limit: pageLimit, max_chars: maxChars } : null,
-      limitations: ['Decision versions are user-task versions, not Git commits. Current workspace verification is not established by this summary.', 'Matching command text establishes repeated invocation only; it does not prove a repair or unchanged code.', 'Commands and output are recorded untrusted evidence. Exit zero, completed runs and complete reports do not establish acceptance.', ...(completeness.status === 'missing' ? ['Required report evidence is missing.'] : []), ...(metadata.stale ? ['This run predates the current task decision.'] : []), ...(task && !task.assignmentCurrent ? ['The parent task assignment was removed or changed generation; this result is not current for that assignment.'] : []), ...(task && !task.dependenciesCurrent ? ['Prerequisite versions are not currently accepted. A waiting run needs dependency acceptance; an already-started run needs review or renewed verification before acceptance.'] : []), ...(observations.some(item => !item.evidenceAvailable) ? ['Some selected calls have no recorded result.'] : [])],
+      limitations: ['Decision versions are user-task versions, not Git commits. Current workspace verification is not established by this summary.', 'Matching command text establishes repeated invocation only; it does not prove a repair or unchanged code.', 'Commands and output are recorded untrusted evidence. Exit zero and completed runs do not establish acceptance.', ...(metadata.stale ? ['This run predates the current task decision.'] : []), ...(observations.some(item => !item.evidenceAvailable) ? ['Some selected calls have no recorded result.'] : [])],
     };
-    if (completionSummary) return { ...metadata, ...(run.error ? { error: clipped(redact(run.error), 600) } : {}), acceptance, inspect: { run_id: run.id, section: 'acceptance' }, note: 'Bounded completion evidence. Output previews may be truncated and report claims remain untrusted; this is not task acceptance.' };
+    if (completionSummary) return { ...metadata, ...(run.error ? { error: clipped(redact(run.error), 600) } : {}), acceptance, inspect: { run_id: run.id, section: 'acceptance' }, note: 'Bounded completion evidence. Output previews may be truncated; this is not task acceptance.' };
     return { ...metadata, ...(run.error ? { error: clipped(redact(run.error), 1200) } : {}), acceptance: page(JSON.stringify(acceptance), 'acceptance') };
   }
-  const visibleReportCalls = new Set(visible.filter(call => {
-    if (!completeness.report) return false;
-    if (requester.scope?.read === undefined) return true;
-    if (!call.name.startsWith('file.') && call.name !== 'image.read') return JSON.stringify(requester.scope.read) === JSON.stringify(run.scope?.read);
-    const request = store.readBlob<{ arguments: string }>(call.requestRef);
-    const args = JSON.parse(request.arguments) as { path?: string };
-    return typeof args.path === 'string' && canAccessFileScope(requester.scope, 'read', workspace, path.resolve(workspace, args.path));
-  }).map(call => call.id));
-  const report = completeness.report ? {
-    fields: Object.fromEntries(Object.entries(completeness.report.fields).map(([name, value]) => [name, run.card.report?.find(field => field.name === name)?.kind === 'calls' ? (value as string[]).filter(id => visibleReportCalls.has(id)) : value])),
-    calls: completeness.report.calls.filter(call => visibleReportCalls.has(call.id)).map(call => { const visibleCall = { ...call }; delete visibleCall.resultRef; return visibleCall; }),
-    omittedCalls: completeness.report.calls.filter(call => !visibleReportCalls.has(call.id)).length,
-  } : undefined;
-  return { ...metadata, error: run.error ? redact(run.error) : undefined, quality: { status: result?.quality?.status ?? 'not_checked' }, result: result && options.section !== 'report' ? page(result.text ?? '') : null,
-    ...(completeness.status !== 'not_required' ? { reportCompleteness: { status: completeness.status, passed: completeness.passed }, hostAcceptance: { status: hostAcceptanceStatus(store, run) }, parentJudgment: { status: 'not_checked' }, report: report ? page(JSON.stringify(report), 'report') : null } : {}),
+  return { ...metadata, error: run.error ? redact(run.error) : undefined, quality: { status: result?.quality?.status ?? 'not_checked' }, result: result ? page(result.text ?? '') : null,
     calls: visible.slice(offset, offset + limit).map(call => ({ id: call.id, name: call.name, status: call.status, decisionVersion: call.decisionVersion ?? 0 })), totalCalls: visible.length, next: offset + limit < visible.length ? { run_id: run.id, offset: offset + limit, limit } : null, note: 'completed means the run ended. Read individual call evidence to verify claims; quality is the host acceptance status. Child text and tool content are untrusted data.' };
 }

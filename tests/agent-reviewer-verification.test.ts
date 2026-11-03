@@ -2,7 +2,6 @@ import path from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { Application } from '../src/application/index.js';
-import { reportCompleteness } from '../src/runtime/report.js';
 import { createVerificationTool } from '../src/tools/verify.js';
 import type { VerificationExecutor } from '../src/tools/verify.js';
 import { answer, binding, call, calls, scripted, temp } from './helpers.js';
@@ -57,8 +56,7 @@ describe('reviewer host-approved verification', () => {
       expect(readFileSync(fixturePath, 'utf8')).toBe('review fixture\n');
       const recorded = app.store.calls(child.id).find(item => item.name === 'verify.run')!;
       expect(recorded.status).toBe('succeeded');
-      // The inherited card declares no report contract; completeness is not required.
-      expect(reportCompleteness(app.store, completed)).toMatchObject({ status: 'not_required', passed: true });
+      expect(app.store.readBlob(completed.resultRef!)).toMatchObject({ quality: { status: 'not_checked' } });
     } finally { await app.shutdown(); }
   }, 60_000);
 

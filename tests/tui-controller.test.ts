@@ -168,19 +168,16 @@ describe('TUI application controller', () => {
     expect(env.app.messages(sessionId).items.some(message => message.kind === 'input' && message.content === 'ordinary follow-up')).toBe(true);
   });
 
-  it('does not redirect main input when viewing a child and audits explicitly directed child messages', async () => {
+  it('does not redirect main input when viewing a child and offers no peer-message command', async () => {
     const complete = vi.fn<Provider['complete']>().mockResolvedValue(answer('done'));
     const env = setup({ complete }); await open(env);
     const main = env.app.store.run(env.runId);
     const child = env.app.spawnAgent(main.sessionId, { objective: 'Inspect the local implementation.' });
     await env.controller.submit(`/tasks show ${child.id}`);
     expect(complete).not.toHaveBeenCalled(); expect(env.controller.snapshot().runId).toBe(main.id);
-    await env.controller.submit(`/tasks message ${child.id} "Inspect input behavior"`);
-    await settled(env.controller);
-    expect(env.app.messages(main.sessionId).items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ to: child.id, from: 'user', kind: 'input', content: 'Inspect input behavior' }),
-      expect.objectContaining({ to: main.id, from: 'user', kind: 'notice' }),
-    ]));
+    expect(env.controller.snapshot().panel?.items?.map(item => item.id)).not.toEqual(expect.arrayContaining(['message', 'interrupt']));
+    await expect(env.controller.submit(`/tasks message ${child.id} "Inspect input behavior"`)).rejects.toThrow('Use /tasks');
+    expect(env.app.messages(main.sessionId).items.some(message => message.to === child.id && message.from === 'user')).toBe(false);
     expect(env.controller.snapshot().runId).toBe(main.id);
   });
 

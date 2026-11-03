@@ -792,7 +792,7 @@ export class TuiController implements TuiActions {
       const result = this.options.app.resolveCall(call.id, outcome as 'applied' | 'not_applied', evidence);
       this.panel = { title: 'Review record', lines: jsonLines(result).map(line => this.clean(line)) }; return;
     }
-    if (action === 'message' || action === 'interrupt' || action === 'cancel' || action === 'resume') {
+    if (action === 'cancel' || action === 'resume') {
       if (id && this.processes.has(id)) throw new KodoError('TUI_TARGET', 'This is a process handle. Use the process read or stop actions.');
       const target = this.target(id);
       if (!target.parentId) throw new KodoError('TUI_TARGET', 'This action requires a selected direct child task. Use the composer, /stop or /cancel for the main task.');
@@ -800,10 +800,8 @@ export class TuiController implements TuiActions {
         await this.ensureRestored(main);
         if (target.status !== 'interrupted' || !target.interruptRequested) throw new KodoError('TUI_RESUME', 'Only explicitly interrupted children can resume here. Use /resume for crash recovery.');
         this.options.app.coordinator.resumeInterrupted(target.id); this.wake(target.id); this.notice = `Resuming child task ${target.card.name}; the composer still addresses the main agent.`;
-      } else if (action === 'message') {
-        const content = rest.join(' '); if (!content.trim()) throw new KodoError('TUI_INPUT', 'Usage: /tasks message child-id "message".');
-        await this.ensureRestored(main); this.options.app.submitAgentInput(main.id, target.id, content); this.wake(target.id); this.wake(main.id); this.notice = `Sent to child agent ${target.card.name}(${target.id}); the main agent received an audit notice.`;
-      } else { this.denyApprovals(target.id); if (action === 'interrupt') this.options.app.interruptAgent(main.id, target.id); else this.options.app.cancelAgent(main.id, target.id); await this.options.app.coordinator.waitForStop(target.id); this.notice = `${target.card.name}: ${statusLabel[this.options.app.store.run(target.id).status]}; existing file changes are retained.`; }
+      } else {
+        this.denyApprovals(target.id); this.options.app.cancelAgent(main.id, target.id); await this.options.app.coordinator.waitForStop(target.id); this.notice = `${target.card.name}: ${statusLabel[this.options.app.store.run(target.id).status]}; existing file changes are retained.`; }
       return;
     }
     const target = this.target(id);
@@ -823,7 +821,7 @@ export class TuiController implements TuiActions {
       const next = evidence.evidence?.next ?? evidence.result?.next;
       this.panel = { title: 'Original evidence · Page', lines: jsonLines(evidence).map(line => this.clean(line)), ...(next ? { items: [{ id: 'next', label: 'Next page', command: `/tasks ${action} ${target.id}${callId ? ` ${callId}` : ''} ${next.content_offset}` }] } : {}) }; return;
     }
-    if (action !== 'show') throw new KodoError('TUI_TASKS', 'Use /tasks, show, logs, message, interrupt, cancel, answer or resolve.');
+    if (action !== 'show') throw new KodoError('TUI_TASKS', 'Use /tasks, show, logs, result, evidence, cancel, resume, answer or resolve.');
     const evidence = inspectRun(this.options.app.store, main, { run_id: target.id, max_chars: 8000 });
     const activity = this.options.app.store.latestEvent(target.id);
     this.panel = { title: `${target.parentId ? 'Child task' : 'Main task'} · ${target.card.name}`, lines: [
@@ -836,8 +834,6 @@ export class TuiController implements TuiActions {
       { id: 'changes', label: 'View task changes and deliverables', command: `/changes task ${target.id}` },
       ...(target.parentId && !terminal(target.status) ? [
         ...(target.status === 'interrupted' && target.interruptRequested ? [{ id: 'resume', label: 'Resume this child turn', command: `/tasks resume ${target.id}` }] : []),
-        { id: 'message', label: `Send to ${target.card.name}`, input: `/tasks message ${target.id} ` },
-        { id: 'interrupt', label: 'Interrupt this child turn', command: `/tasks interrupt ${target.id}` },
         { id: 'cancel', label: 'Cancel this child (retain files)', command: `/tasks cancel ${target.id}` },
       ] : []),
     ] };
