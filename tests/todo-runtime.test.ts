@@ -1,12 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Provider } from '../src/runtime/types.js';
-import { attachmentBody, attachmentKind } from '../src/runtime/attachments.js';
-import { todoDispatchState } from '../src/tools/todo.js';
 import { answer, call, calls, fixture, scripted } from './helpers.js';
 
-const item = { id: 'implement', content: 'Write the result', executor: 'agent', status: 'in_progress' };
 const write = (filename: string) => call('file.apply_patch', { path: filename, expectedHash: null, content: 'child evidence' }, filename);
 const plan = (expectedRevision: number, items: unknown[]) => call('todo.write', { expectedRevision, items }, `plan-${expectedRevision}`);
 
@@ -36,8 +32,8 @@ describe('todo execution ownership in the model loop', () => {
     const seen: string[][] = [];
     const record = (messages: { role: string; content?: string | null }[]) => seen.push(messages.slice(0, -1).map(message => JSON.stringify(message)));
     const { app, runId } = fixture(scripted(
-      calls(plan(0, [{ id: 'a', content: 'First phase', status: 'in_progress', executor: 'main' }])),
-      async request => { record(request.messages); return calls(plan(1, [{ id: 'a', content: 'First phase', status: 'completed', executor: 'main' }, { id: 'b', content: 'Second phase', status: 'in_progress', executor: 'main' }])); },
+      calls(plan(0, [{ id: 'a', content: 'First phase', status: 'in_progress' }])),
+      async request => { record(request.messages); return calls(plan(1, [{ id: 'a', content: 'First phase', status: 'completed' }, { id: 'b', content: 'Second phase', status: 'in_progress' }])); },
       async request => { record(request.messages); return answer('Both phases are done.'); },
     ));
     expect((await app.run(runId)).status).toBe('completed');
@@ -61,76 +57,16 @@ describe('todo execution ownership in the model loop', () => {
     expect(readFileSync(path.join(root, 'direct.txt'), 'utf8')).toBe('child evidence');
   });
 
-  it('requires an owner while a recorded plan has open work and honors a main assignment in the same response', async () => {
+  it('treats the plan as guidance: open items neither block writes nor completion', async () => {
     const { app, root, runId } = fixture(scripted(
-      calls(plan(0, [{ ...item, executor: 'main', status: 'pending' }]), write('unplanned.txt')),
+      calls(plan(0, [{ id: 'a', content: 'First phase', status: 'pending' }, { id: 'b', content: 'Second phase', status: 'in_progress' }]), write('free.txt')),
       async request => {
-        expect(request.messages.findLast(message => message.role === 'tool')?.content).toContain('TODO_PLAN_REQUIRED');
-        return calls(plan(1, [{ ...item, executor: 'main' }]), write('main.txt'));
+        expect(request.messages.findLast(message => message.role === 'tool')?.content).not.toContain('TODO_');
+        return answer('The change is ready; the remaining plan item is out of scope.');
       },
-      answer('A small integration change is ready.'),
     ), undefined, { agentFactors: { B: true } });
-    const result = await app.run(runId);
-    expect(result.status).toBe('completed');
-    expect(existsSync(path.join(root, 'unplanned.txt'))).toBe(false);
-    expect(readFileSync(path.join(root, 'main.txt'), 'utf8')).toBe('child evidence');
-  });
-
-  it('links actual child execution, denies direct work and early acceptance, then accepts inspected evidence', async () => {
-    let childId = '';
-    let mainStep = 0;
-    const provider: Provider = { async complete(request) {
-      const id = /Run ID: ([^. ]+)\./u.exec(request.messages[0]!.content!)![1]!;
-      const run = app.store.run(id);
-      if (run.parentId) return run.step === 0 ? calls(write('result.txt')) : answer('Created result.txt; inspect the successful file write.');
-      const frame = JSON.parse(attachmentBody(request.messages.findLast(message => attachmentKind(message) === 'state')!));
-      switch (mainStep++) {
-        case 0: return calls(plan(0, [item]), write('wrong-owner.txt'));
-        case 1:
-          expect(frame.todoDispatch[0].state).toBe('awaiting_dispatch');
-          expect(request.messages.findLast(message => message.role === 'tool')?.content).toContain('TODO_DELEGATED');
-          expect(request.tools.some(tool => tool.name === 'file.apply_patch')).toBe(true);
-          return calls(plan(1, [{ ...item, status: 'completed' }]), call('spawn_agent', { objective: 'Create result.txt containing child evidence', scope: { write: ['result.txt'] } }, 'spawn'));
-        case 2:
-          expect(request.messages.filter(message => message.role === 'tool').some(message => message.content.includes('TODO_ACCEPTANCE'))).toBe(true);
-          childId = app.store.listRuns(run.sessionId).find(child => child.parentId === run.id)!.id;
-          return calls(call('wait_for_events', { run_ids: [childId], mode: 'all' }));
-        case 3:
-          expect(frame.todoDispatch[0].state).toBe('awaiting_acceptance');
-          return calls(call('inspect_run', { run_id: childId }));
-        case 4:
-          expect(request.messages.findLast(message => message.role === 'tool')?.content).toContain('result.txt');
-          return calls(plan(1, [{ ...item, status: 'completed' }]));
-        default: return answer('Accepted the child result after inspecting its evidence.');
-      }
-    } };
-    const { app, root, runId } = fixture(provider, undefined, { agentFactors: { B: true }, instructions: { global: false } });
-    const result = await app.run(runId);
-    expect(result.status).toBe('completed');
-    expect(readFileSync(path.join(root, 'result.txt'), 'utf8')).toBe('child evidence');
-    expect(existsSync(path.join(root, 'wrong-owner.txt'))).toBe(false);
-    expect(todoDispatchState(app.store, runId)).toMatchObject([{ id: item.id, state: 'completed', runIds: [childId] }]);
-  });
-
-  it('does not complete a run with an undispatched delegated todo', async () => {
-    const { app, runId } = fixture(scripted(calls(plan(0, [item])), answer('done'), answer('done'), answer('done')),
-      undefined, { agentFactors: { B: true } });
-    const result = await app.run(runId);
-    expect(result.status).toBe('failed');
-    expect(result.error).toContain('TODO_INCOMPLETE');
-    expect(app.store.events(runId, { types: ['completion.correction_requested'] })).toHaveLength(2);
-  });
-
-  it('applies delegated ownership even with B disabled, including read-only shell execution', async () => {
-    const { app, runId } = fixture(scripted(
-      calls(plan(0, [item]), call('shell.exec', { command: 'git status --short' })),
-      async request => {
-        expect(request.messages.findLast(message => message.role === 'tool')?.content).toContain('TODO_DELEGATED');
-        return calls(plan(1, []));
-      },
-      answer('Obsolete task removed without dispatch.'),
-    ), ['read', 'write', 'exec'], { agentFactors: { B: false } });
     expect((await app.run(runId)).status).toBe('completed');
-    expect(app.store.events(runId, { types: ['tool.started'] }).some(event => event.data.name === 'shell.exec')).toBe(false);
+    expect(readFileSync(path.join(root, 'free.txt'), 'utf8')).toBe('child evidence');
+    expect(app.store.events(runId, { types: ['todo.dispatched'] })).toHaveLength(0);
   });
 });

@@ -4,9 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { Application } from '../src/application/index.js';
 import { failedStepStreak, identicalStreak } from '../src/runtime/progress-advisor.js';
 import { acquireWriteLock } from '../src/tools/write-locks.js';
-import { checkCompletion } from '../src/runtime/completion.js';
-import { readTodoSnapshot, todoTools } from '../src/tools/todo.js';
-import type { TodoItem } from '../src/tools/todo.js';
 import { answer, call, calls, fixture, scripted } from './helpers.js';
 
 function protocol(app: Application, runId: string): void {
@@ -15,10 +12,6 @@ function protocol(app: Application, runId: string): void {
 }
 function child(app: Application, runId: string): string {
   return (app.coordinator.mailbox.execute(app.store.run(runId), crypto.randomUUID(), 'spawn_agent', { objective: 'Synthetic independent task', permissions: ['read'] }) as { id: string }).id;
-}
-function plan(app: Application, runId: string, items: TodoItem[]): void {
-  const run = app.store.run(runId);
-  todoTools(app.store)[1]!.execute({ run, session: app.store.session(run.sessionId), signal: new AbortController().signal, markEffectStarted() {} }, { items, expectedRevision: readTodoSnapshot(app.store, runId).revision });
 }
 
 describe('event-driven task waits', () => {
@@ -78,46 +71,6 @@ describe('event-driven task waits', () => {
       restored.store.updateRun(peer, { status: 'completed' });
       expect((await restored.coordinator.wake(runId)).status).toBe('completed');
     } finally { await restored.shutdown(); }
-  });
-
-  it('does not start a dependent model until its main-owned prerequisite is accepted', async () => {
-    const { app, runId } = fixture(scripted(answer('Dependent task completed.')));
-    protocol(app, runId);
-    const items: TodoItem[] = [{ id: 'design', content: 'Define the interface', executor: 'main', status: 'in_progress' }, { id: 'build', content: 'Implement the accepted interface', executor: 'agent', status: 'in_progress', dependsOn: ['design'] }];
-    plan(app, runId, items);
-    const dependent = (app.coordinator.mailbox.execute(app.store.run(runId), 'dependent', 'spawn_agent', { objective: 'Read the accepted design', permissions: ['read'], todoId: 'build' }) as { id: string }).id;
-    expect((await app.coordinator.wake(dependent)).status).toBe('queued');
-    expect(app.store.calls(dependent)).toHaveLength(0);
-    plan(app, runId, items.map(item => item.id === 'design' ? { ...item, status: 'completed' } : item));
-    expect((await app.coordinator.wake(dependent)).status).toBe('completed');
-    expect(app.store.calls(dependent).filter(value => value.kind === 'model')).toHaveLength(1);
-  });
-
-  it('returns actionable dependency input instead of sleeping forever on its own unfinished work', async () => {
-    const { app, runId } = fixture(scripted());
-    protocol(app, runId);
-    plan(app, runId, [{ id: 'design', content: 'Define the interface', executor: 'main', status: 'in_progress' }, { id: 'build', content: 'Implement the interface', executor: 'agent', status: 'in_progress', dependsOn: ['design'] }]);
-    app.coordinator.mailbox.execute(app.store.run(runId), 'dependent', 'spawn_agent', { objective: 'Read the accepted design', permissions: ['read'], todoId: 'build' });
-    expect((await checkCompletion(app.coordinator, app.store.run(runId), answer(), new AbortController().signal)).kind).toBe('wait');
-    app.store.updateRun(runId, { status: 'waiting' });
-    app.coordinator.mailbox.refresh(runId);
-    expect(app.store.run(runId).status).toBe('queued');
-    expect(app.store.inbox(runId).some(message => message.content.includes('dependency_blocked'))).toBe(true);
-    expect(app.store.events(runId, { types: ['completion.checked'] })).toHaveLength(0);
-  });
-
-  it('keeps waiting while a prerequisite owner is still working', async () => {
-    const { app, runId } = fixture(scripted());
-    protocol(app, runId);
-    plan(app, runId, [{ id: 'first', content: 'Implement first', executor: 'agent', status: 'in_progress' }, { id: 'next', content: 'Check first', executor: 'agent', status: 'in_progress', dependsOn: ['first'] }]);
-    const first = app.coordinator.mailbox.execute(app.store.run(runId), 'first', 'spawn_agent', { objective: 'First task', permissions: ['read'], todoId: 'first' }) as { id: string };
-    app.store.updateRun(first.id, { status: 'running' });
-    app.coordinator.mailbox.execute(app.store.run(runId), 'next', 'spawn_agent', { objective: 'Dependent task', permissions: ['read'], todoId: 'next' });
-    expect((await checkCompletion(app.coordinator, app.store.run(runId), answer(), new AbortController().signal)).kind).toBe('wait');
-    app.store.updateRun(runId, { status: 'waiting' });
-    app.coordinator.mailbox.refresh(runId);
-    expect(app.store.run(runId).status).toBe('waiting');
-    expect(app.store.inbox(runId)).toHaveLength(0);
   });
 });
 
