@@ -33,11 +33,6 @@ import { resolveChildCard } from './child-config.js';
 import { deriveAgent, deriveAgentSpec } from '../agents/derive.js';
 import type { AgentOverlay } from '../agents/derive.js';
 import { hostAcceptanceStatus, reportCompleteness, reportSpecForCard, reportSubmissionSpec, submitReport, validateSlots } from '../agents/contracts.js';
-import { delegateSpec, taskToolSpec, findAgentsSpec } from './delegate.js';
-import { prepareTaskSpawn } from './task-spawn.js';
-import type { TaskSpawnRequest, TaskSpawnOverrides } from './task-spawn.js';
-import { readTaskGraph, requireTaskNode } from '../runtime/task-graph.js';
-import { classifyTaskGraph } from '../runtime/task-completion.js';
 
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)): Record<string, unknown> => ({ type: 'object', additionalProperties: false, properties, required });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
@@ -45,7 +40,7 @@ const ids = { type: 'array', items: id, uniqueItems: true, maxItems: 16 };
 const content = { type: 'string', minLength: 1, maxLength: 16_000 };
 const progressItems = { type: 'array', items: { type: 'string', maxLength: 800 }, maxItems: 16 };
 const definitions: (ToolSpec & { main?: boolean; control?: boolean })[] = [
-  { ...delegateSpec, main: true }, { ...taskToolSpec, main: true }, { ...findAgentsSpec, main: true },
+  { ...methodTaskSpec, main: true },
   { ...explorationPlanSpec, main: true },
   exploreSpec,
   rosterSpawnAgentSpec,
@@ -81,15 +76,13 @@ export class Mailbox {
   private readonly globalInstructions: string | false;
   private readonly interrupt?: (id: string) => void;
   private readonly resumeInterrupted?: (id: string) => void;
-  private readonly taskOperation?: (run: Run, callId: string, name: string, args: Record<string, unknown>) => unknown;
   /** Chains discovered by prepareSpawn, recorded when the child is committed. */
   private readonly pendingInstructions = new Map<string, InstructionChain>();
-  constructor(private store: Store, private cancel: (id: string, origin: CancelOrigin) => void, options: { knowledge?: ProjectKnowledge; modelBindings?: Record<string, ModelBinding>; bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>; toolPermission?: (tool: string) => Permission | undefined; toolAvailable?: (tool: string) => boolean; exploration?: boolean; resolveKnowledge?: (run: Run, refs: KnowledgeReference[]) => unknown; knowledgeUses?: (run: Run, uses: { id: string; revision: number; purpose: string }[]) => void; globalInstructions?: string | false; interrupt?: (id: string) => void; resumeInterrupted?: (id: string) => void; taskOperation?: (run: Run, callId: string, name: string, args: Record<string, unknown>) => unknown } = {}) {
+  constructor(private store: Store, private cancel: (id: string, origin: CancelOrigin) => void, options: { knowledge?: ProjectKnowledge; modelBindings?: Record<string, ModelBinding>; bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>; toolPermission?: (tool: string) => Permission | undefined; toolAvailable?: (tool: string) => boolean; exploration?: boolean; resolveKnowledge?: (run: Run, refs: KnowledgeReference[]) => unknown; knowledgeUses?: (run: Run, uses: { id: string; revision: number; purpose: string }[]) => void; globalInstructions?: string | false; interrupt?: (id: string) => void; resumeInterrupted?: (id: string) => void } = {}) {
     validateAgentModelPolicy(options.modelBindings);
     this.globalInstructions = options.globalInstructions ?? false;
     this.interrupt = options.interrupt;
     this.resumeInterrupted = options.resumeInterrupted;
-    this.taskOperation = options.taskOperation;
     this.modelBindings = structuredClone(options.modelBindings ?? {});
     this.bindingSnapshot = options.bindingSnapshot;
     this.toolPermission = options.toolPermission;
@@ -101,7 +94,6 @@ export class Mailbox {
   }
   specs(run: Run): ToolSpec[] {
     const session = this.store.session(run.sessionId);
-    if (session.toolProfile === 'lean-team') return run.parentId ? [] : [delegateSpec, taskToolSpec, findAgentsSpec, definitions.find(spec => spec.name === 'ask_user')!].map(({ name, description, parameters }) => ({ name, description, parameters }));
     const factors = session.agentFactors;
     const approved = session.modelBindings ?? this.modelBindings;
     const aliases = Object.keys(approved);
@@ -116,7 +108,7 @@ export class Mailbox {
       return { ...parameters, properties };
     };
     const agentFeatures = run.card.schemaVersion === 2 || Boolean(factors?.A || factors?.C);
-    return definitions.filter(x => (!['delegate', 'task', 'find_agents'].includes(x.name) || x.name === 'task' && session.inlineMethods && !run.parentId) && roleAllows(run, session, x.name) && (!x.main || !run.parentId) && (x.name !== 'exploration.plan' || this.exploration)
+    return definitions.filter(x => (x.name !== 'task' || (session.inlineMethods && !run.parentId)) && roleAllows(run, session, x.name) && (!x.main || !run.parentId) && (x.name !== 'exploration.plan' || this.exploration)
       && (x.name !== 'agent.derive' || run.card.schemaVersion === 2 || factors?.A)
       && (x.name !== 'report.submit' || Boolean(run.parentId && run.card.report?.length))).map(({ name, description, parameters }) => {
       if (name === 'task' && session.inlineMethods) return methodTaskSpec;
@@ -179,11 +171,6 @@ export class Mailbox {
   }
   execute(run: Run, callId: string, name: string, args: Record<string, unknown>): unknown {
     if (name === 'task' && this.store.session(run.sessionId).inlineMethods) return executeMethodStage(this.store, run, callId, args, (tool, input) => this.execute(run, callId, tool, input), this.stageKnowledge);
-    if (['delegate', 'task', 'find_agents'].includes(name)) {
-      if (run.parentId || this.store.session(run.sessionId).toolProfile !== 'lean-team') throw new KodoError('ROLE_DENIED', 'task graph tools belong to a lean-team main run');
-      if (!this.taskOperation) throw new KodoError('TASK_HOST_UNAVAILABLE', 'the task graph host is not installed');
-      return this.taskOperation(run, callId, name, args);
-    }
     if (name === 'agent.derive') return this.store.transaction(() => deriveAgent(this.store, run, args.base as string, args.overlay as AgentOverlay));
     if (name === 'report.submit') return this.store.transaction(() => submitReport(this.store, run, args.fields));
     if (name === 'exploration.plan') return this.planExploration(run, args);
@@ -291,24 +278,10 @@ export class Mailbox {
     if (!check(request)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the spawn_agent schema: ${schemaErrorText(check.errors)}`);
     return this.store.transaction(() => {
       const parent = this.store.run(parentRunId);
-      const result = this.commitSpawn(parent, this.prepareSpawn(parent, request as unknown as Record<string, unknown>), undefined, request.model_binding !== undefined);
+      const result = this.commitSpawn(parent, this.prepareSpawn(parent, request as unknown as Record<string, unknown>));
       this.store.event(result.id as string, 'agent.spawned', { origin: 'host', parentId: parent.id });
       return result;
     });
-  }
-  /** Scheduler-only creation: the first transaction already reserved this ID and checkout. */
-  spawnTaskHost(parentRunId: string, request: TaskSpawnRequest): Run {
-    const parent = this.store.run(parentRunId);
-    const existing = this.store.listRuns(parent.sessionId).find(run => run.id === request.runId);
-    if (existing) {
-      if (existing.parentId !== parent.id || existing.taskNode?.nodeId !== request.nodeId || existing.taskNode?.generation !== request.generation) throw new KodoError('TASK_DISPATCH_CONFLICT', 'reserved run ID already belongs to another task');
-      return existing;
-    }
-    const { args, overrides } = prepareTaskSpawn(this.store, parent, request);
-    const child = this.prepareSpawn(parent, args, undefined, undefined, overrides);
-    this.commitSpawn(parent, child, undefined, false, request.continuation?.mode === 'redo', overrides.reviseWriteScope);
-    this.store.event(child.id, 'agent.spawned', { origin: 'task_graph', parentId: parent.id, nodeId: request.nodeId, generation: request.generation });
-    return this.store.run(child.id);
   }
   private planExploration(parent: Run, args: Record<string, unknown>): unknown {
     if (!this.exploration || parent.parentId) throw new KodoError('ROLE_DENIED', 'exploration.plan requires host enablement and a main run');
@@ -368,7 +341,7 @@ export class Mailbox {
       return { batch_id: plan.batch_id, decision_version: plan.decision_version, questions: mapping, replayed: false };
     });
   }
-  private prepareSpawn(parent: Run, args: Record<string, unknown>, exploration?: Run['exploration'], explore?: Run['explore'], host?: TaskSpawnOverrides): Run {
+  private prepareSpawn(parent: Run, args: Record<string, unknown>, exploration?: Run['exploration'], explore?: Run['explore']): Run {
     if (parent.parentId) throw new KodoError('ROLE_DENIED', 'only the main run can create children');
     if (terminal(parent.status) || parent.status === 'interrupted' || parent.cancelRequested || parent.interruptRequested) throw new KodoError('SPAWN_INACTIVE', 'only an active main run can create children');
     if (typeof args.objective !== 'string' || !args.objective.trim()) throw new KodoError('TOOL_ARGUMENTS', 'objective must not be blank');
@@ -386,8 +359,8 @@ export class Mailbox {
     if (continuationOf) {
       previous = this.peer(parent, continuationOf);
       if ((previous.execution || previous.executionPending) && args.execution === 'shared') throw new KodoError('EXECUTION_REUSE', 'a reused teammate keeps its execution checkout; create a new child for shared execution');
-      if (!managedChild(this.store, parent, previous) || !(terminal(previous.status) || (host && previous.status === 'interrupted'))) throw new KodoError('CONTINUATION', 'child continuation requires a settled managed child');
-      if (!host && resolveManagedAgent(this.store, parent, previous.id).id !== previous.id) throw new KodoError('CONTINUATION', 'continue the latest run of this teammate, or use followup_task with its stable agent ID');
+      if (!managedChild(this.store, parent, previous) || !terminal(previous.status)) throw new KodoError('CONTINUATION', 'child continuation requires a settled managed child');
+      if (resolveManagedAgent(this.store, parent, previous.id).id !== previous.id) throw new KodoError('CONTINUATION', 'continue the latest run of this teammate, or use followup_task with its stable agent ID');
     }
     const predecessor = previous ?? parent;
     const granted = session.permissions.filter(x => (parent.permissions ?? session.permissions).includes(x) && (predecessor.permissions ?? session.permissions).includes(x));
@@ -395,7 +368,7 @@ export class Mailbox {
     if (requested?.some(x => !granted.includes(x))) throw new KodoError('PERMISSION_ESCALATION', 'child permissions must be a subset of parent and predecessor permissions');
     let permissions = requested ?? granted;
     // Without a host permission lookup an explicitly selected tool cannot be validated, so it is refused.
-    const card = host?.card ?? resolveChildCard(this.store, previous?.card ?? parent.card, args, { run: parent, readOnlyExploration: Boolean(exploration || explore), permissions, permissionOf: this.toolPermission ?? (() => undefined) });
+    const card = resolveChildCard(this.store, previous?.card ?? parent.card, args, { run: parent, readOnlyExploration: Boolean(exploration || explore), permissions, permissionOf: this.toolPermission ?? (() => undefined) });
     const mode = card.routing?.mode;
     const ceiling = (card.constraints?.permissions ?? ['read', 'write', 'exec']).filter(permission => mode === 'read' ? permission === 'read' : mode === 'review' ? permission !== 'write' : true);
     if (card.schemaVersion === 2 && !granted.some(permission => ceiling.includes(permission))) throw new KodoError('CARD_UNAVAILABLE', 'card mode and permission ceiling have no intersection with the parent authorization');
@@ -411,10 +384,10 @@ export class Mailbox {
     const toolBindings = previous
       ? previous.toolBindings === undefined ? undefined : { ...currentBindings, ...previous.toolBindings }
       : currentBindings ?? (card.digest === parent.card.digest ? parent.toolBindings : undefined);
-    const inheritedScope = normalizeFileScope(host?.reviseWriteScope ? { ...predecessor.scope, write: undefined } : predecessor.scope ?? {}, parent.scope);
+    const inheritedScope = normalizeFileScope(predecessor.scope ?? {}, parent.scope);
     const cardScope = resolveScopeVariables(card.constraints?.scope, session.projectRoots);
     const boundedScope = intersectFileScopes(inheritedScope, cardScope, mode === 'read' || mode === 'review' ? { write: [] } : undefined);
-    if (!host && (card.derivedFrom?.id ?? card.id) === 'kodo/implementer' && !(args.scope as FileScope | undefined)?.write?.length) throw new KodoError('SCOPE_REQUIRED', 'implementer requires explicit nonempty scope.write roots');
+    if ((card.derivedFrom?.id ?? card.id) === 'kodo/implementer' && !(args.scope as FileScope | undefined)?.write?.length) throw new KodoError('SCOPE_REQUIRED', 'implementer requires explicit nonempty scope.write roots');
     const scope = normalizeFileScope(args.scope as FileScope ?? {}, boundedScope);
     const slots = validateSlots(this.store, parent, card, scope, args.slots);
     if (args.execution !== 'isolated' && !previous?.execution && !previous?.executionPending && todoDependenciesSatisfied(this.store, parent.id, todo)) assertNoWriteConflict(this.store, parent, permissions, scope, card.schemaVersion === 2 || Boolean(session.agentFactors?.A || session.agentFactors?.C));
@@ -427,9 +400,9 @@ export class Mailbox {
     const alias = selectedAlias ?? predecessor.modelBindingId;
     const binding = selectedAlias === undefined ? predecessor.binding : approved[selectedAlias]!;
     const modelLimits = selectedAlias === undefined ? predecessor.modelLimits ?? session.modelLimits ?? resolveModelLimits(binding) : resolveModelLimits(binding);
-    const childId = host?.runId ?? randomUUID();
-    const execution = host ? host.execution : previous?.execution;
-    const executionPending = host ? undefined : execution ? undefined : previous?.executionPending ?? (args.execution === 'isolated' ? { global: this.globalInstructions } : undefined);
+    const childId = randomUUID();
+    const execution = previous?.execution;
+    const executionPending = execution ? undefined : previous?.executionPending ?? (args.execution === 'isolated' ? { global: this.globalInstructions } : undefined);
     const workspace = execution?.root ?? session.workspace;
     const objective = args.objective as string;
     const capacityBytes = instructionCapacityBytes(runBudget({ ...parent, modelLimits }, session), modelLimits.input);
@@ -441,13 +414,9 @@ export class Mailbox {
     if (todo) child.todo = todo;
     if (execution) child.execution = execution;
     if (executionPending) child.executionPending = executionPending;
-    if (host) {
-      child.taskNode = host.taskNode;
-      if (host.freshContext) child.historyFrom = undefined;
-    }
     return child;
   }
-  private commitSpawn(parent: Run, child: Run, source?: Run, explicitModel = false, freshContext = false, reviseTaskWriteScope = false): Record<string, unknown> {
+  private commitSpawn(parent: Run, child: Run, source?: Run, explicitModel = false): Record<string, unknown> {
     source ??= child.continuationOf ? this.store.run(child.continuationOf) : undefined;
     child.agentId ??= child.continuationOf ? agentIdentity(this.store, this.store.run(child.continuationOf)) : child.id;
     this.store.putRun(child);
@@ -460,8 +429,8 @@ export class Mailbox {
       child.instructions = prepared.instructions;
       this.store.updateRun(child.id, { contextRef: child.contextRef, instructions: child.instructions });
     }
-    if (source && !freshContext) {
-      child.contextRef = this.store.blob(childFollowupContext(this.store, source, child, reviseTaskWriteScope));
+    if (source) {
+      child.contextRef = this.store.blob(childFollowupContext(this.store, source, child));
       this.store.updateRun(child.id, { contextRef: child.contextRef });
     }
     this.store.event(child.id, 'run.queued', { parentId: parent.id, objective: child.objective, ...(child.continuationOf ? { continuationOf: child.continuationOf, historyFrom: child.historyFrom } : {}), ...(child.exploration ? { exploration: child.exploration } : {}), ...(child.explore ? { explore: child.explore } : {}) });
@@ -512,19 +481,6 @@ export class Mailbox {
   waitForRuns(run: Run, runIds: string[]): { waitId: string } {
     return this.register(run, { run_ids: runIds, mode: 'any', ...((this.store.session(run.sessionId).taskProtocol ?? 1) >= 2 ? {} : { timeout_ms: 300_000 }) }) as { waitId: string };
   }
-  /** Graph waits persist node IDs, not just the child runs that happened to exist at registration. */
-  waitForTasks(run: Run, nodeIds: string[], mode: 'any' | 'all' = 'any'): { waitId: string } {
-    if (run.parentId || this.store.session(run.sessionId).toolProfile !== 'lean-team') throw new KodoError('ROLE_DENIED', 'only a lean-team main run can wait for graph tasks');
-    if (!nodeIds.length) throw new KodoError('WAIT_ARGUMENTS', 'task wait requires node IDs');
-    const graph = readTaskGraph(this.store, run.id);
-    for (const id of nodeIds) requireTaskNode(graph, id);
-    const wait: Wait = { id: randomUUID(), runId: run.id, questionIds: [], runIds: [], taskNodeIds: [...new Set(nodeIds)], mode, deadline: Date.now() + 300_000, status: 'registered', eventDriven: true };
-    this.store.putWait(wait);
-    this.store.updateRun(run.id, { waitId: wait.id });
-    this.store.event(run.id, 'wait.registered', { waitId: wait.id, nodeIds: wait.taskNodeIds });
-    this.refresh(run.id);
-    return { waitId: wait.id };
-  }
   private register(run: Run, args: Record<string, unknown>): unknown {
     const questionIds = args.question_ids as string[] ?? [];
     const runIds = args.run_ids as string[] ?? [];
@@ -551,7 +507,6 @@ export class Mailbox {
     if (!run.waitId || terminal(run.status)) return;
     const wait = this.store.wait(run.waitId);
     if (wait.status !== 'registered') return;
-    const graph = wait.taskNodeIds ? readTaskGraph(this.store, run.id) : undefined;
     const conditions = [
       ...wait.questionIds.map(id => {
         const question = this.store.message(id)!;
@@ -560,9 +515,8 @@ export class Mailbox {
         return { questionId: id, answerId: answer?.id, peerStatus: peer?.status, ready: Boolean(answer) || Boolean(peer && (terminal(peer.status) || peer.status === 'interrupted')) };
       }),
       ...wait.runIds.map(id => { const peer = this.recoveryTarget(this.store.run(id)); return { runId: id, ...(peer.id === id ? {} : { recoveredRunId: peer.id }), status: peer.status, decisionVersion: peer.decisionVersion ?? 0, ready: terminal(peer.status) || peer.status === 'interrupted' }; }),
-      ...(wait.taskNodeIds ?? []).map(id => { const node = graph!.nodes.find(node => node.id === id); return { nodeId: id, state: node?.state, ready: !node || !['pending', 'queued', 'running', 'integrating'].includes(node.state) }; }),
     ];
-    const ready = Boolean(graph && classifyTaskGraph(graph).needsMain.some(item => wait.taskNodeIds?.includes(item.id))) || (wait.mode === 'all' ? conditions.every(x => x.ready) : conditions.some(x => x.ready));
+    const ready = wait.mode === 'all' ? conditions.every(x => x.ready) : conditions.some(x => x.ready);
     const input = this.store.inbox(run.id).some(x => {
       if (['question', 'input', 'decision'].includes(x.kind)) return true;
       if (x.from !== 'runtime' || x.kind !== 'event') return false;
@@ -583,7 +537,7 @@ export class Mailbox {
     this.store.event(run.id, 'wait.settled', { waitId: wait.id, reason });
   }
   private detectDeadlocks(sessionId: string): void {
-    const waits = this.store.waits(sessionId, true).filter(x => !x.taskNodeIds && !terminal(this.store.run(x.runId).status));
+    const waits = this.store.waits(sessionId, true).filter(x => !terminal(this.store.run(x.runId).status));
     const gates = this.store.listRuns(sessionId, 'queued').filter(x => x.continuationOf && !terminal(this.store.run(x.continuationOf).status));
     const blocked = new Set([...waits.map(x => x.runId), ...gates.map(x => x.id)]);
     // Greatest fixed point: an any-wait needs every alternative blocked; an all-wait needs one blocker.
@@ -624,7 +578,7 @@ export class Mailbox {
       if (wait.status === 'registered') this.store.putWait({ ...wait, status: 'settled', reason: run.status });
     }
     const notificationId = terminal(run.status) ? `terminal:${run.id}` : run.status === 'interrupted' ? `interrupted:${run.id}:${this.store.latestEvent(run.id, { types: ['run.interrupted'] })?.seq ?? 'state'}` : undefined;
-    if (notificationId && !run.taskNode && run.parentId && !terminal(this.store.run(run.parentId).status) && !this.store.message(notificationId)) {
+    if (notificationId && run.parentId && !terminal(this.store.run(run.parentId).status) && !this.store.message(notificationId)) {
       const reportStatus = reportCompleteness(this.store, run);
       const result = this.result(run) as { text?: string; quality?: { status?: string }; knowledge?: { id: string; revision: number } };
       let text = result.text ?? run.error ?? '';
