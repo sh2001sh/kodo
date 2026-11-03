@@ -1,0 +1,270 @@
+import asyncio
+import threading
+import time
+from datetime import datetime
+
+import pytest
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--gen-diagram",
+        action="store_true",
+        default=False,
+        help="Generate a diagram of the SCXML machine",
+    )
+
+
+@pytest.fixture()
+def current_time():
+    return datetime.now()
+
+
+@pytest.fixture()
+def campaign_machine():
+    from tests.machines.workflow.campaign_machine import CampaignMachine
+
+    return CampaignMachine
+
+
+@pytest.fixture()
+def campaign_machine_with_validator():
+    from tests.machines.workflow.campaign_machine_with_validator import (
+        CampaignMachineWithValidator,
+    )
+
+    return CampaignMachineWithValidator
+
+
+@pytest.fixture()
+def campaign_machine_with_final_state():
+    from tests.machines.workflow.campaign_machine import CampaignMachine
+
+    return CampaignMachine
+
+
+@pytest.fixture()
+def campaign_machine_with_values():
+    from tests.machines.workflow.campaign_machine_with_values import CampaignMachineWithValues
+
+    return CampaignMachineWithValues
+
+
+@pytest.fixture()
+def traffic_light_machine():
+    from tests.examples.traffic_light_machine import TrafficLightMachine
+
+    return TrafficLightMachine
+
+
+@pytest.fixture()
+def OrderControl():
+    from tests.examples.order_control_machine import OrderControl
+
+    return OrderControl
+
+
+@pytest.fixture()
+def AllActionsMachine():
+    from tests.examples.all_actions_machine import AllActionsMachine
+
+    return AllActionsMachine
+
+
+@pytest.fixture()
+def classic_traffic_light_machine(engine):
+    from statemachine import State
+    from statemachine import StateChart
+
+    class TrafficLightMachine(StateChart):
+        green = State(initial=True)
+        yellow = State()
+        red = State()
+
+        slowdown = green.to(yellow)
+        stop = yellow.to(red)
+        go = red.to(green)
+
+        def _get_engine(self):
+            return engine(self)
+
+    return TrafficLightMachine
+
+
+@pytest.fixture()
+def classic_traffic_light_machine_allow_event(classic_traffic_light_machine):
+    """Already allow_event_without_transition=True (StateChart default)."""
+    return classic_traffic_light_machine
+
+
+@pytest.fixture()
+def reverse_traffic_light_machine():
+    from tests.machines.workflow.reverse_traffic_light import ReverseTrafficLightMachine
+
+    return ReverseTrafficLightMachine
+
+
+@pytest.fixture()
+def approval_machine(current_time):  # noqa: C901
+    from statemachine import State
+    from statemachine import StateChart
+
+    class ApprovalMachine(StateChart):
+        "A workflow machine"
+
+        requested = State(initial=True)
+        accepted = State()
+        rejected = State()
+
+        completed = State(final=True)
+
+        validate = requested.to(accepted, cond="is_ok") | requested.to(rejected)
+
+        @validate
+        def do_validate(self, *args, **kwargs):
+            if self.model.is_ok():
+                self.model.accepted_at = current_time
+                return self.model
+            else:
+                self.model.rejected_at = current_time
+                return self.model
+
+        @accepted.to(completed)
+        def complete(self):
+            self.model.completed_at = current_time
+
+        @requested.to(requested)
+        def update(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self.model, k, v)
+            return self.model
+
+        @rejected.to(requested)
+        def retry(self):
+            self.model.rejected_at = None
+            return self.model
+
+    return ApprovalMachine
+
+
+@pytest.fixture(params=["sync", "async"])
+def engine(request):
+    from statemachine.engines.async_ import AsyncEngine
+    from statemachine.engines.sync import SyncEngine
+
+    if request.param == "sync":
+        return SyncEngine
+    else:
+        return AsyncEngine
+
+
+class _AsyncListener:
+    """No-op async listener that triggers AsyncEngine selection."""
+
+    async def on_enter_state(
+        self, **kwargs
+    ): ...  # No-op: presence of async callback triggers AsyncEngine selection
+
+
+class SMRunner:
+    """Helper for running state machine tests on both sync and async engines.
+
+    Usage in tests::
+
+        async def test_something(self, sm_runner):
+            sm = await sm_runner.start(MyStateChart)
+            await sm_runner.send(sm, "some_event")
+            assert "expected_state" in sm.configuration_values
+    """
+
+    def __init__(self, is_async: bool):
+        self.is_async = is_async
+
+    async def start(self, cls, **kwargs):
+        """Create and activate a state machine instance."""
+        from inspect import isawaitable
+
+        if self.is_async:
+            listeners = list(kwargs.pop("listeners", []))
+            listeners.append(_AsyncListener())
+            sm = cls(listeners=listeners, **kwargs)
+            result = sm.activate_initial_state()
+            if isawaitable(result):
+                await result
+        else:
+            sm = cls(**kwargs)
+        return sm
+
+    async def send(self, sm, event, **kwargs):
+        """Send an event to the state machine."""
+        from inspect import isawaitable
+
+        result = sm.send(event, **kwargs)
+        if isawaitable(result):
+            return await result
+        return result
+
+    async def processing_loop(self, sm):
+        """Run the processing loop (for delayed event tests)."""
+        from inspect import isawaitable
+
+        result = sm._processing_loop()
+        if isawaitable(result):
+            return await result
+        return result
+
+    async def sleep(self, seconds: float):
+        """Sleep that works for both sync and async engines."""
+        if self.is_async:
+            await asyncio.sleep(seconds)
+        else:
+            time.sleep(seconds)
+
+
+@pytest.fixture(params=["sync", "async"])
+def sm_runner(request):
+    """Fixture that runs tests on both sync and async engines."""
+    return SMRunner(is_async=request.param == "async")
+
+
+@pytest.fixture(autouse=True)
+def _check_leaked_threads():
+    """Detect threads leaked by test cases (e.g. invoke daemon threads).
+
+    Snapshots active threads before the test, yields, then checks for any new
+    threads still alive after teardown.  Leaked threads are joined with a
+    timeout and reported as a test failure.
+    """
+    before = set(threading.enumerate())
+    yield
+
+    new_threads = set(threading.enumerate()) - before
+    if not new_threads:
+        return
+
+    # Filter out asyncio event loop threads (managed by pytest-asyncio, not by us)
+    # and DummyThreads (created by Python for foreign threads — cannot be joined).
+    new_threads = {
+        t
+        for t in new_threads
+        if not t.name.startswith("asyncio_") and not isinstance(t, threading._DummyThread)
+    }
+    if not new_threads:
+        return
+
+    # Give ephemeral threads (e.g. executor workers) a chance to finish.
+    for t in new_threads:
+        t.join(timeout=2.0)
+
+    leaked = [t for t in new_threads if t.is_alive()]
+    if not leaked:
+        return
+
+    details: list[str] = []
+    for t in leaked:
+        details.append(f"  - {t.name!r} (daemon={t.daemon}, ident={t.ident})")
+
+    pytest.fail(
+        f"Test leaked {len(leaked)} thread(s) still alive after join:\n" + "\n".join(details),
+        pytrace=False,
+    )
