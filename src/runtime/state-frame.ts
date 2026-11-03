@@ -7,7 +7,6 @@ import type { Store } from '../storage/index.js';
 import { runMemory } from './memory.js';
 import { excerpt } from './tool-result-prune.js';
 import { terminal } from './types.js';
-import { todoDispatchState } from '../tools/todo.js';
 import { readTaskGraph } from './task-graph.js';
 import type { Call, Message, Run, Session } from './types.js';
 
@@ -105,12 +104,10 @@ export function stateFrame(host: StepHost, run: Run, session: Session, pressure?
   const children = runs.filter(child => child.parentId === run.id && !terminal(child.status));
   const waits = store.waits(session.id, true).filter(wait => wait.runId === run.id);
   const knowledge = store.knowledge.usesOf(run.id);
-  const dispatch = todoDispatchState(store, run.id);
   const state = {
     objective: excerpt(run.objective, 600), step: run.step, decisionVersion: session.decisionVersion ?? 0,
     ...(session.inlineMethods && !run.parentId ? { method: activeMethod(store, run.id) ?? null, methodCatalog: methodCatalogDigest(session.methodCards), stages: readTaskGraph(store, run.id).nodes.slice(0, 8).map(node => ({ id: node.id, state: node.state, generation: node.generation, ...(node.runId ? { runId: node.runId } : {}), staleDecision: node.resultDecisionVersion !== undefined && node.resultDecisionVersion !== (session.decisionVersion ?? 0) })) } : {}),
     toolTimeoutMs: session.budget.toolTimeoutMs,
-    ...(dispatch.length ? { todoDispatch: dispatch.slice(0, 12).map(item => ({ ...item, runIds: item.runIds.slice(-8), omittedRuns: Math.max(0, item.runIds.length - 8) })), todoDispatchOmitted: Math.max(0, dispatch.length - 12), todoDispatchReadMore: 'todo.read' } : {}),
     remainingTokens: session.budget.maxTokens === null ? null : Math.max(0, session.budget.maxTokens - session.tokens),
     ...(delivery ? { deliverables: delivery.items.map(item => ({ ...item, deliverable: excerpt(item.deliverable, 160) })), deliverablesObservedAt: delivery.observedAt } : {}),
     children: children.slice(0, 8).map(child => ({ id: child.id, status: child.status, waitId: child.waitId })),
@@ -127,7 +124,6 @@ export function stateFrame(host: StepHost, run: Run, session: Session, pressure?
   // string halfway through a property. The five call rows always survive.
   while (escapeMarkers(JSON.stringify(state)).length > attachmentKinds.state.maxChars) {
     if (state.knowledge.length) { state.knowledge.pop(); state.omitted.knowledge++; }
-    else if (state.todoDispatch?.length) { state.todoDispatch.pop(); state.todoDispatchOmitted!++; }
     else if (state.deliverables?.length) { state.deliverables.pop(); state.omitted.deliverables++; }
     else if (state.waits.length) { state.waits.pop(); state.omitted.waits++; }
     else if (state.children.length) { state.children.pop(); state.omitted.children++; }

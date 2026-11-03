@@ -23,7 +23,6 @@ import type { HookRegistration } from './hooks.js';
 import { turnEndDelivery } from './turn-end.js';
 import type { CompletionValidator, Message, ModelBinding, ModelResponse, Provider, Run, StepOutcome } from './types.js';
 import type { ProjectKnowledge } from '../knowledge/index.js';
-import { refreshTodoDependencies, todoRunReady } from './todo-dependencies.js';
 import { taskGraphTerminalCheck } from './task-completion.js';
 
 export { runBudget } from './run-budget.js';
@@ -87,7 +86,6 @@ export class RunCoordinator implements StepHost {
     if (terminal(run.status)) return Promise.resolve(run);
     if (run.cancelRequested) { this.beginStop(runId, 'cancelled'); return this.waitForStop(runId); }
     if (run.continuationOf && !this.continuationReady(run)) return Promise.resolve(run);
-    if (run.status === 'queued' && !todoRunReady(this.store, run)) return Promise.resolve(this.store.run(runId));
     if (run.status === 'interrupted') throw new KodoError('RECOVERY_REQUIRED', 'inspect and explicitly resume this interrupted run');
     if (run.status === 'waiting') {
       this.store.transaction(() => this.mailbox.refresh(runId));
@@ -244,7 +242,6 @@ export class RunCoordinator implements StepHost {
         // makes that exit start another pass, so a settled task child is always observed.
         const observed = [...this.active.entries()].filter(([id]) => this.store.run(id).sessionId === sessionId).map(([, x]) => x.promise);
         this.mailbox.refreshAll(sessionId);
-        for (const parentId of new Set(this.store.listRuns(sessionId).flatMap(run => run.parentId ? [run.parentId] : []))) refreshTodoDependencies(this.store, parentId);
         let target = this.store.run(runId);
         if (terminal(target.status) || target.status === 'interrupted') {
           await Promise.all([...this.stopping.entries()].filter(([id]) => this.store.run(id).sessionId === sessionId).map(([, promise]) => promise));
@@ -259,7 +256,7 @@ export class RunCoordinator implements StepHost {
           }
           return this.store.run(runId);
         }
-        for (const run of this.store.listRuns(sessionId)) if (run.status === 'queued' && !run.cancelRequested && !run.interruptRequested && this.continuationReady(run) && todoRunReady(this.store, run)) void this.wake(run.id);
+        for (const run of this.store.listRuns(sessionId)) if (run.status === 'queued' && !run.cancelRequested && !run.interruptRequested && this.continuationReady(run)) void this.wake(run.id);
         const active = [...this.active.entries()].filter(([id]) => this.store.run(id).sessionId === sessionId).map(([, x]) => x.promise);
         target = this.store.run(runId);
         if (!active.length && this.mailbox.userQuestions(sessionId).length) return target;

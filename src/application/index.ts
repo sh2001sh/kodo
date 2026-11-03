@@ -174,7 +174,7 @@ export class Application {
     try {
       const knowledge = options.exploration !== false || this.inlineMethods ? new ProjectKnowledge(this.store, typeof options.exploration === 'object' ? options.exploration : {}) : undefined;
       this.coordinator = new RunCoordinator(this.store, provider, onText, options.readOnlyCommands, { modelBindings: structuredClone(options.modelBindings ?? {}), ...(options.sandbox ? { sandbox: structuredClone(options.sandbox) } : {}), shellProgram: options.shellProgram, knowledge, compaction, assembly: options.assembly, globalInstructions: this.globalInstructions, hooks: options.hooks, lazyTools: options.lazyTools, ...(options.lockDirectory === undefined ? {} : { lockDirectory: options.lockDirectory }) });
-      for (const definition of todoTools(this.store, { cancelQueued: (runId, parentId) => this.coordinator.cancel(runId, { initiator: 'agent', by: parentId }) })) this.registerTool(definition);
+      for (const definition of todoTools(this.store)) this.registerTool(definition);
       if (knowledge) for (const definition of knowledgeTools(knowledge, this.inlineMethods)) this.registerTool(definition);
       for (const definition of memoryTools(this.store, { enabled: this.projectMemory })) this.registerTool(definition);
       if (options.verification) this.registerTool(createVerificationTool(options.verification, options.verification.backend === 'native' && this.sandboxPolicy ? async (context, invocation, signal) => {
@@ -553,7 +553,7 @@ export class Application {
         }
         if (replacements.size) this.store.putMessage({ id: `recovery-map:${resumedId}:${peer.id}`, sessionId: peer.sessionId, from: 'runtime', to: peer.id, kind: 'event', content: JSON.stringify({ reason: 'verified recovery created replacement runs; coordinate with these current IDs and review their completion before reporting', replacements: Object.fromEntries(replacements) }) });
       }
-      for (const [sourceId, targetId] of replacements) carryRecoveryTodo(this.store, sourceId, targetId, replacements);
+      for (const [sourceId, targetId] of replacements) carryRecoveryTodo(this.store, sourceId, targetId);
       for (const run of runs) this.coordinator.prepareResume(run.id);
     });
     return this.run(resumedId);

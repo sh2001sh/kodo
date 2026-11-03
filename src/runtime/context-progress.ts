@@ -51,17 +51,12 @@ export function withProgress(store: Store, run: Run, messages: Message[]): Messa
 
 export function todoMessage(snapshot: TodoSnapshot): Message {
   const active = snapshot.items.filter(item => item.status !== 'completed');
-  const dynamic = snapshot.acceptedDependencies !== undefined;
   const items = active.toSorted((a, b) => Number(b.status === 'in_progress') - Number(a.status === 'in_progress')).slice(0, 12).map(item => ({
-    ...item, content: excerpt(item.content, 160),
-    ...(dynamic ? {
-      ...(item.title === undefined ? {} : { title: excerpt(item.title, 160) }),
-      ...(item.note === undefined ? {} : { note: excerpt(item.note, 160) }),
-      dependsOn: (item.dependsOn ?? []).slice(0, 8),
-      ...((item.dependsOn?.length ?? 0) > 8 ? { omittedDependencies: item.dependsOn!.length - 8 } : {}),
-    } : {}),
+    id: item.id, content: excerpt(item.content, 160), status: item.status,
+    ...(item.title === undefined ? {} : { title: excerpt(item.title, 160) }),
+    ...(item.note === undefined ? {} : { note: excerpt(item.note, 160) }),
   }));
-  return { role: 'user', content: `${todoPrefix}${JSON.stringify({ ownerRunId: snapshot.ownerRunId, revision: snapshot.revision, counts: { total: snapshot.items.length, completed: snapshot.items.filter(item => item.status === 'completed').length, pending: active.length }, items, omitted: active.length - items.length, readFullListWith: dynamic ? 'todo.read({full:true})' : 'todo.read' })}` };
+  return { role: 'user', content: `${todoPrefix}${JSON.stringify({ ownerRunId: snapshot.ownerRunId, revision: snapshot.revision, counts: { total: snapshot.items.length, completed: snapshot.items.filter(item => item.status === 'completed').length, pending: active.length }, items, omitted: active.length - items.length, readFullListWith: 'todo.read({full:true})' })}` };
 }
 
 export function withTodo(store: Store, run: Run, messages: Message[]): Message[] {

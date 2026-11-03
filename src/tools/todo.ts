@@ -1,42 +1,48 @@
+import { Ajv } from 'ajv';
 import { digest } from '../storage/index.js';
 import type { Store } from '../storage/index.js';
 import { KodoError, terminal } from '../runtime/types.js';
-import { childIsActive } from '../messaging/spawn-spec.js';
 import type { ToolRegistration } from './registry.js';
-import type { Run } from '../runtime/types.js';
-import { refreshTodoDependencies, todoDependenciesCurrent } from '../runtime/todo-dependencies.js';
-import { readDynamicTodo, writeDynamicTodo } from './todo-dynamic.js';
-import type { TodoUpdateOptions } from './todo-dynamic.js';
-export { dynamicTodoSpec, validateDynamicTodoArgs } from './todo-dynamic.js';
 
-export type TodoExecutor = 'main' | 'agent';
-export interface TodoItem { id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; executor?: TodoExecutor; dependsOn?: string[]; title?: string; note?: string }
-export interface TodoSnapshot { ownerRunId: string; revision: number; items: TodoItem[]; generations?: Record<string, number>; acceptedDependencies?: Record<string, { id: string; generation: number }[]> }
-export interface TodoDispatchState {
-  id: string;
-  generation: number;
-  state: 'awaiting_dispatch' | 'running' | 'needs_attention' | 'awaiting_acceptance' | 'completed';
-  runIds: string[];
-}
+/**
+ * A run-owned plan: an ordered checklist with revisions. It carries no executor,
+ * dependency or dispatch semantics; it guides the run and never proves completion.
+ */
+export interface TodoItem { id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; title?: string; note?: string }
+export interface TodoSnapshot { ownerRunId: string; revision: number; items: TodoItem[] }
+
 const eventType = 'todo.updated';
-const schema = {
-  type: 'object', additionalProperties: false, required: ['expectedRevision', 'items'],
+const id = { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$' };
+const ids = { type: 'array', uniqueItems: true, maxItems: 100, items: id };
+const fields = {
+  id, content: { type: 'string', minLength: 1, maxLength: 1000 },
+  status: { enum: ['pending', 'in_progress', 'completed'] },
+  title: { type: 'string', maxLength: 160 }, note: { type: 'string', maxLength: 1000 },
+};
+const readParameters = { type: 'object', additionalProperties: false, properties: { ids, full: { type: 'boolean' }, offset: { type: 'integer', minimum: 0, maximum: 100 }, limit: { type: 'integer', minimum: 1, maximum: 25 } } };
+const writeParameters = {
+  type: 'object', additionalProperties: false, required: ['expectedRevision'],
   properties: {
     expectedRevision: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 1 },
-    items: { type: 'array', maxItems: 100, items: {
-      type: 'object', additionalProperties: false, required: ['id', 'content', 'status'],
-      properties: { id: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$' }, content: { type: 'string', minLength: 1, maxLength: 1000 }, status: { enum: ['pending', 'in_progress', 'completed'] }, executor: { enum: ['main', 'agent'] }, dependsOn: { type: 'array', uniqueItems: true, maxItems: 100, items: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,64}$' } } },
-    } },
+    items: { type: 'array', maxItems: 100, items: { type: 'object', additionalProperties: false, required: ['id', 'content', 'status'], properties: fields } },
+    updates: { type: 'array', maxItems: 100, items: { type: 'object', additionalProperties: false, required: ['id'], properties: fields } },
+    remove: ids,
   },
+  oneOf: [{ required: ['items'], not: { anyOf: [{ required: ['updates'] }, { required: ['remove'] }] } }, { required: ['updates'], not: { required: ['items'] } }, { required: ['remove'], not: { anyOf: [{ required: ['items'] }, { required: ['updates'] }] } }],
 };
+const ajv = new Ajv({ allErrors: true, strictRequired: false });
+const validateRead = ajv.compile(readParameters);
+const validateWrite = ajv.compile(writeParameters);
 
 export function readTodoSnapshot(store: Store, runId: string): TodoSnapshot {
   const latest = store.latestEvent(runId, { types: [eventType] });
-  return latest ? (latest.data as unknown as { snapshot: TodoSnapshot }).snapshot : { ownerRunId: runId, revision: 0, items: [] };
+  if (!latest) return { ownerRunId: runId, revision: 0, items: [] };
+  const snapshot = (latest.data as unknown as { snapshot: TodoSnapshot }).snapshot;
+  return { ownerRunId: snapshot.ownerRunId, revision: snapshot.revision, items: snapshot.items };
 }
 
 /** Continue the same audited task plan after recovery changes its run identity. */
-export function carryRecoveryTodo(store: Store, sourceId: string, targetId: string, replacements: ReadonlyMap<string, string>): void {
+export function carryRecoveryTodo(store: Store, sourceId: string, targetId: string): void {
   const source = store.run(sourceId);
   const target = store.run(targetId);
   if (source.sessionId !== target.sessionId || target.continuationOf !== sourceId || target.historyFrom === sourceId || !store.hasEvent(sourceId, { types: ['recovery.continued'], match: { runId: targetId } })) throw new KodoError('TODO_OWNER', 'task plans transfer only across an audited same-session recovery');
@@ -44,144 +50,88 @@ export function carryRecoveryTodo(store: Store, sourceId: string, targetId: stri
   const snapshot = readTodoSnapshot(store, sourceId);
   if (!snapshot.revision) return;
   store.event(targetId, eventType, { snapshot: { ...structuredClone(snapshot), ownerRunId: targetId }, recoverySourceRunId: sourceId });
-  for (const event of store.events(sourceId, { types: ['todo.dispatched'] })) {
-    const childId = event.data.childRunId as string;
-    store.event(targetId, 'todo.dispatched', { todoId: event.data.todoId, generation: event.data.generation, childRunId: replacements.get(childId) ?? childId, recoverySourceRunId: sourceId });
-  }
 }
 
-export function itemGeneration(snapshot: TodoSnapshot, id: string): number {
-  return snapshot.generations && Object.hasOwn(snapshot.generations, id) ? snapshot.generations[id]! : snapshot.revision;
-}
-
-export function parallelTasks(store: Store, runId: string): boolean {
-  return (store.session(store.run(runId).sessionId).taskProtocol ?? 1) >= 2;
-}
-
-/** Resolve inside the same transaction that prepares and commits a child. */
-export function resolveTodoAssignment(store: Store, parentId: string, todoId: unknown): Run['todo'] {
-  if (!parallelTasks(store, parentId)) {
-    if (todoId !== undefined) throw new KodoError('TODO_PROTOCOL', 'explicit todoId requires task protocol 2');
-    return;
-  }
-  if (todoId === undefined) return;
-  const snapshot = readTodoSnapshot(store, parentId);
-  const item = snapshot.items.find(item => item.id === todoId);
-  if (!item || item.executor !== 'agent' || item.status === 'completed') throw new KodoError('TODO_ASSIGNMENT', 'todoId must name an unfinished agent-owned task in this run');
-  return { id: item.id, generation: itemGeneration(snapshot, item.id), dependencies: (item.dependsOn ?? []).map(id => ({ id, generation: itemGeneration(snapshot, id) })) };
-}
-
-export function activeAgentTodo(store: Store, runId: string): { id: string; generation: number } | undefined {
-  if (store.run(runId).parentId) return;
+function readTodo(store: Store, runId: string, args: Record<string, unknown>): unknown {
   const snapshot = readTodoSnapshot(store, runId);
-  const item = snapshot.items.find(item => item.status === 'in_progress' && item.executor === 'agent');
-  return item ? { id: item.id, generation: itemGeneration(snapshot, item.id) } : undefined;
+  if (!snapshot.revision && !Object.keys(args).length) return snapshot;
+  const changed = new Set((store.latestEvent(runId, { types: [eventType] })?.data.changedIds as string[] | undefined) ?? []);
+  const requested = args.ids as string[] | undefined;
+  if (requested?.some(id => !snapshot.items.some(item => item.id === id))) throw new KodoError('TODO_ITEMS', 'requested task does not exist');
+  const relevant = snapshot.items.filter(item => requested ? requested.includes(item.id) : args.full || item.status !== 'completed' || changed.has(item.id));
+  const offset = args.offset as number ?? 0, limit = args.limit as number ?? 10;
+  const items = relevant.slice(offset, offset + limit);
+  return {
+    ownerRunId: runId, revision: snapshot.revision, items,
+    total: snapshot.items.length, matching: relevant.length,
+    next: offset + items.length < relevant.length ? { ...args, offset: offset + items.length, limit } : null,
+  };
 }
 
-/** Called in the child-creation transaction, after the child run has been persisted. */
-export function recordTodoDispatch(store: Store, parentId: string, childRunId: string): void {
-  const child = store.run(childRunId);
-  const active = parallelTasks(store, parentId) ? child.todo : activeAgentTodo(store, parentId);
-  if (!active) return;
-  const parent = store.run(parentId);
-  if (child.parentId !== parentId || child.sessionId !== parent.sessionId) throw new KodoError('TODO_DISPATCH_OWNER', 'dispatched work must belong to this parent run and session');
-  const data = { todoId: active.id, generation: active.generation, childRunId };
-  if (!store.hasEvent(parentId, { types: ['todo.dispatched'], match: data })) store.event(parentId, 'todo.dispatched', data);
+function candidateItems(previous: TodoSnapshot, args: Record<string, unknown>): TodoItem[] {
+  const updates = args.updates as (Partial<TodoItem> & { id: string })[] | undefined;
+  const removed = new Set(args.remove as string[] ?? []);
+  if (updates && new Set(updates.map(item => item.id)).size !== updates.length) throw new KodoError('TODO_ITEMS', 'update IDs must be unique');
+  if ([...removed].some(id => !previous.items.some(item => item.id === id))) throw new KodoError('TODO_ITEMS', 'cannot remove a missing task');
+  if (updates?.some(item => removed.has(item.id))) throw new KodoError('TODO_ITEMS', 'cannot update and remove the same task');
+  const byId = new Map(previous.items.filter(item => !removed.has(item.id)).map(item => [item.id, structuredClone(item)]));
+  for (const update of updates ?? []) {
+    const item = { ...byId.get(update.id), ...update };
+    if (!item.content || !item.status) throw new KodoError('TODO_ITEMS', `new task ${item.id} requires content and status`);
+    byId.set(item.id, item as TodoItem);
+  }
+  const items = structuredClone((args.items as TodoItem[] | undefined) ?? [...byId.values()]);
+  if (items.length > 100 || new Set(items.map(item => item.id)).size !== items.length) throw new KodoError('TODO_ITEMS', 'plan requires at most 100 unique task IDs');
+  if (items.some(item => !item.content.trim() || [item.content, item.title, item.note].some(text => text?.includes('\0')))) throw new KodoError('TODO_ITEMS', 'task text must contain visible content and no NUL');
+  return items;
 }
 
-export function dispatchedRuns(store: Store, runId: string, todoId?: string, generation?: number) {
-  const events = store.events(runId, todoId === undefined || generation === undefined ? { types: ['todo.dispatched'] } : { types: ['todo.dispatched'], match: { todoId, generation } });
-  const ids = new Set(events.map(event => event.data.childRunId as string));
-  return [...ids].map(id => store.run(id));
-}
-
-export function todoDispatchState(store: Store, runId: string): TodoDispatchState[] {
-  const snapshot = readTodoSnapshot(store, runId);
-  return snapshot.items.filter(item => item.executor === 'agent').map(item => {
-    const generation = itemGeneration(snapshot, item.id);
-    const runs = dispatchedRuns(store, runId, item.id, generation);
-    const state: TodoDispatchState['state'] = runs.some(run => childIsActive(store, run)) ? 'running'
-      : runs.length === 0 ? 'awaiting_dispatch'
-        : !runs.some(run => run.status === 'completed') ? 'needs_attention'
-          : item.status === 'completed' && (!parallelTasks(store, runId) || runs.some(run => run.status === 'completed' && todoDependenciesCurrent(store, run))) ? 'completed' : 'awaiting_acceptance';
-    return { id: item.id, generation, state, runIds: runs.map(run => run.id) };
-  });
-}
-
-/** Completion remains a parent decision, after every dispatched run has settled. */
-export function todoCompletionFeedback(store: Store, runId: string): string | undefined {
-  const pending = todoDispatchState(store, runId).filter(item => item.state !== 'completed');
-  const active = dispatchedRuns(store, runId).filter(run => childIsActive(store, run));
-  if (!pending.length && !active.length) return;
-  return `Delegated work is not yet accepted. ${pending.map(item => `${item.id}: ${item.state}`).join('; ')}${active.length ? ` Unsettled child runs: ${active.map(run => run.id).join(', ')}.` : ''} Use todo.read, resolve or wait for delegated work, inspect its evidence, and explicitly complete accepted items with todo.write.`;
+function updateResult(snapshot: TodoSnapshot, changedIds: string[], removedIds: string[]) {
+  const selected = [...snapshot.items.filter(item => changedIds.includes(item.id)), ...snapshot.items.filter(item => !changedIds.includes(item.id) && item.status !== 'completed')].slice(0, 10);
+  return {
+    ownerRunId: snapshot.ownerRunId, revision: snapshot.revision,
+    items: selected.map(item => ({ ...item, content: item.content.slice(0, 400), ...(item.note !== undefined ? { note: item.note.slice(0, 200) } : {}),
+      ...(item.content.length > 400 || (item.note?.length ?? 0) > 200 ? { detailsTruncated: true } : {}),
+    })),
+    total: snapshot.items.length, omitted: snapshot.items.length - selected.length, changedIds, removedIds,
+    read: { full: true, limit: 10 },
+  };
 }
 
 /** Run-owned plans are internal durable state, never workspace files or cross-agent writes. */
-export function todoTools(store: Store, options: TodoUpdateOptions = {}): ToolRegistration[] {
+export function todoTools(store: Store): ToolRegistration[] {
   return [
     {
-      name: 'todo.read', version: '2', permission: 'read', effect: 'read',
-      description: 'Read this run’s persistent task list, revision, and delegated task dispatch states. Lists are private to the current run and survive application restart.',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      name: 'todo.read', version: '3', permission: 'read', effect: 'read', parameters: readParameters,
+      description: 'Read a bounded view of this run’s tasks and current revision. Defaults to unfinished or recently changed tasks. Use ids for selected tasks, or full:true with offset/limit for the complete plan. Task content defines the work; title/note are display only. Persisted plans survive restart.',
       execute({ run, session, signal }, args) {
         signal.throwIfAborted();
         if (store.run(run.id).sessionId !== session.id) throw new KodoError('TODO_OWNER', 'task list belongs to a different session');
-        if (session.taskProtocol === 3) return readDynamicTodo(store, run.id, args);
-        const snapshot = readTodoSnapshot(store, run.id);
-        const dispatch = todoDispatchState(store, run.id);
-        return dispatch.length ? { ...snapshot, dispatch } : snapshot;
+        if (!validateRead(args)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the todo.read schema: ${ajv.errorsText(validateRead.errors)}`);
+        return readTodo(store, run.id, args);
       },
     },
     {
-      name: 'todo.write', version: '2', permission: 'read', effect: 'read', parameters: schema,
-      description: 'Update this run’s persistent plan with expectedRevision (0 initially). Preserve IDs. Set executor main or agent in team-lead mode; children use main. Task protocol 2 permits independent in_progress items, explicit todoId on dispatch and optional dependsOn IDs. Dependencies must be accepted before execution. Legacy sessions allow one active item and implicit dispatch association. Accept delegated work after a child completes and all linked runs settle; inspect evidence first. When accepting, preserve content, executor and dependsOn; reopen or create a task for changed work. Do not rewrite an active assignment. This bookkeeping never proves overall completion.',
+      name: 'todo.write', version: '3', permission: 'read', effect: 'read', parameters: writeParameters,
+      description: 'Atomically update tasks by stable ID with expectedRevision (0 initially). Prefer updates:[{id,status,note}] for progress; new IDs require content and status. title/note never change task identity. remove deletes IDs in the same transaction. items is an alternative full replacement, not a patch. Returned items are bounded summaries; use todo.read by ID for full definitions. This plan guides work; it does not dispatch children or prove overall correctness.',
       execute({ run, session, signal, markEffectStarted }, args) {
         signal.throwIfAborted();
-        if (session.taskProtocol === 3) return writeDynamicTodo(store, { run, session, signal, markEffectStarted }, args, options);
+        if (!validateWrite(args)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the todo.write schema: ${ajv.errorsText(validateWrite.errors)}`);
         return store.transaction(() => {
           const current = store.run(run.id);
           if (current.sessionId !== session.id) throw new KodoError('TODO_OWNER', 'task list belongs to a different session');
           if (terminal(current.status)) throw new KodoError('TODO_TERMINAL', 'a finished run cannot change its task list');
-          const items = args.items as TodoItem[];
-          const parallel = parallelTasks(store, run.id);
-          if (new Set(items.map(item => item.id)).size !== items.length) throw new KodoError('TODO_ITEMS', 'task IDs must be unique');
-          if (!parallel && items.filter(item => item.status === 'in_progress').length > 1) throw new KodoError('TODO_ITEMS', 'only one task may be in_progress');
-          if (!parallel && items.some(item => item.dependsOn?.length)) throw new KodoError('TODO_PROTOCOL', 'dependencies require task protocol 2');
-          validateDependencies(items);
-          if (items.some(item => !item.content.trim() || item.content.includes('\0'))) throw new KodoError('TODO_ITEMS', 'task content must contain visible text and no NUL');
           const previous = readTodoSnapshot(store, run.id);
           if (args.expectedRevision !== previous.revision) throw new KodoError('TODO_CONFLICT', 'task revision changed; read the current list before updating');
-          if (current.parentId && items.some(item => item.executor === 'agent')) throw new KodoError('TODO_EXECUTOR', 'child task lists cannot delegate to another agent; use executor main');
-          if (!current.parentId && store.session(current.sessionId).agentFactors?.B === true && items.some(item => item.executor === undefined)) throw new KodoError('TODO_EXECUTOR', 'team-lead task lists require executor main or agent on every item');
-          const generations = new Map(Object.entries(previous.generations ?? {}).filter(([id]) => items.some(item => item.id === id && (parallel || item.executor === 'agent'))));
-          for (const old of previous.items.filter(item => item.executor === 'agent')) {
-            const next = items.find(item => item.id === old.id);
-            const active = dispatchedRuns(store, run.id, old.id, itemGeneration(previous, old.id)).some(child => childIsActive(store, child));
-            if (active && (!next || next.executor !== 'agent' || next.content !== old.content || JSON.stringify(next.dependsOn ?? []) !== JSON.stringify(old.dependsOn ?? []) || (!parallel && next.status === 'pending') || (old.status === 'completed' && next.status !== 'completed'))) {
-              throw new KodoError('TODO_ACTIVE', `task ${old.id} has active delegated work; settle its child runs before changing or removing the assignment`);
-            }
-          }
-          for (const item of items.filter(item => parallel || item.executor === 'agent')) {
-            const old = previous.items.find(old => old.id === item.id);
-            const assignmentChanged = old && (old.executor !== item.executor || old.content !== item.content || JSON.stringify(old.dependsOn ?? []) !== JSON.stringify(item.dependsOn ?? []));
-            if (item.status === 'completed' && item.executor === 'agent' && assignmentChanged) {
-              throw new KodoError('TODO_ACCEPTANCE', `task ${item.id} changes its assignment while marking it completed; acceptance cannot reuse evidence from the previous task generation. Use todo.read and preserve content, executor and dependsOn when accepting. For changed work, set pending or in_progress and dispatch a child for the new generation.`);
-            }
-            if (!old || assignmentChanged || (old.status === 'completed' && item.status !== 'completed') || !generations.has(item.id)) generations.set(item.id, previous.revision + 1);
-            if (item.status === 'completed' && item.executor === 'agent') {
-              const runs = dispatchedRuns(store, run.id, item.id, generations.get(item.id));
-              if (!runs.some(child => child.status === 'completed') || runs.some(child => childIsActive(store, child))) {
-                throw new KodoError('TODO_ACCEPTANCE', `task ${item.id} requires a completed child and all linked child runs settled before acceptance`);
-              }
-              if (parallel && !runs.some(child => child.status === 'completed' && todoDependenciesCurrent(store, child))) throw new KodoError('TODO_DEPENDENCY_CHANGED', `task ${item.id} needs a completed run verified against the current accepted dependency versions`);
-            }
-          }
+          const items = candidateItems(previous, args);
+          const snapshot: TodoSnapshot = { ownerRunId: run.id, revision: previous.revision + 1, items };
           signal.throwIfAborted();
           markEffectStarted();
-          const snapshot: TodoSnapshot = { ownerRunId: run.id, revision: previous.revision + 1, items: structuredClone(items), ...(generations.size ? { generations: Object.fromEntries(generations) } : {}) };
-          store.event(run.id, eventType, { snapshot, argsDigest: digest(JSON.stringify(args)) });
-          if (parallel) refreshTodoDependencies(store, run.id);
-          return snapshot;
+          const changedIds = items.filter(item => JSON.stringify(item) !== JSON.stringify(previous.items.find(old => old.id === item.id))).map(item => item.id);
+          const removedIds = previous.items.filter(old => !items.some(item => item.id === old.id)).map(item => item.id);
+          const result = updateResult(snapshot, changedIds, removedIds);
+          store.event(run.id, eventType, { snapshot, result, argsDigest: digest(JSON.stringify(args)), changedIds });
+          return result;
         });
       },
       recover({ run, request, signal }) {
@@ -193,20 +143,4 @@ export function todoTools(store: Store, options: TodoUpdateOptions = {}): ToolRe
       },
     },
   ];
-}
-
-function validateDependencies(items: TodoItem[]): void {
-  const byId = new Map(items.map(item => [item.id, item]));
-  const visited = new Set<string>(), visiting = new Set<string>();
-  const visit = (id: string): void => {
-    if (visiting.has(id)) throw new KodoError('TODO_DEPENDENCY', 'task dependencies must not contain cycles');
-    if (visited.has(id)) return;
-    const item = byId.get(id);
-    if (!item) throw new KodoError('TODO_DEPENDENCY', `dependency ${id} does not exist in the task list`);
-    visiting.add(id);
-    for (const prerequisite of item.dependsOn ?? []) visit(prerequisite);
-    visiting.delete(id); visited.add(id);
-    if (item.status === 'completed' && (item.dependsOn ?? []).some(id => byId.get(id)?.status !== 'completed')) throw new KodoError('TODO_DEPENDENCY', `task ${id} cannot complete before its dependencies are accepted`);
-  };
-  for (const item of items) visit(item.id);
 }

@@ -4,7 +4,6 @@ import type { CardModelRole, FileScope, ModelBinding, Permission, Run, ToolSpec 
 import { validateModelBinding } from '../providers/model-limits.js';
 import { writeScopesOverlap } from '../runtime/scope.js';
 import { recoveryResolution } from '../runtime/recovery-resolution.js';
-import { todoDependenciesSatisfied } from '../runtime/todo-dependencies.js';
 
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)): Record<string, unknown> => ({ type: 'object', additionalProperties: false, properties, required });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
@@ -122,7 +121,6 @@ export function assertNoWriteConflict(store: Store, parent: Run, permissions: Pe
   if (!permissions.includes('write') || !claims(scope)) return;
   const sessionPermissions = store.session(parent.sessionId).permissions;
   const holder = store.listRuns(parent.sessionId).find(peer => peer.parentId === parent.id && !terminal(peer.status) && !peer.cancelRequested
-    && (peer.status !== 'queued' || todoDependenciesSatisfied(store, parent.id, peer.todo))
     && (peer.permissions ?? sessionPermissions).includes('write') && claims(peer.scope) && writeScopesOverlap(peer.scope, scope));
   if (!holder) return;
   throw new KodoError('WRITE_SCOPE_CONFLICT', `write scope ${JSON.stringify(scope.write)} overlaps child ${holder.id} (status ${holder.status}), which holds write scope ${JSON.stringify(holder.scope?.write ?? ['.'])}; wait for it, cancel it, or choose a disjoint scope`);

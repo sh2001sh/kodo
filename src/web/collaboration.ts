@@ -21,7 +21,6 @@ export interface AgentBlockedView {
 
 export interface AgentView {
   id: string;
-  agentId?: string;
   parentId?: string;
   role: 'main' | 'child';
   objective: string;

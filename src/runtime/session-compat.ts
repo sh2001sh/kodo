@@ -76,8 +76,33 @@ export function isLegacyRosterSession(store: Store, sessionId: string): boolean 
   return legacy;
 }
 
+/** Events only the deleted explore/followup/todo-dispatch collaboration surface could produce. */
+const LEGACY_COLLABORATION_EVENTS = ['exploration.planned', 'agent.followup', 'todo.dispatched', 'todo.dependencies.ready', 'todo.dependencies.changed', 'todo.dependencies.blocked'] as const;
+/** Run fields written only by explore, exploration plans, followup identities and todo dispatch. */
+const LEGACY_COLLABORATION_FIELDS = ['exploration', 'explore', 'agentId', 'todo'] as const;
+const collaborationScans = new WeakMap<Store, Map<string, boolean>>();
+
+function scanLegacyCollaboration(store: Store, sessionId: string): boolean {
+  for (const run of store.listRuns(sessionId)) {
+    const raw = run as unknown as Record<string, unknown>;
+    if (LEGACY_COLLABORATION_FIELDS.some(field => raw[field] !== undefined)) return true;
+    if (store.hasEvent(run.id, { types: [...LEGACY_COLLABORATION_EVENTS] })) return true;
+  }
+  return false;
+}
+
+export function isLegacyCollaborationSession(store: Store, sessionId: string): boolean {
+  let scans = collaborationScans.get(store);
+  if (!scans) { scans = new Map(); collaborationScans.set(store, scans); }
+  const cached = scans.get(sessionId);
+  if (cached !== undefined) return cached;
+  const legacy = scanLegacyCollaboration(store, sessionId);
+  scans.set(sessionId, legacy);
+  return legacy;
+}
+
 /**
- * Old isolated-checkout, lean-team and roster sessions stay visible through
+ * Old isolated-checkout, lean-team, roster and collaboration-era sessions stay visible through
  * read-only APIs but must not execute or create children: silently degrading them
  * to the legacy behavior would change the task's accepted semantics without the
  * author's knowledge. The product is not yet released, so the explicit
@@ -87,11 +112,14 @@ export function assertSessionCompatible(store: Store, session: Session): void {
   const execution = isLegacyExecutionSession(store, session.id);
   const lean = isLegacyLeanSession(session);
   const roster = isLegacyRosterSession(store, session.id);
-  if (!execution && !lean && !roster) return;
+  const collaboration = isLegacyCollaborationSession(store, session.id);
+  if (!execution && !lean && !roster && !collaboration) return;
   const reason = execution
     ? 'This session uses the deleted isolated-checkout execution subsystem and is not compatible with this version.'
     : lean
       ? 'This session was created by the deleted lean-team task graph and is not compatible with this version.'
-      : 'This session was created by the deleted agent-roster subsystem (roster snapshots, derived agents or retention drafts) and is not compatible with this version.';
+      : roster
+        ? 'This session was created by the deleted agent-roster subsystem (roster snapshots, derived agents or retention drafts) and is not compatible with this version.'
+        : 'This session used deleted collaboration tools (explore, exploration plans, followup tasks or todo dispatch) and is not compatible with this version.';
   throw new KodoError('SESSION_INCOMPATIBLE', `${reason} The product has not shipped; start a new task (use \`kodo inspect\` if the old evidence must be kept).`);
 }

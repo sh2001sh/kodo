@@ -1,6 +1,5 @@
 import { collaborationTool, controlTool } from '../messaging/index.js';
 import { effectiveMethodRun, recordMethodLoad } from '../extensions/methods.js';
-import { assertTodoExecution } from './todo-execution.js';
 import { validateImageInput } from '../tools/image.js';
 import type { ImageInput } from '../tools/image.js';
 import { reconciledEvent } from '../tools/effect-scan.js';
@@ -108,7 +107,6 @@ async function admit(host: StepHost, run: Run, modelCall: Call, call: Call, requ
   const args = collaborationTool(request.name) ? host.mailbox.validate(run, request.name, request.arguments) : host.tools.validate(request.name, request.arguments, run.card.tools, effectiveSession(run, session), run);
   call.effect = host.tools.effect(request.name, args);
   const effectRoots = !internal(request.name) && call.effect === 'write' ? host.tools.effectRoots(run.id, request.name, args) : undefined;
-  if (!collaborationTool(request.name)) assertTodoExecution(store, run, request.name, call.effect, effectRoots);
   if (!internal(request.name) && call.effect === 'write') {
     const instructions = store.transaction(() => beforeWriteInstructions(store, store.run(run.id), session, [request]));
     if (instructions) notices.push(instructions);
@@ -177,7 +175,6 @@ async function execute(host: StepHost, run: Run, modelCall: Call, call: Call, re
         store.event(run.id, 'tool.finished', { callId: call.id, name: call.name, status: 'succeeded', resultRef });
       });
     } else {
-      assertTodoExecution(store, store.run(run.id), request.name, call.effect!, call.effectRoots);
       const runTool = (): Promise<unknown> => host.tools.execute(run.id, request.name, args, toolSignal, () => {
         toolSignal.throwIfAborted();
         store.putCall({ ...store.call(call.id), effectState: 'started' });

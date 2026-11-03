@@ -124,8 +124,6 @@ export interface Run {
   parentId?: string;
   permissions?: Permission[]; inputCursor?: number; waitId?: string;
   scope?: FileScope;
-  /** Legacy parent task association retained for old-data reads only; new dispatches have no task association. */
-  todo?: { id: string; generation: number; dependencies: { id: string; generation: number }[]; ready?: boolean };
   /** Host-approved binding alias; model limits belong to each run, spending remains session-wide. */
   modelBindingId?: string;
   modelLimits?: ResolvedModelLimits;

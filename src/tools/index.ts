@@ -15,7 +15,6 @@ import { readHistory, searchHistory } from '../runtime/history.js';
 import { readSummarySource } from '../runtime/summary-read.js';
 import { schemaErrorText } from '../runtime/schema-errors.js';
 import { roleAllows } from '../runtime/role-view.js';
-import { dynamicTodoSpec, validateDynamicTodoArgs } from './todo.js';
 import { executionSession, runWorkspace } from '../runtime/execution-workspace.js';
 import { updateTaskProgress } from '../runtime/context-progress.js';
 import { workspacesOverlap } from '../runtime/paths.js';
@@ -318,10 +317,6 @@ export class Tools {
   specs(allowed: string[], session: Session): ToolSpec[] {
     return [...definitions, ...this.registry.definitions()].filter(x => x.available !== false && (implied(x.name, allowed) || allowed.includes(x.name) || (this.lazyTools && x.name === 'tool.describe')) && (x.name !== 'tool.describe' || this.lazyTools) && (x.name !== 'recovery.inspect' || this.inspectRecovery) && (x.name !== 'process.run' || this.readOnlyCommands.length > 0) && session.permissions.includes(x.permission))
       .map(({ name, description, parameters }) => {
-        if (session.taskProtocol === 3) {
-          const dynamic = dynamicTodoSpec(name);
-          if (dynamic) return dynamic;
-        }
         const legacy = !session.agentFactors?.A && !session.agentFactors?.C;
         if (name === 'artifact.write' && legacy) {
           const properties = { ...(parameters.properties as Record<string, unknown>) };
@@ -417,8 +412,7 @@ export class Tools {
     let value: unknown;
     try { value = JSON.parse(args); } catch { throw new KodoError('TOOL_ARGUMENTS', 'arguments must be complete JSON'); }
     const check = isLeanProfile(session.toolProfile) && !run.parentId ? observedValidators.get(name) ?? definition.validate : definition.validate;
-    if (session.taskProtocol === 3 && dynamicTodoSpec(name)) validateDynamicTodoArgs(name, value);
-    else if (!check(value)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the ${name} schema: ${schemaErrorText(check.errors)}`);
+    if (!check(value)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the ${name} schema: ${schemaErrorText(check.errors)}`);
     if (name === 'shell.exec') {
       const command = (value as { command: string }).command;
       assertManagedShell(command);
