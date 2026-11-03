@@ -8,11 +8,11 @@
 | 批次 | 内容 | 状态 | 证据 |
 |---|---|---|---|
 | 1a | 任务图与 lean-team 调度删除 + 两个内核修复 | **已完成并合并** | [批次 1a 记录](kodo-phase1-batch1a-20261103.md)；merge `0032837`；主仓库全量测试 2403 passed / 14 skipped / 0 failed |
-| 1b | 隔离检出与集成删除（`execution-*`，约 1,050 行源码） | **实施中**（worktree `phase1/batch1b`） | [1b 删除地图](kodo-phase1-batch1b-map-20261103.md) |
-| 1c | 名册、路由、留存、派生、预设与角色卡删除（约 1,159 行） | 待开始 | — |
-| 1d | 协作工具精简（spawn/wait/inspect/cancel/ask_user 保留），todo 去依赖与派发 | 待开始 | — |
-| 1e | 工具档位 / A–E 因素 / 任务协议收敛为一套；P1–P4 并入上下文存储加载策略 | 待开始 | — |
-| 1f | 提示词审计 + 默认身份改为通用工作助手 | 待开始 | — |
+| 1b | 隔离检出与集成删除（`execution-*`，约 1,050 行源码） | **已完成并合并** | [批次 1b 记录](kodo-phase1-batch1b-20261103.md)；merge `03edea1`；两次候选矩阵 24/27、21/27（基线 22/27），无新增违规 |
+| 1c | 名册、路由、留存、派生、预设与角色卡删除（约 1,159 行核心 + 外围 ~1,255） | **实施中**（worktree `phase1/batch1c`，S1/S2 完成、S3 进行中） | [1c 删除地图](kodo-phase1-batch1c-map-20261103.md) |
+| 1d | 协作工具精简（spawn/wait/inspect/cancel/ask_user 保留），todo 去依赖与派发 | 待开始（地图已就绪） | [1d 删除地图](kodo-phase1-batch1d-map-20261103.md) |
+| 1e | 工具档位 / A–E 因素 / 任务协议收敛为一套；P1–P4 并入上下文存储加载策略 | 待开始（地图已就绪） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
+| 1f | 提示词审计 + 默认身份改为通用工作助手 | 待开始（地图已就绪） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
 
 ## 阶段 1 门槛口径（1a 之后修正）
 
