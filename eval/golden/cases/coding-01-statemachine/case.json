@@ -8,12 +8,16 @@
     "contextTokens": 1048576,
     "outputTokens": 393216,
     "maxOutputTokens": 16384,
-    "maxModelCalls": 120,
-    "maxTokens": 8000000,
-    "maxToolCalls": 500,
-    "maxDurationMs": 3600000
+    "maxModelCalls": 250,
+    "maxTokens": 24000000,
+    "maxToolCalls": 800,
+    "maxDurationMs": 5400000
   },
-  "permissions": ["read", "write", "exec"],
+  "permissions": [
+    "read",
+    "write",
+    "exec"
+  ],
   "deliverableDir": ".",
   "smoke": {
     "minModelCalls": 1,
@@ -21,8 +25,16 @@
     "requireEventPrefixes": []
   },
   "grading": {
-    "restore": ["tests", "conftest.py"],
-    "stage": [{ "from": "verify/stage", "to": "_verify" }]
+    "restore": [
+      "tests",
+      "conftest.py"
+    ],
+    "stage": [
+      {
+        "from": "verify/stage",
+        "to": "_verify"
+      }
+    ]
   },
-  "notes": "编码回归样例。仓库快照取自 .kodo/sandbox-real-statemachine-20261031-r1/original.tar 的 app/（Frontier Harness Eval 任务 python-statemachine-state-data-scoping，base commit 8d17ba9f6ba8420cf05fddb94013bc221ed9a222），移除了 .git/docs/uv.lock/.github 等与验收无关的内容。验收分两层：既有测试回归（rule）+ 从规格编写的 held-out 验收用例（checks，基础层）。层级/并行/history/SCXML/图示属于后续层，本基线不纳入。"
+  "notes": "编码回归样例。仓库快照取自 .kodo/sandbox-real-statemachine-20261031-r1/original.tar 的 app/（Frontier Harness Eval 任务 python-statemachine-state-data-scoping，base commit 8d17ba9f6ba8420cf05fddb94013bc221ed9a222），移除了 .git/docs/uv.lock/.github 等与验收无关的内容。验收分两层：既有测试回归（rule）+ 从规格编写的 held-out 验收用例（checks，基础层）。层级/并行/history/SCXML/图示属于后续层，本基线不纳入。 2026-11-03 基线第一次运行在 8M token / 120 calls 处被 relay 预算拒绝（r1/r2），r3 出现 MODEL_TRANSPORT；为避免预算截断污染基线，编码样例预算上调为 250 calls / 24M tokens / 90 分钟，并单独重跑 3 次（baseline-20261103-coding）。"
 }

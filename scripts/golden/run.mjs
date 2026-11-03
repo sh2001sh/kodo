@@ -465,7 +465,7 @@ async function runCell(entry, context) {
   for (const requirement of requirements.protectedChecks) {
     const seedSnapshot = protectedSnapshot(workspaceDir, requirement.paths);
     const runSnapshot = protectedSnapshot(workspace, requirement.paths);
-    protectedResults[requirement.id] = compareProtected(seedSnapshot, runSnapshot);
+    protectedResults[requirement.id] = compareProtected(seedSnapshot, runSnapshot, requirement.ignore ?? []);
   }
   const grading = applyGrading({ caseData, caseDir, caseWorkspace: workspaceDir, verifyDir, workspace });
 

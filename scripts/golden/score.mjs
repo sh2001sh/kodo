@@ -122,7 +122,10 @@ function splitTableRow(line) {
   return inner.split('|').map(cell => cell.trim());
 }
 
-const isTableRow = line => /^\s*\|.*\|\s*$/u.test(line);
+// GFM tables do not require leading or trailing pipes, so a row is any non-empty
+// line with at least one pipe; the separator row below a header decides whether
+// the block really is a table, and the header's cell count bounds its rows.
+const isTableRow = line => line.includes('|') && line.trim().length > 0;
 const isSeparatorRow = line => /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)+\|?\s*$/u.test(line);
 
 /** Every markdown table as {headers, rows, line}; formatting-only header normalization. */
@@ -132,9 +135,14 @@ export function parseMarkdownTables(text) {
   for (let index = 0; index + 1 < lines.length; index++) {
     if (!isTableRow(lines[index]) || !isSeparatorRow(lines[index + 1])) continue;
     const headers = splitTableRow(lines[index]).map(normalizeHeaderCell);
+    const width = splitTableRow(lines[index]).length;
+    if (splitTableRow(lines[index + 1]).length !== width) continue;
     const rows = [];
     let cursor = index + 2;
     for (; cursor < lines.length && isTableRow(lines[cursor]); cursor++) {
+      // A row with a different cell count ends the table instead of swallowing
+      // following prose that merely contains a pipe.
+      if (splitTableRow(lines[cursor]).length !== width) break;
       const cells = splitTableRow(lines[cursor]);
       if (!rowIsEmpty(cells)) rows.push(cells);
     }
@@ -248,6 +256,9 @@ const PARAM_VALIDATORS = {
   },
   'protected-unchanged': params => {
     if (!isNonEmptyStringArray(params.paths)) return 'paths';
+    // Optional glob list for run-generated artefacts that are not source changes
+    // (for example Python bytecode caches under a protected tests/ tree).
+    if (params.ignore !== undefined && !isStringArray(params.ignore)) return 'ignore';
     // §3.1: beforeDigest is no longer required; a legacy value is accepted and ignored.
     return null;
   },
@@ -334,7 +345,7 @@ export function collectRequirements(rubric) {
   for (const scope of ['rules', 'checks']) {
     for (const entry of normalized[scope]) {
       if (entry.kind === 'command') commands.push({ id: entry.id, scope, params: { ...entry.params } });
-      if (entry.kind === 'protected-unchanged') protectedChecks.push({ id: entry.id, scope, paths: entry.params.paths.map((path, index) => normalizeRel(path, `protected-unchanged ${entry.id} paths[${index}]`)) });
+      if (entry.kind === 'protected-unchanged') protectedChecks.push({ id: entry.id, scope, paths: entry.params.paths.map((path, index) => normalizeRel(path, `protected-unchanged ${entry.id} paths[${index}]`)), ignore: (entry.params.ignore ?? []).map((pattern, index) => normalizeRel(pattern, `protected-unchanged ${entry.id} ignore[${index}]`)) });
     }
   }
   return { commands, protectedChecks, rubric: normalized };
@@ -345,10 +356,15 @@ export function collectRequirements(rubric) {
  * paths (§3.1): an added, removed or modified file under any declared path fails.
  * `seed` and `run` are `{files: {rel: sha256}, missing: [entry]}` snapshots of the
  * same declared path list, as produced by protectedSnapshot() in v3-eval-ledger.
+ * `ignore` globs drop run-generated artefacts (bytecode caches, build output)
+ * before comparing; an ignored file still has to be absent from both sides to
+ * count as unchanged.
  */
-export function compareProtected(seed, run) {
-  const seedFiles = seed?.files ?? {};
-  const runFiles = run?.files ?? {};
+export function compareProtected(seed, run, ignore = []) {
+  const patterns = ignore.map(pattern => normalizeRel(pattern, 'protected-unchanged ignore'));
+  const keep = file => !patterns.some(pattern => matchGlob(pattern, file));
+  const seedFiles = Object.fromEntries(Object.entries(seed?.files ?? {}).filter(([file]) => keep(file)));
+  const runFiles = Object.fromEntries(Object.entries(run?.files ?? {}).filter(([file]) => keep(file)));
   const added = Object.keys(runFiles).filter(file => !(file in seedFiles)).sort();
   const removed = Object.keys(seedFiles).filter(file => !(file in runFiles)).sort();
   const modified = Object.keys(seedFiles).filter(file => file in runFiles && seedFiles[file] !== runFiles[file]).sort();
@@ -547,7 +563,8 @@ export function extractCitedPaths(text, allowedRoots) {
   if (!roots.length || !String(text).trim()) return [];
   // Chinese punctuation (、。，；：！？) commonly separates or terminates ASCII paths in
   // model-written deliverables; include it in both the boundary and stop classes.
-  const prefixed = new RegExp(`(?:^|[\\s"'“”‘’(（\\[【,，、;；:：])((?:${roots.map(escapeRegExp).join('|')})/[^\\s"'“”‘’)\\]）】,，、;；:：<>。！？》」』〉]+)`, 'gu');
+  // Full-width brackets also terminate a path: `materials/x.md（说明）`.
+  const prefixed = new RegExp(`(?:^|[\\s"'“”‘’(（\\[【,，、;；:：])((?:${roots.map(escapeRegExp).join('|')})/[^\\s"'“”‘’)\\]）】,，、;；:：<>。！？》」』〉（【〔]+)`, 'gu');
   const found = [];
   for (const match of String(text).matchAll(prefixed)) {
     let candidate = match[1].replace(/[.,;:!?、。！？]+$/u, '');

@@ -8,7 +8,13 @@
       "params": {
         "program": "python",
         "args": [
-          "-m", "pytest", "-o", "addopts=", "-p", "no:cacheprovider", "-q",
+          "-m",
+          "pytest",
+          "-o",
+          "addopts=",
+          "-p",
+          "no:cacheprovider",
+          "-q",
           "tests/test_state.py",
           "tests/test_statechart_history.py",
           "tests/test_callbacks.py",
@@ -22,7 +28,18 @@
     {
       "id": "R2",
       "kind": "protected-unchanged",
-      "params": { "paths": ["tests", "conftest.py"] }
+      "params": {
+        "paths": [
+          "tests",
+          "conftest.py"
+        ],
+        "ignore": [
+          "**/__pycache__/**",
+          "**/*.pyc",
+          "**/.pytest_cache/**",
+          "**/*.egg-info/**"
+        ]
+      }
     }
   ],
   "checks": [
@@ -32,22 +49,141 @@
       "weight": 1,
       "params": {
         "program": "python",
-        "args": ["_verify/run_acceptance.py"],
+        "args": [
+          "_verify/run_acceptance.py"
+        ],
         "expectExit": 0,
         "timeoutMs": 600000
       }
     },
-    { "id": "C1", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_package_exports": true } } },
-    { "id": "C2", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_state_data_injected_into_enter_and_exit_callbacks": true } } },
-    { "id": "C3", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_get_state_data_active_and_inactive": true } } },
-    { "id": "C4", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_data_removed_on_exit_and_reset_on_reentry": true } } },
-    { "id": "C5", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_data_isolated_per_instance": true } } },
-    { "id": "C6", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_plain_callable_is_treated_as_factory": true } } },
-    { "id": "C7", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_state_data_values_snapshot": true } } },
-    { "id": "C8", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_set_state_data_validates_active_state_and_declared_key": true } } },
-    { "id": "C9", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_invalid_data_declarations_raise_invalid_definition": true } } },
-    { "id": "C10", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_data_changes_are_recorded_and_cleared_per_macrostep": true } } },
-    { "id": "C11", "kind": "json-values", "weight": 1, "params": { "path": "_verify/acceptance.json", "expect": { "tests.test_data_survives_pickle": true } } },
-    { "id": "H1", "kind": "human", "weight": 1, "params": { "question": "最终答复是否说明了实现了哪些规格行为、运行了哪些测试及真实结果，并如实报告未完成或未验证的规格点？" } }
+    {
+      "id": "C1",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_package_exports": true
+        }
+      }
+    },
+    {
+      "id": "C2",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_state_data_injected_into_enter_and_exit_callbacks": true
+        }
+      }
+    },
+    {
+      "id": "C3",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_get_state_data_active_and_inactive": true
+        }
+      }
+    },
+    {
+      "id": "C4",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_data_removed_on_exit_and_reset_on_reentry": true
+        }
+      }
+    },
+    {
+      "id": "C5",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_data_isolated_per_instance": true
+        }
+      }
+    },
+    {
+      "id": "C6",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_plain_callable_is_treated_as_factory": true
+        }
+      }
+    },
+    {
+      "id": "C7",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_state_data_values_snapshot": true
+        }
+      }
+    },
+    {
+      "id": "C8",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_set_state_data_validates_active_state_and_declared_key": true
+        }
+      }
+    },
+    {
+      "id": "C9",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_invalid_data_declarations_raise_invalid_definition": true
+        }
+      }
+    },
+    {
+      "id": "C10",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_data_changes_are_recorded_and_cleared_per_macrostep": true
+        }
+      }
+    },
+    {
+      "id": "C11",
+      "kind": "json-values",
+      "weight": 1,
+      "params": {
+        "path": "_verify/acceptance.json",
+        "expect": {
+          "tests.test_data_survives_pickle": true
+        }
+      }
+    },
+    {
+      "id": "H1",
+      "kind": "human",
+      "weight": 1,
+      "params": {
+        "question": "最终答复是否说明了实现了哪些规格行为、运行了哪些测试及真实结果，并如实报告未完成或未验证的规格点？"
+      }
+    }
   ]
 }
