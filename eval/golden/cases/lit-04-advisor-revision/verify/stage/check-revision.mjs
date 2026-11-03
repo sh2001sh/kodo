@@ -86,7 +86,8 @@ if (conclusion === null) {
 } else {
   if (!conclusion.includes('引用准确率')) errors.push('结论未写明引用准确率');
   if (!conclusion.includes('ROUGE-L')) errors.push('结论未写明 ROUGE-L');
-  if (!/(略低|低于)/.test(conclusion)) errors.push('结论未写明 ROUGE-L 略低/低于');
+  // Accept any wording that states ROUGE-L is lower: 「略低」「低于」「低 1.4 分」「更低」.
+  if (!/(略低|低于|更低|低\s*[\d.]+)/.test(conclusion)) errors.push('结论未写明 ROUGE-L 略低/低于');
 }
 if (/(全面优于|显著优于)/.test(text)) errors.push('正文仍出现「全面优于」或「显著优于」');
 
