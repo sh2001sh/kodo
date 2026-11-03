@@ -17,10 +17,56 @@ import { commandFailed, siblingStopped, toolBatches } from './tool-batch.js';
 import type { StepHost } from './step-host.js';
 import { executionSession, runWorkspace } from './execution-workspace.js';
 import { canonicalRequest, isLeanProfile, viewResult, viewText } from './tool-view.js';
+import { normalizeFileScope, writeScopesOverlap } from './scope.js';
 import { errorText, KodoError, terminal } from './types.js';
-import type { Call, Message, ModelResponse, Run, StepOutcome, ToolRequest } from './types.js';
+import type { Call, FileScope, Message, ModelResponse, Permission, Run, StepOutcome, ToolRequest } from './types.js';
 
 const internal = (name: string): boolean => collaborationTool(name) || name === 'artifact.write';
+
+interface SpawnWriteClaim { request: ToolRequest; scope: FileScope | undefined }
+
+/** The write claim a spawn_agent request would add at admission, or undefined when it writes nothing. */
+function spawnWriteClaim(host: StepHost, run: Run, request: ToolRequest): SpawnWriteClaim | undefined {
+  let args: { permissions?: Permission[]; scope?: FileScope; card_id?: string };
+  try { args = JSON.parse(request.arguments) as typeof args; } catch { return undefined; }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined;
+  const session = host.store.session(run.sessionId);
+  const granted = session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission));
+  if (!(args.permissions ?? granted).includes('write')) return undefined;
+  // Mirror assertNoWriteConflict: strict admission treats an omitted write side as the
+  // whole workspace, and only a claim narrower than the inherited parent scope competes.
+  const strict = Boolean(session.agentFactors?.A || session.agentFactors?.C) || Boolean(args.card_id);
+  const write = normalizeFileScope(args.scope ?? {}, run.scope).write;
+  const inherited = JSON.stringify([...(run.scope?.write ?? [])].sort());
+  let claims = false;
+  if (write === undefined) claims = strict;
+  else if (write.length > 0) claims = strict || JSON.stringify([...write].sort()) !== inherited;
+  return claims ? { request, scope: write === undefined ? undefined : { write } } : undefined;
+}
+
+/**
+ * One model response is admitted child by child, so the first committed spawn can
+ * make every later sibling fail even though the response intended them to coexist.
+ * Validate the response's spawn write claims as a group and reject all of them
+ * before any child exists, naming the conflicting calls and the fix.
+ */
+function responseSpawnWriteConflicts(host: StepHost, run: Run, requests: readonly ToolRequest[]): Map<string, KodoError> {
+  const rejected = new Map<string, KodoError>();
+  const claims = requests.filter(request => request.name === 'spawn_agent')
+    .flatMap(request => { const claim = spawnWriteClaim(host, run, request); return claim ? [claim] : []; });
+  if (claims.length < 2) return rejected;
+  for (let left = 0; left < claims.length; left++) {
+    for (let right = left + 1; right < claims.length; right++) {
+      const a = claims[left]!, b = claims[right]!;
+      if (!writeScopesOverlap(a.scope, b.scope)) continue;
+      const message = `the same model response spawns children with overlapping write scopes (${a.request.id}: ${JSON.stringify(a.scope?.write ?? ['.'])}, ${b.request.id}: ${JSON.stringify(b.scope?.write ?? ['.'])}); no child was created. Give every spawn in one response its own disjoint scope.write roots, or create them in separate responses.`;
+      const error = new KodoError('WRITE_SCOPE_CONFLICT', message);
+      rejected.set(a.request.id, error);
+      rejected.set(b.request.id, error);
+    }
+  }
+  return rejected;
+}
 /** Handle of a managed process or shell command that continues in the background. */
 const backgroundOf = (result: unknown): { id: string } | undefined => result && typeof result === 'object' && 'background' in result && !('exitCode' in result) ? (result as { background: { id: string } }).background : undefined;
 /** Reconciliation evidence a stopped process attached to its result, if any. */
@@ -273,6 +319,7 @@ export async function runToolStep(host: StepHost, run: Run, modelCall: Call, res
   const resolved = (response.message.tool_calls ?? []).map(request => canonicalRequest(run, viewSession, request));
   const requests = resolved.map(item => item.request);
   const viewErrors = new Map(resolved.flatMap(item => item.error ? [[item.request.id, item.error] as const] : []));
+  for (const [id, error] of responseSpawnWriteConflicts(host, run, requests)) viewErrors.set(id, error);
   const controls = requests.filter(x => {
     try { return controlTool(x.name, JSON.parse(x.arguments) as Record<string, unknown>); }
     catch { return controlTool(x.name); }

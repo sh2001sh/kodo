@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Application } from '../src/application/index.js';
 import { writeScopesOverlap } from '../src/runtime/scope.js';
-import { fixture } from './helpers.js';
+import { answer, call, calls, fixture, scripted } from './helpers.js';
+import type { Provider } from '../src/runtime/types.js';
 
 function operation(app: Application, runId: string, name: string, args: Record<string, unknown>) {
   return app.store.transaction(() => {
@@ -33,6 +34,46 @@ describe('write scope conflicts between live children', () => {
     expect(operation(app, runId, 'spawn_agent', { objective: 'Review tests', permissions: ['read'], scope: { write: [] } })).toHaveProperty('id');
     app.coordinator.cancel(holder.id);
     expect(operation(app, runId, 'spawn_agent', { objective: 'Change one test', scope: { write: ['test/retry.ts'] } })).toHaveProperty('id');
+  });
+
+  it('rejects a response whose spawns claim overlapping write scopes before creating any child', async () => {
+    const { app, runId } = fixture(scripted(
+      calls(
+        call('spawn_agent', { objective: 'First slice', scope: { write: ['src/shared'] } }, 'spawn-a'),
+        call('spawn_agent', { objective: 'Second slice', scope: { write: ['src/shared/other.ts'] } }, 'spawn-b'),
+      ),
+      answer('replanned with disjoint scopes'),
+    ));
+    const run = await app.run(runId);
+    expect(run.status).toBe('completed');
+    expect(app.store.listRuns(app.store.run(runId).sessionId).filter(child => child.parentId)).toHaveLength(0);
+    const results = app.store.calls(runId).filter(entry => entry.kind === 'tool').map(entry => app.store.readBlob<{ error?: string }>(entry.resultRef!));
+    expect(results).toHaveLength(2);
+    for (const result of results) {
+      expect(result.error).toContain('WRITE_SCOPE_CONFLICT');
+      expect(result.error).toContain('no child was created');
+      expect(result.error).toContain('scope.write');
+    }
+  });
+
+  it('admits a response whose spawns declare disjoint write scopes', async () => {
+    let mainCalls = 0;
+    const provider: Provider = { async complete(request) {
+      const system = request.messages.filter(message => message.role === 'system').map(message => String(message.content)).join('\n');
+      if (system.includes('You are a child')) return answer('child slice finished');
+      mainCalls++;
+      if (mainCalls === 1) return calls(
+        call('spawn_agent', { objective: 'First slice', scope: { write: ['src/a'] } }, 'spawn-a'),
+        call('spawn_agent', { objective: 'Second slice', scope: { write: ['src/b'] } }, 'spawn-b'),
+      );
+      return answer('two children started');
+    } };
+    const { app, runId } = fixture(provider);
+    const run = await app.run(runId);
+    expect(run.status).toBe('completed');
+    const children = app.store.listRuns(app.store.run(runId).sessionId).filter(child => child.parentId);
+    expect(children).toHaveLength(2);
+    expect(children.map(child => child.scope?.write).sort()).toEqual([['src/a'], ['src/b']]);
   });
 
   it('frees the scope once the holder is terminal', () => {
