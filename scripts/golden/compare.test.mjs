@@ -443,3 +443,60 @@ test('a usage gap explained by recorded provider failures does not block the gat
   const blocked = compareGolden(unexplained, candidate);
   assert.equal(blocked.gate.status, 'inconclusive');
 });
+
+test('cost and wall gates use the median matched-cell ratio, not the mean', () => {
+  const tokens = value => ({ totalTokens: value, cost: { basis: 'tokens', value, certain: true } });
+  const baseline = evidence('/runs/baseline', [1, 2, 3].map(repeat => makeReport({ repeat, metrics: tokens(1_000) })));
+  // One outlier cell triples; the median cell is unchanged, so the gate passes while the mean ratio is ~1.67.
+  const candidate = evidence('/runs/candidate', [1, 2, 3].map(repeat => makeReport({ repeat, metrics: tokens(repeat === 1 ? 3_000 : 1_000) })));
+  const report = compareGolden(baseline, candidate);
+  const cost = report.gate.criteria.find(entry => entry.id === 'costRegression');
+  assert.equal(cost.status, 'passed', report.gate.summary);
+  assert.equal(cost.detail.ratio, 1);
+  assert.equal(cost.detail.matchedCells, 3);
+  assert.ok(cost.detail.meanRatio > 1.6);
+  assert.deepEqual(cost.detail.ratioRange, [1, 3]);
+  assert.match(renderText(report), /median ratio 1 over 3 cells/u);
+
+  const twoUp = evidence('/runs/candidate', [1, 2, 3].map(repeat => makeReport({ repeat, metrics: tokens(repeat === 3 ? 1_000 : 1_200) })));
+  assert.equal(compareGolden(baseline, twoUp).gate.criteria.find(entry => entry.id === 'costRegression').status, 'failed');
+});
+
+const recheckOf = (directory, reports) => ({ directory, reports: new Map(reports.map(report => [report.key, report])) });
+
+test('a same-code recheck clears a regression and a new violation it does not reproduce', () => {
+  const baseline = evidence('/runs/baseline', threeRuns({ passed: true }));
+  const candidate = evidence('/runs/candidate', [
+    makeReport({ repeat: 1 }),
+    makeReport({ repeat: 2, passed: false, violationIds: ['R1'] }),
+    makeReport({ repeat: 3 }),
+  ]);
+  const without = compareGolden(baseline, candidate);
+  assert.deepEqual(without.gate.triggered.sort(), ['noNewRuleViolations', 'passRateNotBelow']);
+
+  const clean = recheckOf('/runs/recheck', threeRuns({ passed: true }));
+  const cleared = compareGolden(baseline, candidate, { rechecks: [clean] });
+  assert.equal(cleared.gate.status, 'failed', 'pooled 5/6 is still below the baseline 3/3 rate');
+  assert.ok(!cleared.gate.triggered.includes('noNewRuleViolations'));
+  const violationDetail = cleared.gate.criteria.find(entry => entry.id === 'noNewRuleViolations').detail;
+  assert.equal(violationDetail.added.length, 0);
+  assert.equal(violationDetail.clearedByRecheck[0].ruleId, 'R1');
+
+  const twoOfThree = evidence('/runs/baseline', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 }), makeReport({ repeat: 3, passed: false })]);
+  const candidateOneOfThree = evidence('/runs/candidate', [makeReport({ repeat: 1 }), makeReport({ repeat: 2, passed: false }), makeReport({ repeat: 3, passed: false })]);
+  const pooled = compareGolden(twoOfThree, candidateOneOfThree, { rechecks: [clean] });
+  assert.equal(pooled.gate.status, 'passed', pooled.gate.summary);
+  const passDetail = pooled.gate.criteria.find(entry => entry.id === 'passRateNotBelow').detail;
+  assert.equal(passDetail.clearedByRecheck[0].pooled, '4/6');
+});
+
+test('a recheck that reproduces the violation, is too short, or is human-pending does not clear it', () => {
+  const baseline = evidence('/runs/baseline', threeRuns({}));
+  const candidate = evidence('/runs/candidate', [makeReport({ repeat: 1, violationIds: ['R1'] }), makeReport({ repeat: 2 }), makeReport({ repeat: 3 })]);
+  const reproduced = recheckOf('/runs/recheck', [makeReport({ repeat: 1, violationIds: ['R1'] }), makeReport({ repeat: 2 }), makeReport({ repeat: 3 })]);
+  assert.ok(compareGolden(baseline, candidate, { rechecks: [reproduced] }).gate.triggered.includes('noNewRuleViolations'));
+  const short = recheckOf('/runs/recheck', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 })]);
+  assert.ok(compareGolden(baseline, candidate, { rechecks: [short] }).gate.triggered.includes('noNewRuleViolations'));
+  const pending = recheckOf('/runs/recheck', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 }), makeReport({ repeat: 3, humanPending: true })]);
+  assert.ok(compareGolden(baseline, candidate, { rechecks: [pending] }).gate.triggered.includes('noNewRuleViolations'));
+});

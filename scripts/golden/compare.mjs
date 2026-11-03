@@ -9,7 +9,9 @@
 // applies the stage-1 gate:
 //   (a) passRate not below the baseline (3 runs per case; equal is allowed),
 //   (b) no new rule violations (new cell+rule pairs),
-//   (c) mean cost and mean wallMs regression <= 10%.
+//   (c) median matched-cell cost and wallMs ratio <= 1.10 (means reported only;
+//       docs/kodo-phase1-status-20261103.md explains why three-run means are noise),
+// and lets same-code rechecks (--recheck) clear regressions they do not reproduce.
 // A baseline mean of 0/null (or a blocked cost basis) makes that criterion
 // undetermined; a matrix that is incomplete, stopped, polluted, missing reports
 // or has pending human verdicts makes the whole comparison inconclusive — it is
@@ -19,7 +21,7 @@
 // `readEvidence` and `main` touch the filesystem/CLI.
 
 import console from 'node:console';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
@@ -145,6 +147,31 @@ export function readEvidence(target) {
     reports.set(cell.key, readJson(reportFile, `${directory}/runs/${cell.caseId}/r${cell.repeat}/report.json`));
   }
   return { directory, summaryFile, summary, reports };
+}
+
+/**
+ * Load a same-code recheck: every scored runs/<case>/r<N>/report.json under the
+ * directory. Unlike readEvidence a summary is not required — a recheck is
+ * usually a few cells of one case, and it can only clear regressions, never
+ * add passes to the matrix itself.
+ */
+export function readRecheck(target) {
+  const directory = path.resolve(target);
+  const runsDir = path.join(directory, 'runs');
+  if (!existsSync(runsDir)) throw new GoldenError('COMPARE_INPUT', `${directory}: no runs/ directory; point --recheck at a golden run directory`);
+  const reports = new Map();
+  for (const caseId of readdirSync(runsDir)) {
+    const caseDir = path.join(runsDir, caseId);
+    if (!statSync(caseDir).isDirectory()) continue;
+    for (const repeatDir of readdirSync(caseDir)) {
+      const reportFile = path.join(caseDir, repeatDir, 'report.json');
+      if (!/^r\d+$/u.test(repeatDir) || !existsSync(reportFile)) continue;
+      const report = readJson(reportFile, `${directory}/runs/${caseId}/${repeatDir}/report.json`);
+      reports.set(`${caseId}:${repeatDir}`, { ...report, caseId: report.caseId ?? caseId });
+    }
+  }
+  if (!reports.size) throw new GoldenError('COMPARE_INPUT', `${directory}: the recheck has no scored report.json`);
+  return { directory, reports };
 }
 
 // ---------------------------------------------------------------------------
@@ -518,30 +545,107 @@ function compareFlips(baseline, candidate) {
   return flips;
 }
 
-/** Compare a mean against the regression ceiling; undefined baselines are undetermined, never pass. */
-function judgeMean({ id, name, baseline, candidate, kind }) {
-  const detail = { baselineMean: round(baseline), candidateMean: round(candidate), limitPct: REGRESSION_LIMIT_PCT };
+const median = values => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+
+/** Per-cell candidate/baseline ratios for cells eligible (usageComplete && !polluted) on both sides. */
+function matchedRatios(baselineSide, candidateSide, field) {
+  const eligible = cell => cell.usageComplete && !cell.polluted && isFiniteNumber(cell[field]);
+  const candidateByKey = new Map(candidateSide.cells.filter(eligible).map(cell => [cell.key, cell]));
+  const ratios = [];
+  for (const base of baselineSide.cells.filter(eligible)) {
+    const next = candidateByKey.get(base.key);
+    if (next && base[field] > 0) ratios.push(next[field] / base[field]);
+  }
+  return ratios;
+}
+
+/**
+ * Phase-1 cost/wall criterion (docs/kodo-phase1-status-20261103.md): the median
+ * of matched-cell ratios must stay <= 1.10. Three-run means swing 0.97–1.14 on
+ * the same code, so the mean is reported (with its ratio) but does not decide.
+ */
+function judgeMedianRatio({ id, name, baseline, candidate, ratios, kind }) {
+  const detail = { baselineMean: round(baseline), candidateMean: round(candidate), limitPct: REGRESSION_LIMIT_PCT, matchedCells: ratios.length };
   if (!isFiniteNumber(baseline)) return { id, name, status: 'undetermined', detail: { ...detail, reason: `baseline mean is ${baseline === null ? 'null (no eligible sample)' : 'not a number'}` } };
   if (!isFiniteNumber(candidate)) return { id, name, status: 'undetermined', detail: { ...detail, reason: 'candidate mean is null (no eligible sample)' } };
   if (baseline === 0) return { id, name, status: 'undetermined', detail: { ...detail, reason: 'baseline mean is 0; relative regression is undefined, not a pass' } };
-  const ratio = candidate / baseline;
-  const deltaPct = (ratio - 1) * 100;
+  if (!ratios.length) return { id, name, status: 'undetermined', detail: { ...detail, reason: 'no cell is eligible on both sides; a matched ratio is undefined' } };
+  const ratio = median(ratios);
+  const meanRatio = candidate / baseline;
   return {
     id, name,
     status: ratio <= LIMIT_RATIO + EPSILON ? 'passed' : 'failed',
-    detail: { ...detail, ratio: round(ratio), deltaPct: round(deltaPct, 2), reason: kind === 'cost' ? 'mean cost, eligible cells only' : 'mean wallMs, eligible cells only' },
+    detail: {
+      ...detail,
+      ratio: round(ratio),
+      deltaPct: round((ratio - 1) * 100, 2),
+      meanRatio: round(meanRatio),
+      meanDeltaPct: round((meanRatio - 1) * 100, 2),
+      ratioRange: [round(Math.min(...ratios)), round(Math.max(...ratios))],
+      reason: `median of matched-cell ${kind === 'cost' ? 'cost' : 'wallMs'} ratios decides; the mean ratio is informational`,
+    },
   };
 }
 
-/** Stage-1 gate (§8): (a) passRate not below, (b) no new violations, (c) cost/wall <= +10%. */
-function judgeGate({ completeness, cases, violations, means, costBasisComparable }) {
+/**
+ * Same-code rechecks (phase-1 gate rule 5): a regressed case or an added
+ * (case, rule) violation only counts as a batch regression when a recheck of
+ * that case reproduces it. Rechecks are scored runs of the candidate code; cells
+ * still waiting on a human verdict are ignored.
+ */
+function recheckEvidence(rechecks) {
+  const byCase = new Map();
+  for (const recheck of rechecks) {
+    for (const report of recheck.reports.values()) {
+      if (!isRecord(report) || !isNonEmptyString(report.caseId)) continue;
+      const entry = byCase.get(report.caseId) ?? { runs: 0, passed: 0, pending: 0, violationRuleIds: [], sources: new Set() };
+      entry.sources.add(recheck.directory);
+      if (report.humanPending) { entry.pending++; byCase.set(report.caseId, entry); continue; }
+      entry.runs++;
+      if (report.passed) entry.passed++;
+      for (const violation of array(report.score?.violations)) entry.violationRuleIds.push(String(violation.id ?? '?'));
+      byCase.set(report.caseId, entry);
+    }
+  }
+  return byCase;
+}
+
+/** A recheck needs at least this many scored runs before it can clear a regression. */
+export const MIN_RECHECK_RUNS = 3;
+
+/** Stage-1 gate (§8): (a) passRate not below, (b) no new violations, (c) cost/wall median ratio <= 1.10. */
+function judgeGate({ completeness, cases, violations, means, costBasisComparable, ratios, rechecks = [] }) {
   const criteria = [];
+  const recheckByCase = recheckEvidence(rechecks);
   const commonCases = Object.values(cases).filter(entry => entry.baseline && entry.candidate);
-  const regressed = commonCases.filter(entry => !entry.passRateNotBelow).map(entry => ({
-    caseId: entry.caseId,
-    baseline: `${entry.baseline.passed}/${entry.baseline.runs}`,
-    candidate: `${entry.candidate.passed}/${entry.candidate.runs}`,
-  }));
+  const regressedAll = commonCases.filter(entry => !entry.passRateNotBelow).map(entry => {
+    const recheck = recheckByCase.get(entry.caseId);
+    const result = {
+      caseId: entry.caseId,
+      baseline: `${entry.baseline.passed}/${entry.baseline.runs}`,
+      candidate: `${entry.candidate.passed}/${entry.candidate.runs}`,
+    };
+    if (!recheck || recheck.runs < MIN_RECHECK_RUNS) return { ...result, clearedByRecheck: false };
+    // Pool the candidate and recheck runs and compare pass rates, not counts.
+    const pooledPassed = entry.candidate.passed + recheck.passed;
+    const pooledRuns = entry.candidate.runs + recheck.runs;
+    const cleared = pooledPassed * entry.baseline.runs >= entry.baseline.passed * pooledRuns;
+    return { ...result, recheck: `${recheck.passed}/${recheck.runs}`, pooled: `${pooledPassed}/${pooledRuns}`, clearedByRecheck: cleared };
+  });
+  const regressed = regressedAll.filter(entry => !entry.clearedByRecheck);
+  const regressionsCleared = regressedAll.filter(entry => entry.clearedByRecheck);
+  const addedViolations = violations.added.map(violation => {
+    const recheck = recheckByCase.get(violation.caseId);
+    const cleared = Boolean(recheck && recheck.runs >= MIN_RECHECK_RUNS && !recheck.violationRuleIds.includes(violation.ruleId));
+    return { ...violation, clearedByRecheck: cleared, ...(recheck ? { recheck: `${recheck.runs} run(s), ${recheck.violationRuleIds.filter(id => id === violation.ruleId).length} ${violation.ruleId}` } : {}) };
+  });
+  const violationsBlocking = addedViolations.filter(entry => !entry.clearedByRecheck);
+  const violationsCleared = addedViolations.filter(entry => entry.clearedByRecheck);
   const improved = commonCases.filter(entry => entry.candidate.passed > entry.baseline.passed).map(entry => ({
     caseId: entry.caseId,
     baseline: `${entry.baseline.passed}/${entry.baseline.runs}`,
@@ -554,6 +658,7 @@ function judgeGate({ completeness, cases, violations, means, costBasisComparable
     detail: {
       comparedCases: commonCases.length,
       regressedCases: regressed,
+      clearedByRecheck: regressionsCleared,
       improvedCases: improved,
       baselineOverall: means.baseline.overallPassRate,
       candidateOverall: means.candidate.overallPassRate,
@@ -563,20 +668,22 @@ function judgeGate({ completeness, cases, violations, means, costBasisComparable
   criteria.push({
     id: 'noNewRuleViolations',
     name: 'no new rule violations',
-    status: !violations.comparable ? 'undetermined' : violations.added.length ? 'failed' : 'passed',
+    status: !violations.comparable ? 'undetermined' : violationsBlocking.length ? 'failed' : 'passed',
     detail: {
       baselineViolations: violations.baselineCount,
       candidateViolations: violations.candidateCount,
-      added: violations.added,
+      added: violationsBlocking,
+      clearedByRecheck: violationsCleared,
       removed: violations.removed,
       casesWithNewRuleIds: violations.caseRulesAdded,
       reason: !violations.comparable ? 'some cells have no report.json; violations cannot be compared' : 'a new rule violation is a new cell+rule instance',
     },
   });
+  const costName = `median matched-cell cost ratio <= ${LIMIT_RATIO.toFixed(2)}`;
   criteria.push(costBasisComparable
-    ? judgeMean({ id: 'costRegression', name: `mean cost regression <= ${REGRESSION_LIMIT_PCT}%`, baseline: means.baseline.meanCost, candidate: means.candidate.meanCost, kind: 'cost' })
-    : { id: 'costRegression', name: `mean cost regression <= ${REGRESSION_LIMIT_PCT}%`, status: 'undetermined', detail: { reason: 'baseline and candidate use different cost bases' } });
-  criteria.push(judgeMean({ id: 'wallRegression', name: `mean wallMs regression <= ${REGRESSION_LIMIT_PCT}%`, baseline: means.baseline.meanWallMs, candidate: means.candidate.meanWallMs, kind: 'wall' }));
+    ? judgeMedianRatio({ id: 'costRegression', name: costName, baseline: means.baseline.meanCost, candidate: means.candidate.meanCost, ratios: ratios.cost, kind: 'cost' })
+    : { id: 'costRegression', name: costName, status: 'undetermined', detail: { reason: 'baseline and candidate use different cost bases' } });
+  criteria.push(judgeMedianRatio({ id: 'wallRegression', name: `median matched-cell wallMs ratio <= ${LIMIT_RATIO.toFixed(2)}`, baseline: means.baseline.meanWallMs, candidate: means.candidate.meanWallMs, ratios: ratios.wall, kind: 'wall' }));
 
   const failed = criteria.filter(entry => entry.status === 'failed');
   const undetermined = criteria.filter(entry => entry.status === 'undetermined');
@@ -586,7 +693,7 @@ function judgeGate({ completeness, cases, violations, means, costBasisComparable
   else if (undetermined.length) status = 'undetermined';
   else status = 'passed';
   const summary = status === 'passed'
-    ? 'gate passed: passRate not below, no new rule violations, cost/wall within +10%'
+    ? 'gate passed: passRate not below, no new rule violations, cost/wall median ratio within 1.10'
     : status === 'failed'
       ? `gate failed: ${failed.map(entry => entry.id).join(', ')}`
       : status === 'undetermined'
@@ -609,7 +716,7 @@ function judgeGate({ completeness, cases, violations, means, costBasisComparable
  * Compare two completed golden runs. Pure given the evidence objects produced by
  * readEvidence(): `{summary, reports: Map<cellKey, report>}`.
  */
-export function compareGolden(baselineEvidence, candidateEvidence) {
+export function compareGolden(baselineEvidence, candidateEvidence, { rechecks = [] } = {}) {
   const baseline = buildSide(baselineEvidence);
   const candidate = buildSide(candidateEvidence);
   const completeness = assessCompleteness(baseline, candidate);
@@ -623,7 +730,8 @@ export function compareGolden(baselineEvidence, candidateEvidence) {
     candidate: { ...candidate.overall, overallPassRate: candidate.overall.passRate, cases: Object.keys(candidate.cases).length },
     delta: overallDelta,
   };
-  const gate = judgeGate({ completeness, cases, violations, means: { ...means, baseline: { ...means.baseline }, candidate: { ...means.candidate } }, costBasisComparable: completeness.costBasis.comparable });
+  const ratios = { cost: matchedRatios(baseline, candidate, 'cost'), wall: matchedRatios(baseline, candidate, 'wallMs') };
+  const gate = judgeGate({ completeness, cases, violations, means: { ...means, baseline: { ...means.baseline }, candidate: { ...means.candidate } }, costBasisComparable: completeness.costBasis.comparable, ratios, rechecks });
   // judgeGate expects overall pass rates inside means.baseline/candidate; pass them explicitly.
   const categoryComparison = {};
   for (const category of [...new Set([...Object.keys(baseline.categories), ...Object.keys(candidate.categories)])].sort()) {
@@ -668,7 +776,8 @@ export function compareGolden(baselineEvidence, candidateEvidence) {
     notes: [
       'means include only cells with usageComplete=true and polluted=false; eligibleRuns is the denominator',
       'passRate gate compares passed counts per case (3 runs, equal allowed) and the overall count',
-      'cost/wall gate: candidate <= baseline * (1 + 10%); a 0/null baseline mean is undetermined, never a pass',
+      'cost/wall gate: median of matched-cell candidate/baseline ratios <= 1.10 (means reported, not decisive); a 0/null baseline mean is undetermined, never a pass',
+      ...(rechecks.length ? [`rechecks: ${rechecks.map(recheck => recheck.directory).join(', ')}; a regression or new violation reproduced nowhere in >= ${MIN_RECHECK_RUNS} recheck runs is cleared as same-code noise`] : []),
       'any data-completeness reason makes the gate inconclusive: do not use it as a stage-1 conclusion',
     ],
   };
@@ -704,12 +813,15 @@ export function renderText(report) {
   lines.push('| --- | --- | --- |');
   for (const criterion of report.gate.criteria) {
     const detail = criterion.id === 'passRateNotBelow'
-      ? `regressed cases: ${criterion.detail.regressedCases.map(entry => `${entry.caseId} ${entry.baseline}→${entry.candidate}`).join(', ') || 'none'}`
+      ? `regressed cases: ${criterion.detail.regressedCases.map(entry => `${entry.caseId} ${entry.baseline}→${entry.candidate}${entry.recheck ? ` (recheck ${entry.recheck}, pooled ${entry.pooled})` : ''}`).join(', ') || 'none'}` +
+        (criterion.detail.clearedByRecheck?.length ? `; cleared by recheck: ${criterion.detail.clearedByRecheck.map(entry => `${entry.caseId} ${entry.candidate}, recheck ${entry.recheck}, pooled ${entry.pooled}`).join(', ')}` : '')
       : criterion.id === 'noNewRuleViolations'
-        ? `added: ${criterion.detail.added.map(entry => `${entry.key} ${entry.ruleId}`).join(', ') || 'none'}`
-        : `${formatValue(criterion.detail.baselineMean)} → ${formatValue(criterion.detail.candidateMean)}` +
-          (isFiniteNumber(criterion.detail.deltaPct) ? ` (${formatDeltaPct(criterion.detail.deltaPct)})` : '') +
-          (criterion.detail.reason ? `; ${criterion.detail.reason}` : '');
+        ? `added: ${criterion.detail.added.map(entry => `${entry.key} ${entry.ruleId}`).join(', ') || 'none'}` +
+          (criterion.detail.clearedByRecheck?.length ? `; cleared by recheck: ${criterion.detail.clearedByRecheck.map(entry => `${entry.key} ${entry.ruleId} (${entry.recheck})`).join(', ')}` : '')
+        : (isFiniteNumber(criterion.detail.ratio) ? `median ratio ${formatValue(criterion.detail.ratio, 3)} over ${criterion.detail.matchedCells} cells; ` : '') +
+          `mean ${formatValue(criterion.detail.baselineMean)} → ${formatValue(criterion.detail.candidateMean)}` +
+          (isFiniteNumber(criterion.detail.meanDeltaPct) ? ` (${formatDeltaPct(criterion.detail.meanDeltaPct)}, informational)` : '') +
+          (criterion.detail.ratio === undefined && criterion.detail.reason ? `; ${criterion.detail.reason}` : '');
     lines.push(`| ${criterion.id} | ${criterionMark(criterion.status)} | ${detail} |`);
   }
   lines.push('');
@@ -786,18 +898,22 @@ export function renderText(report) {
 const USAGE = `Kodo golden baseline comparison (stage-1 regression gate)
 
   node scripts/golden/compare.mjs --baseline <dir|summary.json> --candidate <dir|summary.json> \\
-      [--out <file>] [--json] [--fail-on-gate] [--cases id1,id2]
+      [--out <file>] [--json] [--fail-on-gate] [--cases id1,id2] [--recheck <dir>]...
 
 Reads two COMPLETED golden runs and reports: per-case passRate/mean deltas,
 PASSED<->FAILED flips, new rule violations, data completeness, and the stage-1
-gate (passRate not below baseline; no new rule violations; mean cost and mean
-wallMs regression <= 10%). The JSON report is written to --out (default
+gate (passRate not below baseline; no new rule violations; median matched-cell
+cost and wallMs ratio <= 1.10, means reported). The JSON report is written to --out (default
 .kodo/golden/compare-<stamp>.json) and the Markdown summary is printed.
 
   --json          print the JSON report to stdout instead of the Markdown summary
   --fail-on-gate  exit 2 unless the gate status is "passed" (inconclusive counts as not passed)
   --cases         restrict the comparison to the listed case ids (both runs must cover
                   exactly the same scoped matrix; cases outside the list are excluded)
+  --recheck       a same-code rerun of flipped cases (repeatable; summary.json not
+                  required). A regressed case is cleared when the pooled candidate +
+                  recheck pass rate reaches the baseline rate; a new (case, rule)
+                  violation is cleared when >= 3 scored recheck runs never hit it
 
 Exit codes: 0 comparison produced; 2 --fail-on-gate and gate not passed; 1 input/format error.
 `;
@@ -811,6 +927,7 @@ async function main() {
       json: { type: 'boolean', default: false },
       'fail-on-gate': { type: 'boolean', default: false },
       cases: { type: 'string' },
+      recheck: { type: 'string', multiple: true },
       help: { type: 'boolean', short: 'h', default: false },
     },
     allowPositionals: false,
@@ -827,7 +944,8 @@ async function main() {
     baseline = { ...baseline, summary: scopeSummary(baseline.summary, onlyCases) };
     candidate = { ...candidate, summary: scopeSummary(candidate.summary, onlyCases) };
   }
-  const report = compareGolden(baseline, candidate);
+  const rechecks = (values.recheck ?? []).map(readRecheck);
+  const report = compareGolden(baseline, candidate, { rechecks });
   if (onlyCases) {
     report.scope = { cases: onlyCases, note: 'comparison restricted with --cases; cases outside this list are excluded from the gate' };
     report.notes.push(`scope restricted to cases: ${onlyCases.join(', ')}`);
