@@ -8,9 +8,9 @@ import { answer, binding, call, calls, scripted, temp } from './helpers.js';
 
 describe('versioned default progress policy', () => {
   it('keeps the frozen simple card version and enables advice only in the new version', () => {
-    expect(legacySimpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.1.0' });
+    expect(legacySimpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.2.0' });
     expect(legacySimpleDefaultCard.nudges).toBeUndefined();
-    expect(simpleDefaultCard).toMatchObject({ id: legacySimpleDefaultCard.id, version: '1.2.0', nudges: true, tools: legacySimpleDefaultCard.tools, prompt: legacySimpleDefaultCard.prompt });
+    expect(simpleDefaultCard).toMatchObject({ id: legacySimpleDefaultCard.id, version: '1.3.0', nudges: true, tools: legacySimpleDefaultCard.tools, prompt: legacySimpleDefaultCard.prompt });
     expect(simpleDefaultCard.digest).not.toBe(legacySimpleDefaultCard.digest);
   });
 
@@ -24,7 +24,7 @@ describe('versioned default progress policy', () => {
     ), undefined, { instructions: { global: false }, memory });
     try {
       const run = app.createRun({ objective: 'Inspect the file and report the line structure without editing it.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxModelCalls: 20, maxTokens: 1_000_000 } });
-      expect(run.card).toMatchObject({ version: '1.2.0', nudges: true });
+      expect(run.card).toMatchObject({ version: '1.3.0', nudges: true });
       const final = await app.run(run.id);
       expect(final.status, final.error).toBe('completed');
       const notices = app.store.events(run.id, { types: ['progress.write_nudged'] });
@@ -38,15 +38,13 @@ describe('versioned default progress policy', () => {
     const root = temp(), directory = path.join(root, '.state');
     const original = new Application(directory, scripted(answer()), undefined, { instructions: { global: false }, agentFactors: { A: false } });
     const oldRun = original.createRun({ objective: 'Continue a saved session.', workspace: root, binding, card: legacySimpleDefaultCard });
-    const frozen = original.store.cards.rosterSnapshot(oldRun.sessionId);
     await original.shutdown();
     const upgraded = new Application(directory, scripted(answer()), undefined, { instructions: { global: false }, agentFactors: { A: false } });
     try {
       const current = upgraded.createRun({ objective: 'Use the default policy.', workspace: root, binding });
       expect(current.card).toEqual(simpleDefaultCard);
       expect(upgraded.store.run(oldRun.id).card).toEqual(legacySimpleDefaultCard);
-      expect(upgraded.store.card(legacySimpleDefaultCard.id, '1.1.0')).toEqual(legacySimpleDefaultCard);
-      expect(upgraded.store.cards.rosterSnapshot(oldRun.sessionId)).toEqual(frozen);
+      expect(upgraded.store.card(legacySimpleDefaultCard.id, '1.2.0')).toEqual(legacySimpleDefaultCard);
       const result = await upgraded.run(oldRun.id);
       expect(result.status, result.error).toBe('completed');
       expect(upgraded.store.run(oldRun.id).card.nudges).toBeUndefined();

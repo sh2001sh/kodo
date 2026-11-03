@@ -58,7 +58,9 @@ describe('project exploration runtime integration', () => {
         if (run.parentId) {
           if (run.step === 0) {
             childStarted.resolve(); await mainStarted.promise;
-            expect(request.tools.some(tool => /patch|exec|web|knowledge|skill|spawn|exploration/.test(tool.name))).toBe(false);
+            // Exploration children inherit the parent card under the read-only subset.
+            expect(run.permissions).toEqual(['read']);
+            expect(request.tools.some(tool => ['spawn_agent', 'exploration.plan', 'ask_user', 'cancel_agent', 'followup_task'].includes(tool.name))).toBe(false);
             return calls(call('file.read', { path: 'src/edge.ts' }));
           }
           if (run.step === 1) return calls(call('inspect_run', { run_id: run.id }));

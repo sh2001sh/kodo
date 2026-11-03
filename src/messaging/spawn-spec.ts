@@ -1,9 +1,7 @@
 import type { Store } from '../storage/index.js';
-import { configurationSchema } from '../agents/configuration.js';
 import { KodoError, terminal } from '../runtime/types.js';
 import type { CardModelRole, FileScope, ModelBinding, Permission, Run, ToolSpec } from '../runtime/types.js';
 import { validateModelBinding } from '../providers/model-limits.js';
-import type { AgentConfiguration } from '../agents/configuration.js';
 import { writeScopesOverlap } from '../runtime/scope.js';
 import { recoveryResolution } from '../runtime/recovery-resolution.js';
 import { todoDependenciesSatisfied } from '../runtime/todo-dependencies.js';
@@ -41,10 +39,10 @@ export const spawnAgentSpec: ToolSpec & { main: true } = {
   main: true,
   description: [
     'Start a child agent that changes files in one independent module; it runs in parallel in the shared workspace.',
+    'The child inherits your card and permissions and may only narrow them.',
     'For read-only investigation use explore instead.',
     'The child has none of your history: give it everything needed and scope.write roots disjoint from yours and other children.',
     'Keep working, then wait_for_events with its ID, inspect_run and verify before integrating.',
-    'Without a registered specialist card, pass configuration to give the child task-specific instructions and a narrower tool or skill set.',
     'Example: {"objective":"Add tests for src/parser.ts","inputs":["parse(text) is exported"],"acceptance":["npx vitest run tests/parser.test.ts passes"],"scope":{"write":["tests"]}}',
   ].join(' '),
   parameters: object({
@@ -52,46 +50,31 @@ export const spawnAgentSpec: ToolSpec & { main: true } = {
     context: { ...content, description: 'Background and constraints; the child cannot see your history.' },
     inputs: { ...taskItems, description: 'Facts, file paths or artifact IDs to start from.' },
     acceptance: { ...taskItems, description: 'Checks the child should run and report.' },
-    card_id: { ...id, description: 'Registered card ID from agent.route; omit with card_version to inherit yours.' },
-    card_version: { ...id, description: 'Exact version; required with card_id.' },
     permissions: { type: 'array', uniqueItems: true, items: { enum: ['read', 'write', 'exec'] }, description: 'Subset of yours; omit to inherit.' },
-    model_binding: { ...modelAlias, description: 'Approved alias; omit for the card role default, otherwise inherit. Reuse preserves the previous model.' },
+    model_binding: { ...modelAlias, description: 'Approved alias; omit to inherit. Reuse preserves the previous model.' },
     scope: object({
       read: roots('Relative roots, e.g. "src"; omit to inherit.'),
       write: roots('Relative roots, e.g. "tests"; omit to inherit; [] denies writes.'),
     }, []),
     continuation_of: { ...id, description: 'A finished child to continue.' },
-    configuration: configurationSchema,
     todoId: todoIdSchema,
   }, ['objective']),
 };
 
 export interface SpawnAgentRequest {
-  objective: string; agent?: string; slots?: Record<string, unknown>; context?: string;
-  inputs?: string[]; acceptance?: string[]; card_id?: string; card_version?: string;
+  objective: string; context?: string;
+  inputs?: string[]; acceptance?: string[];
   permissions?: Permission[]; model_binding?: string; scope?: FileScope;
-  continuation_of?: string; configuration?: AgentConfiguration;
+  continuation_of?: string;
   todoId?: string;
 }
 
-/** Keep the old object intact for the all-factors-off experiment and persisted v1 sessions. */
-export const rosterSpawnAgentSpec: ToolSpec & { main: true } = {
-  ...spawnAgentSpec,
-  description: 'Start one independent read, review or implementation task asynchronously in the shared workspace. Returns immediately with a run ID; continue your own work, then wait_for_events and inspect_run before integration. New children do not see your history: supply the task, necessary context and expected result. Use disjoint write scopes for parallel edits. Reuse a suitable finished teammate with followup_task. explore is the read-only create-and-wait shortcut.',
-  parameters: { ...spawnAgentSpec.parameters, properties: {
-    ...(spawnAgentSpec.parameters.properties as Record<string, unknown>),
-    agent: { ...id, description: 'Frozen session member id@version (or unambiguous id), or a tmp: handle from agent.derive. Exclusive with card_id/card_version.' },
-    slots: { type: 'object', maxProperties: 32, additionalProperties: { anyOf: [{ type: 'string', maxLength: 16_000 }, { type: 'array', maxItems: 256, items: { type: 'string', minLength: 1, maxLength: 4096 } }] }, description: 'Named task inputs declared by the member card: text, paths, or session artifact IDs.' },
-  } },
-};
-
 export const followupTaskSpec: ToolSpec & { main: true } = {
   name: 'followup_task', main: true,
-  description: 'Give a finished managed teammate another task, preserving its model, working context and agent identity in a new run. Supply its agent ID or any run ID in its lineage, a new objective and the card’s required slots. For another model, create a fresh child and explicitly hand off the necessary context. Returns the new run ID immediately. Busy teammates return AGENT_BUSY: use send_message for updates to their current task. Historical reports do not satisfy this task’s acceptance.',
+  description: 'Give a finished managed teammate another task, preserving its model, working context and agent identity in a new run. Supply its agent ID or any run ID in its lineage and a new objective. For another model, create a fresh child and explicitly hand off the necessary context. Returns the new run ID immediately. Busy teammates return AGENT_BUSY: use send_message for updates to their current task. Historical reports do not satisfy this task’s acceptance.',
   parameters: object({
     target: { ...id, description: 'Stable agent ID or a previous managed child run ID.' },
     objective: content, context: content, inputs: taskItems, acceptance: taskItems,
-    slots: (rosterSpawnAgentSpec.parameters.properties as Record<string, unknown>).slots,
     model_binding: { ...modelAlias, description: 'Omit or repeat the teammate’s original alias; another alias requires a fresh child and explicit context handoff.' },
     todoId: todoIdSchema,
   }, ['target', 'objective']),
@@ -126,17 +109,15 @@ export function assertChildCapacity(store: Store, sessionId: string, count = 1):
   if (capacity.remainingActive !== null && count > capacity.remainingActive) throw new KodoError('CHILD_CAPACITY', `active child limit reached (${capacity.active}/${capacity.maximumActive}); wait for tasks to finish. Active run IDs: ${capacity.activeRunIds.join(', ')}`);
 }
 
-/** Creation capacity, routing visibility and shared spending as seen by one run. */
+/** Creation capacity and shared spending as seen by one run. */
 export function delegationState(store: Store, run: Run) {
   const session = store.session(run.sessionId);
   const children = childCapacity(store, session.id);
-  const readable = session.permissions.includes('read') && (run.permissions ?? session.permissions).includes('read');
   // A child needs at least one model call of its own on top of the main agent's next turn.
   const sharedExhausted = (session.budget.maxModelCalls !== null && session.modelCalls + 2 > session.budget.maxModelCalls) || (session.budget.maxTokens !== null && session.tokens >= session.budget.maxTokens);
   return {
     canSpawn: !run.parentId && !terminal(run.status) && run.status !== 'interrupted' && !run.cancelRequested && !run.interruptRequested && (children.remaining === null || children.remaining > 0) && !sharedExhausted,
     children,
-    routingTools: readable ? ['agent.route', 'agent.search', 'agent.directory'].filter(name => run.card.tools.includes(name)) : [],
     sharedBudget: { modelCallsRemaining: session.budget.maxModelCalls === null ? null : Math.max(0, session.budget.maxModelCalls - session.modelCalls), tokensRemaining: session.budget.maxTokens === null ? null : Math.max(0, session.budget.maxTokens - session.tokens), toolCallsRemaining: session.budget.maxToolCalls === null ? null : Math.max(0, session.budget.maxToolCalls - session.toolCalls), maxConcurrentModels: session.budget.maxConcurrentModels },
     budgetPolicy: 'canSpawn reports role, active capacity, any explicit cumulative creation cap and shared spending; admission is checked again atomically. Null means no configured limit. Finished settled tasks release active capacity; every new run, including a follow-up, counts toward an explicitly configured cumulative cap. Model concurrency is separate.',
     resultPolicy: 'Wait for terminal evidence, inspect_run for managed child results and tool evidence, then independently check acceptance. A completed child is not a verified deliverable.',

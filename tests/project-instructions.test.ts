@@ -105,7 +105,7 @@ describe('layered context', () => {
       expect(kodo.store.events(run.id).find(event => event.type === 'context.instructions_loaded')?.data).toMatchObject({ trigger: 'initial', files: [{ path: 'AGENTS.md', bytes: 26 }] });
       expect((await kodo.run(run.id)).status).toBe('completed');
       const [first, second, third] = requests.map(request => request.messages);
-      expect(kinds(first!)).toEqual(['system', 'system', 'agents', 'project-instructions', 'environment', 'user', 'state']);
+      expect(kinds(first!)).toEqual(['system', 'system', 'project-instructions', 'environment', 'user', 'state']);
       expect(first![0]!.content).toContain('User-role <kodo-runtime> blocks come from the kernel');
       expect(first![1]!.content).toContain('Agent method configuration');
       expect(first!.find(message => attachmentKind(message) === 'project-instructions')!.content).toContain('Use two-space indentation.');

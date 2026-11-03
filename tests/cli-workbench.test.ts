@@ -20,16 +20,14 @@ async function cli(args: string[], env: Record<string, string> = {}): Promise<{ 
 }
 
 describe('built CLI authoring, cases and workbench', () => {
-  it('dispatches agent/case/serve help without requiring credentials and reads the installed version', async () => {
-    for (const command of ['agent', 'case', 'serve']) {
+  it('dispatches case/serve help without requiring credentials and reads the installed version', async () => {
+    for (const command of ['case', 'serve']) {
       const result = await cli([command, '--help']); expect(result.code, result.err).toBe(0); expect(result.out).toContain(`kodo ${command}`);
     }
     const result = await cli(['--version']);
     expect(result.code, result.err).toBe(0);
     expect(result.out.trim()).toBe((JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version);
     const root = temp();
-    const created = await cli(['agent', 'create', 'Review source code with evidence.', '--id', 'test/cli', '--output', path.join(root, 'agent'), '--source-url', 'https://example.test/project', '--template', '--archive', path.join(root, 'agent.zip'), '--json']);
-    expect(created.code, created.err).toBe(0); expect(JSON.parse(created.out)).toMatchObject({ mode: 'template-draft', verification: 'draft-not-case-verified' });
     const listed = await cli(['case', 'list', '--data-dir', path.join(root, 'state'), '--json']);
     expect(listed.code, listed.err).toBe(0); expect(JSON.parse(listed.out)).toMatchObject({ items: [] });
   }, 15_000);

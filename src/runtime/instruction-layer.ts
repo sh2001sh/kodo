@@ -10,13 +10,13 @@ import type { Budget, FileScope, Message, Run, Session, ToolRequest } from './ty
 import { KodoError } from './types.js';
 import { initialContext } from './context.js';
 import { normalizeAgentFactors } from './agent-factors.js';
-import { rosterSnapshot } from '../agents/roster.js';
-import { instructionMessageTokens, renderRoster } from './roster-context.js';
-import { isLeanProfile } from './tool-view.js';
+import { estimateTextTokens } from './context-tokens.js';
 import type { DiscoveryInput } from './project-instructions.js';
 import { executionSession } from './execution-workspace.js';
 
 export type RunInstructions = NonNullable<Run['instructions']>;
+/** Includes wrapper and message protocol fields, not raw source byte counts. */
+const instructionMessageTokens = (message?: Message): number => message ? estimateTextTokens(JSON.stringify(message)) : 0;
 /** Conservative bytes per estimated token when converting the capacity share. */
 const bytesPerToken = 3;
 /** Native tools whose `path` (and `destination`) argument touches a workspace location. */
@@ -71,7 +71,7 @@ function discoverWithinTokens(input: DiscoveryInput, tokens?: number, trigger = 
   return chain;
 }
 
-/** Initial assembly after the session roster and provisional run have been stored. */
+/** Initial assembly after the session and provisional run have been stored. */
 export function prepareInstructionContext(store: Store, run: Run, session: Session, options: { global: string | false; memory?: boolean; inherited?: RunInstructions }): { messages: Message[]; instructions: RunInstructions } {
   session = executionSession(store, run);
   const factors = normalizeAgentFactors(session.agentFactors);
@@ -83,21 +83,15 @@ export function prepareInstructionContext(store: Store, run: Run, session: Sessi
   const budgetTokens = enabled ? Math.floor(runInstructionCapacity(run, session) / bytesPerToken) : undefined;
   const methodTokens = enabled ? instructionMessageTokens(base[1]) : 0;
   if (budgetTokens !== undefined && methodTokens > budgetTokens) throw new KodoError('CARD_INSTRUCTION_BUDGET', `card method needs ${methodTokens} estimated tokens but the shared instruction allowance is ${budgetTokens}; shorten the card method or select a larger input capacity`);
-  // Project/card instructions take priority over optional roster detail. Both
+  // Project/card instructions take priority over optional session method detail. Both
   // share the same allowance with the mandatory method configuration.
   const loaded = initialInstructions(session.workspace, { ...options, capacityBytes: runInstructionCapacity(run, session), scope: run.scope,
     cardRules: run.card.constraints?.rules ?? [], capacityTokens: budgetTokens === undefined ? undefined : Math.max(0, budgetTokens - methodTokens) });
   const block = instructionMessage(loaded.chain, enabled ? 'initial' : undefined);
   const ruleTokens = instructionMessageTokens(block);
-  // Lean main runs query the frozen roster on demand instead of rendering it (plan 4.5).
-  const showAgents = factors.A && !isLeanProfile(session.toolProfile);
-  const snapshot = !run.parentId && (showAgents || session.inlineMethods) ? rosterSnapshot(store, session.id) : undefined;
-  const visibleSnapshot = snapshot && !showAgents ? { ...snapshot, members: snapshot.members.filter(member => member.card.execution?.modes.includes('inline')) } : snapshot;
-  const view = visibleSnapshot ? renderRoster(visibleSnapshot, Math.max(0, (budgetTokens ?? 0) - methodTokens - ruleTokens), session.inlineMethods) : undefined;
-  if (view?.degraded) store.event(run.id, 'context.roster_degraded', { reason: view.degraded, budgetTokens, methodTokens, ruleTokens, hiddenMembers: view.hiddenMembers, hiddenCategories: view.hiddenCategories });
-  const instructions: RunInstructions = { ...loaded.state, ...(budgetTokens === undefined ? {} : { tokenBudget: budgetTokens, reservedTokens: methodTokens + (view?.tokens ?? 0), tokens: ruleTokens }) };
+  const instructions: RunInstructions = { ...loaded.state, ...(budgetTokens === undefined ? {} : { tokenBudget: budgetTokens, reservedTokens: methodTokens, tokens: ruleTokens }) };
   recordInstructions(store, run.id, options.inherited ? 'inherited' : 'initial', loaded.chain);
-  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, roster: view?.message, inlineMethods: session.inlineMethods, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
+  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, inlineMethods: session.inlineMethods, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
 }
 
 export function instructionMessage(chain: InstructionChain, trigger?: string): Message | undefined {

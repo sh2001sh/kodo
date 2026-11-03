@@ -2,25 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { defaultCard } from '../src/agents/card.js';
-import type { RosterSnapshot } from '../src/agents/roster.js';
 import { followUpContext, initialContext, rebuildSummaryPrefix } from '../src/runtime/context.js';
-import { attachment, attachmentBody, attachmentKind } from '../src/runtime/attachments.js';
+import { attachment, attachmentKind } from '../src/runtime/attachments.js';
 import { normalizeAgentFactors } from '../src/runtime/agent-factors.js';
 import { splitContextLayers } from '../src/runtime/context-inspection.js';
 import { initialInstructions, instructionMessage, prepareInstructionContext, refreshInstructions } from '../src/runtime/instruction-layer.js';
-import { instructionMessageTokens, renderRoster } from '../src/runtime/roster-context.js';
+import { estimateTextTokens } from '../src/runtime/context-tokens.js';
 import { withEnvironment } from '../src/runtime/state-frame.js';
 import { answer, binding, fixture, temp } from './helpers.js';
 import { Application } from '../src/application/index.js';
 import type { Provider } from '../src/runtime/types.js';
-import { childCard, delegationGuidance, teamDelegationGuidance } from '../src/agents/child-card.js';
+import type { Message } from '../src/runtime/types.js';
 
-function snapshot(count = 12): RosterSnapshot {
-  return { sessionId: 'session', digest: 'f'.repeat(64), ordering: 'catalog.path,id,numeric-version', warnings: [], catalogDescriptions: {},
-    members: Array.from({ length: count }, (_, index) => ({ card: { ...defaultCard, id: `member/${index}`, name: `Member ${index}`, prompt: 'PRIVATE METHOD', tools: ['file.read'], constraints: { rules: ['private-rules.md'] } }, catalogPath: `area${index}/work`, source: 'builtin', availability: 'available', reasons: [], ...(index < 2 ? { fixedOrder: 1 - index } : {}) })) };
-}
+const instructionMessageTokens = (message?: Message): number => message ? estimateTextTokens(JSON.stringify(message)) : 0;
 
-describe('agent context factors and frozen roster', () => {
+describe('agent context factors', () => {
   it('keeps the complete R0 provider request byte-identical to a persisted legacy session', async () => {
     const root = temp(), state = path.join(root, 'seed');
     writeFileSync(path.join(root, 'AGENTS.md'), 'Use the project formatter and preserve public names.');
@@ -51,16 +47,9 @@ describe('agent context factors and frozen roster', () => {
     expect(requests[0]!.tools.some(tool => tool.name === 'agent.derive')).toBe(false);
   });
 
-  it('removes all main-only agent tools from child views without changing the registered card', () => {
-    const card = { ...defaultCard, tools: [...defaultCard.tools, 'agent.propose', 'agent.retain'] };
-    const child = childCard(card);
-    expect(child.tools.some(name => name.startsWith('agent.'))).toBe(false);
-    expect(child.digest).toBe(card.digest);
-    expect(card.tools).toContain('agent.retain');
-  });
   it('preserves the legacy prompt bytes with all factors disabled and changes independent clauses', () => {
     const baseline = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' });
-    const off = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { A: false, B: false, C: false }, roster: attachment('agents', 'ignored') });
+    const off = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { A: false, B: false, C: false } });
     expect(JSON.stringify(off)).toBe(JSON.stringify(baseline));
     expect(normalizeAgentFactors()).toEqual({ A: false, B: false, C: false, D: false, E: false });
     const b = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { B: true } });
@@ -76,26 +65,22 @@ describe('agent context factors and frozen roster', () => {
     expect(b[0]!.content).not.toContain('three or more files');
     expect(b[0]!.content).not.toContain('Use spawn_agent only to change');
     expect(b[0]!.content).toContain('give each child objective, inputs, constraints and acceptance checks');
-    expect(b[1]!.content).toContain(teamDelegationGuidance);
-    expect(b[1]!.content).not.toContain(delegationGuidance);
-    expect(defaultCard.prompt).toContain(delegationGuidance);
     expect(b.slice(2)).toEqual(baseline.slice(2));
     const c = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { C: true } });
     expect(c[0]!.content).toContain('Use spawn_agent only to change independent modules');
-    expect(c[0]!.content).toContain('named input slots');
+    // 1c: children inherit the parent card and permissions instead of named slots.
+    expect(c[0]!.content).toContain('Children inherit your card and permissions and may only narrow them.');
+    expect(c[0]!.content).not.toContain('named input slots');
   });
 
   it('keeps team-lead responsibilities out of child prompts', () => {
-    const card = childCard(defaultCard);
-    const context = initialContext('workspace', ['read'], card, 'Find the parser entry point.', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true, B: true, C: true } });
+    const context = initialContext('workspace', ['read'], defaultCard, 'Find the parser entry point.', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true, B: true, C: true } });
     const text = context.map(message => message.content).join('\n');
     expect(text).toContain('You cannot spawn agents');
     expect(text).not.toContain('Start each request with a brief plan');
     expect(text).not.toContain('You are the team lead');
     expect(text).not.toContain('Delegate substantive investigation');
     expect(text).not.toContain('followup_task');
-    expect(text).not.toContain(teamDelegationGuidance);
-    expect(text).not.toContain(delegationGuidance);
   });
 
   it.each([
@@ -121,57 +106,10 @@ describe('agent context factors and frozen roster', () => {
         expect(spawn.description).not.toContain('continue your independent work');
         expect(request.messages[0]!.content).toContain('Have each owner deliver the implementation and actual check-call references together');
       }
-      expect(Object.hasOwn(spawn.parameters.properties as object, 'agent')).toBe(factors.A || factors.C);
+      // The roster selectors are gone for every card and factor combination.
+      expect(Object.hasOwn(spawn.parameters.properties as object, 'agent')).toBe(false);
+      expect(Object.hasOwn(spawn.parameters.properties as object, 'slots')).toBe(false);
       expect(request.tools.some(tool => tool.name === 'file.patch')).toBe(true);
-    }
-  });
-
-  it('fits rendered token budgets, prioritizes fixed members, and excludes private and unavailable metadata', () => {
-    const frozen = snapshot();
-    frozen.members[11]!.availability = 'unavailable';
-    const full = renderRoster(frozen, 100_000);
-    const body = JSON.parse(attachmentBody(full.message!));
-    expect(body.members.slice(0, 2).map((member: { id: string }) => member.id)).toEqual(['member/1', 'member/0']);
-    expect(full.message!.content).not.toContain('PRIVATE METHOD');
-    expect(full.message!.content).not.toContain('private-rules.md');
-    expect(body.members).toHaveLength(11);
-    expect(renderRoster(frozen, 0)).toMatchObject({ tokens: 0, degraded: 'empty', hiddenMembers: 11 });
-    for (const budget of [60, 120, 300, 600, 1200]) {
-      const view = renderRoster(frozen, budget);
-      expect(view.tokens).toBeLessThanOrEqual(budget);
-      expect(view.tokens).toBe(instructionMessageTokens(view.message));
-      if (view.message) expect(() => JSON.parse(attachmentBody(view.message!))).not.toThrow();
-    }
-    expect(renderRoster(frozen, 100_000)).toEqual(full);
-  });
-
-  it('uses a virtual root or paging-only entry when category descriptions consume the allowance', () => {
-    const frozen = snapshot(1);
-    delete frozen.members[0]!.fixedOrder;
-    frozen.catalogDescriptions.area0 = 'Long category description. '.repeat(2000);
-    const root = renderRoster(frozen, 500);
-    expect(root.degraded).toBe('root');
-    expect(JSON.parse(attachmentBody(root.message!)).root).toEqual({ path: '/', categories: 1, members: 1 });
-    const paging = renderRoster(frozen, 100);
-    expect(paging.degraded).toBe('paging');
-    expect(JSON.parse(attachmentBody(paging.message!)).directory).toContain('agent.directory');
-  });
-
-  it('distinguishes inline-only methods from children and preserves the catalog budget', () => {
-    const frozen = snapshot(3);
-    frozen.members[0]!.card.execution = { modes: ['inline'] };
-    frozen.members[1]!.card.execution = { modes: ['inline', 'child'] };
-    const off = JSON.parse(attachmentBody(renderRoster(frozen, 10000).message!));
-    expect(off.members.map((member: { id: string }) => member.id)).not.toContain('member/0');
-    expect(off.members.every((member: { inline_method?: unknown }) => !member.inline_method)).toBe(true);
-    const on = JSON.parse(attachmentBody(renderRoster(frozen, 10000, true).message!));
-    expect(on.members.find((member: { id: string }) => member.id === 'member/0')).toMatchObject({ execution_modes: ['inline'], inline_method: { load: 'skill.load', availability_check: 'skill.list' } });
-    expect(on.members.find((member: { id: string }) => member.id === 'member/2')).not.toHaveProperty('inline_method');
-    for (const budget of [0, 100, 300, 1000]) {
-      const view = renderRoster(frozen, budget, true);
-      expect(view.tokens).toBeLessThanOrEqual(budget);
-      expect(view.tokens).toBe(instructionMessageTokens(view.message));
-      expect(view.message?.content ?? '').not.toContain('PRIVATE METHOD');
     }
   });
 
@@ -187,26 +125,23 @@ describe('agent context factors and frozen roster', () => {
     }
   });
 
-  it('orders and measures the roster as L2 ahead of instructions and environment', () => {
-    const roster = renderRoster(snapshot(2), 10_000).message!;
-    const messages = withEnvironment(initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, attachment('project-instructions', 'rules'), { factors: { A: true }, roster }), attachment('environment', 'env'));
-    expect(messages.map(attachmentKind)).toEqual([undefined, undefined, 'agents', 'project-instructions', 'environment', undefined]);
+  it('orders L3 project instructions ahead of the environment without a roster layer', () => {
+    const messages = withEnvironment(initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, attachment('project-instructions', 'rules'), { factors: { A: true } }), attachment('environment', 'env'));
+    expect(messages.map(attachmentKind)).toEqual([undefined, undefined, 'project-instructions', 'environment', undefined]);
     const layers = splitContextLayers(messages);
-    expect(layers.L2).toHaveLength(2);
+    expect(layers.L2).toHaveLength(1);
+    expect(layers.L2[0]!.content).toContain('Agent method configuration');
     expect(layers.L5).toEqual([{ role: 'user', content: 'objective' }]);
-    const child = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true }, roster });
+    const child = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true } });
     expect(child.some(message => attachmentKind(message) === 'agents')).toBe(false);
   });
 
-  it('carries the same frozen roster into a same-session follow-up', () => {
+  it('keeps the objective across a same-session follow-up without a roster attachment', () => {
     const { app, runId } = fixture();
     const source = app.store.run(runId);
-    const original = app.store.readBlob<Parameters<typeof splitContextLayers>[0]>(source.contextRef);
-    const roster = original.find(message => attachmentKind(message) === 'agents');
-    expect(roster).toBeDefined();
     const next = { ...source, id: 'next', historyFrom: source.id, contextRef: '', objective: 'Continue with the next task.' };
     const context = followUpContext(app.store, source, next);
-    expect(context.find(message => attachmentKind(message) === 'agents')).toEqual(roster);
+    expect(context.some(message => attachmentKind(message) === 'agents')).toBe(false);
     expect(context.at(-1)?.content).toBe(next.objective);
   });
 
@@ -233,7 +168,7 @@ describe('agent context factors and frozen roster', () => {
     expect(() => prepareInstructionContext(app.store, oversized, session, { global: false })).toThrow('shared instruction allowance');
   });
 
-  it('preserves card rules and frozen roster through instruction refresh and summary rebuild', () => {
+  it('preserves card rules and instructions through instruction refresh and summary rebuild', () => {
     const { app, root, runId } = fixture();
     writeFileSync(path.join(root, 'card-rule.md'), 'Initial rule.');
     const run = app.store.run(runId);
@@ -246,6 +181,5 @@ describe('agent context factors and frozen roster', () => {
     const rebuilt = rebuildSummaryPrefix(app.store, app.store.run(run.id), [...prepared.messages, ...(delta ? [delta] : [])]);
     expect(rebuilt.instructions?.state.cardRules).toEqual(['card-rule.md']);
     expect(rebuilt.messages.find(message => attachmentKind(message) === 'project-instructions')?.content).toContain('Updated rule.');
-    expect(rebuilt.messages.find(message => attachmentKind(message) === 'agents')).toEqual(prepared.messages.find(message => attachmentKind(message) === 'agents'));
   });
 });

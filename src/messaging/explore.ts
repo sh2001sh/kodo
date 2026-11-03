@@ -1,12 +1,10 @@
-import type { AgentConfiguration } from '../agents/configuration.js';
-import { configurationSchema } from '../agents/configuration.js';
 import type { Run, ToolSpec } from '../runtime/types.js';
 import { KodoError } from '../runtime/types.js';
 import type { delegationState } from './spawn-spec.js';
 import { todoIdSchema } from './spawn-spec.js';
 
 export type Thoroughness = 'quick' | 'medium' | 'thorough';
-export interface ExploreTask { prompt: string; scope?: string[]; thoroughness?: Thoroughness; configuration?: AgentConfiguration; todoId?: string }
+export interface ExploreTask { prompt: string; scope?: string[]; thoroughness?: Thoroughness; todoId?: string }
 export const maxExploreTasks = 4;
 /** Each explore report is delivered whole up to this size; the rest stays readable through inspect_run. */
 export const exploreReportChars = 8000;
@@ -39,7 +37,6 @@ export const exploreSpec: ToolSpec & { main: true; control: true } = {
           prompt: { type: 'string', minLength: 1, maxLength: 16_000, description: 'Self-contained question with known leads, the facts to report, and when the evidence is enough to stop.' },
           scope: { type: 'array', items: { type: 'string', minLength: 1 }, uniqueItems: true, maxItems: 256, description: 'Relative read roots, e.g. "src"; omit to use your read scope.' },
           thoroughness: { enum: ['quick', 'medium', 'thorough'], description: 'Search depth; default medium.' },
-          configuration: { ...configurationSchema, description: 'Optional: extra method instructions, or read-only tools/skills of your card (e.g. LSP or a skill) instead of the default file read/list/search set. Must keep file.read; write or exec tools are refused.' },
           todoId: todoIdSchema,
         },
       } },
@@ -70,7 +67,7 @@ export function commitExplore(callId: string, args: Record<string, unknown>, dep
   if (state.children.remaining !== null && state.children.remaining < tasks.length) throw new KodoError('CHILD_BUDGET', `explore needs ${tasks.length} children but only ${state.children.remaining} child slots remain under the active or cumulative limit; wait for active work to finish or use fewer tasks`);
   if (!state.canSpawn) throw new KodoError('CHILD_BUDGET', 'explore cannot start children: shared model call or token budget is exhausted or this run cannot delegate; investigate directly');
   const prepared = tasks.map(task => deps.prepare(
-    { objective: task.prompt, permissions: ['read'], scope: { ...(task.scope ? { read: task.scope } : {}), write: [] }, ...(task.configuration ? { configuration: task.configuration } : {}), ...(task.todoId ? { todoId: task.todoId } : {}) },
+    { objective: task.prompt, permissions: ['read'], scope: { ...(task.scope ? { read: task.scope } : {}), write: [] }, ...(task.todoId ? { todoId: task.todoId } : {}) },
     { callId, thoroughness: task.thoroughness ?? 'medium' },
   ));
   const runs = prepared.map(child => deps.commit(child));

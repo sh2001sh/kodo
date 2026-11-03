@@ -32,10 +32,12 @@ export function todoRunReady(store: Store, run: Run): boolean {
     return false;
   }
   const session = store.session(run.sessionId);
-  if ((run.permissions ?? session.permissions).includes('write') && run.scope?.write?.length !== 0) {
+  // Only an explicit narrower write claim takes the workspace lock. A child that
+  // inherits the parent's unscoped card shares the workspace by choice.
+  if ((run.permissions ?? session.permissions).includes('write') && (run.scope?.write?.length ?? 0) > 0) {
     const holder = store.listRuns(run.sessionId).some(peer => peer.id !== run.id && peer.parentId === run.parentId && !terminal(peer.status)
       && (peer.status !== 'queued' || ((peer.createdAt < run.createdAt || (peer.createdAt === run.createdAt && peer.id < run.id)) && todoDependenciesSatisfied(store, peer.parentId!, peer.todo)))
-      && (peer.permissions ?? session.permissions).includes('write') && peer.scope?.write?.length !== 0 && writeScopesOverlap(peer.scope, run.scope));
+      && (peer.permissions ?? session.permissions).includes('write') && (peer.scope?.write?.length ?? 0) > 0 && writeScopesOverlap(peer.scope, run.scope));
     if (holder) return false;
   }
   const snapshot = readTodoSnapshot(store, run.parentId);

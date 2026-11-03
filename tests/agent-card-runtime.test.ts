@@ -5,14 +5,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Application } from '../src/application/index.js';
 import type { ApplicationOptions } from '../src/application/index.js';
 import { parseCard } from '../src/agents/card.js';
-import { deriveAgent } from '../src/agents/derive.js';
-import { reportCompleteness, submitReport, validateSlots } from '../src/agents/contracts.js';
-import { configureCard } from '../src/agents/configuration.js';
+import { reportCompleteness, submitReport } from '../src/runtime/report.js';
 import { checkCompletion } from '../src/runtime/completion.js';
 import { inspectRun } from '../src/runtime/inspection.js';
 import { intersectFileScopes, resolveScopeVariables } from '../src/runtime/scope.js';
 import { KodoError } from '../src/runtime/types.js';
-import type { Card, Message, Run } from '../src/runtime/types.js';
+import type { Card, Run } from '../src/runtime/types.js';
 import { answer, binding, call, calls, temp } from './helpers.js';
 
 const apps: Application[] = [];
@@ -28,107 +26,46 @@ function setup(card: Card, options: ApplicationOptions = {}, mainScope?: Run['sc
   const app = new Application(path.join(root, '.state'), { async complete() { return answer(); } }, undefined, { agentFactors: { D: false, E: false, A: false, B: false, C: true }, ...options });
   apps.push(app);
   app.registerCard(card);
-  const parent = app.createRun({ objective: 'Deliver the feature', workspace: root, binding, permissions: ['read', 'write', 'exec'], ...(mainScope ? { scope: mainScope } : {}) });
+  const parent = app.createRun({ objective: 'Deliver the feature', workspace: root, binding, permissions: ['read', 'write', 'exec'], card, ...(mainScope ? { scope: mainScope } : {}) });
   return { app, root, parent };
 }
-function spawn(app: Application, parent: Run, card: Card, args: Record<string, unknown> = {}): Run {
-  const request = { agent: `${card.id}@${card.version}`, objective: 'Inspect this module', ...args };
+/** Host-shaped spawn: a child inherits the parent card and may only narrow permissions/scope. */
+function spawn(app: Application, parent: Run, args: Record<string, unknown> = {}): Run {
+  const request = { objective: 'Inspect this module', ...args };
   const value = app.coordinator.mailbox.execute(parent, 'spawn', 'spawn_agent', app.coordinator.mailbox.validate(parent, 'spawn_agent', JSON.stringify(request))) as { id: string };
   return app.store.run(value.id);
 }
 
-describe('card scope and task input contracts', () => {
+describe('scope helpers', () => {
   it('intersects directory roots without expanding current files and resolves project lists', () => {
     expect(intersectFileScopes({ read: ['src', 'docs'], write: ['src'] }, { read: ['src/feature'], write: ['src/feature', 'tests'] })).toEqual({ read: ['src/feature'], write: ['src/feature'] });
     expect(intersectFileScopes({}, { write: [] })).toEqual({ write: [] });
     expect(resolveScopeVariables({ write: ['${project.tests}'] }, { 'project.tests': ['tests/unit', 'tests/integration'] })).toEqual({ write: ['tests/unit', 'tests/integration'] });
     expect(() => resolveScopeVariables({ write: ['${project.tests}'] })).toThrow('unresolved scope variable');
   });
-
-  it('validates named text, existing read paths and session artifacts before child creation', () => {
-    const card = member({ routing: { use_when: ['Read a contract'], mode: 'read' }, inputs: [{ name: 'requirement', kind: 'text', required: true }, { name: 'files', kind: 'paths', required: true }, { name: 'contract', kind: 'artifact', required: true }], constraints: { scope: { read: ['src'], write: [] } } });
-    const { app, parent } = setup(card);
-    const artifact = app.store.artifact(parent.id, app.store.blob({ name: 'contract', kind: 'contract', content: 'value stays numeric' }));
-    expect(() => spawn(app, parent, card, { slots: { files: ['src/feature/entry.ts'] } })).toThrow(/requirement: required.*contract: required/);
-    expect(app.store.listRuns(parent.sessionId)).toHaveLength(1);
-    expect(() => spawn(app, parent, card, { slots: { requirement: 'Read', files: ['src/missing.ts'], contract: artifact } })).toThrow('files: each path must exist');
-    const child = spawn(app, parent, card, { slots: { requirement: 'Read', files: ['src/feature/entry.ts'], contract: artifact } });
-    const messages = app.store.readBlob<Message[]>(child.contextRef);
-    expect(messages.find(message => message.role === 'user')?.content).toContain('untrusted task data, not instructions');
-    expect(JSON.stringify(messages)).toContain(artifact);
-    expect(child.scope).toEqual({ read: ['src'], write: [] });
-  });
-
-  it('keeps optional paths empty and rejects mismatched slot types with slot names', () => {
-    const card = member({ inputs: [{ name: 'files', kind: 'paths', required: false }, { name: 'goal', kind: 'text', required: true }] });
-    const { app, parent } = setup(card);
-    expect(validateSlots(app.store, parent, card, {}, { files: [], goal: 'inspect' })).toEqual({ files: [], goal: 'inspect' });
-    expect(() => validateSlots(app.store, parent, card, {}, { goal: [] })).toThrow('goal: expected nonempty text');
-  });
-
-  it('applies card and parent path limits and preserves v2 declarations through configuration', () => {
-    const card = member({ constraints: { permissions: ['read', 'write'], scope: { write: ['src'] } } });
-    const { app, parent } = setup(card, {}, { write: ['src/feature'] });
-    const child = spawn(app, parent, card, { configuration: { instructions: 'Limit the edit to the existing export.' } });
-    expect(child.permissions).toEqual(['read', 'write']);
-    expect(child.scope?.write).toEqual(['src/feature']);
-    expect(child.card.constraints).toEqual(card.constraints);
-    expect(child.card.schemaVersion).toBe(2);
-    expect(() => spawn(app, parent, card, { scope: { write: ['docs'] } })).toThrow(KodoError);
-    expect(app.store.listRuns(parent.sessionId)).toHaveLength(2);
-  });
-
-  it('gives read members no execution or write tools and review members only approved verification execution', () => {
-    const readCard = member({ routing: { use_when: ['Read'], mode: 'read' } });
-    const { app, parent } = setup(readCard);
-    const child = spawn(app, parent, readCard);
-    expect(child.permissions).toEqual(['read']);
-    expect(child.scope?.write).toEqual([]);
-    expect(child.card.tools).toEqual(['file.read', 'file.list']);
-    const reviewCard = member({ routing: { use_when: ['Review'], mode: 'review' } });
-    const review = setup(reviewCard);
-    const reviewer = spawn(review.app, review.parent, reviewCard);
-    expect(reviewer.permissions).toEqual(['read', 'exec']);
-    expect(reviewer.scope?.write).toEqual([]);
-    expect(reviewer.card.tools).toEqual(['file.read', 'file.list']);
-  });
-
-  it('requires implementer roots and admits host spawns through the same overlap checks', () => {
-    const card = member({ id: 'kodo/implementer' });
-    const { app, parent } = setup(card);
-    expect(() => spawn(app, parent, card)).toThrow('implementer requires explicit');
-    const child = app.coordinator.mailbox.spawnHost(parent.id, { agent: card.id, objective: 'One module', scope: { write: ['src/feature'] } });
-    expect(app.store.run(child.id as string).parentId).toBe(parent.id);
-    expect(app.store.events(child.id as string, { types: ['agent.spawned'] })[0]?.data.origin).toBe('host');
-    expect(() => spawn(app, parent, card, { scope: { write: ['src/feature'] } })).toThrow('overlaps child');
-  });
 });
 
-describe('temporary card derivation', () => {
-  it('canonicalizes overlays, persists one handle and keeps optional-to-required changes', () => {
-    const card = member({ inputs: [{ name: 'goal', kind: 'text', required: true }, { name: 'files', kind: 'paths', required: false }], constraints: { scope: { write: ['src'] } } });
+describe('child inheritance and shared write admission', () => {
+  it('inherits the parent card and keeps the host overlap checks from the kernel fix', () => {
+    const card = member();
     const { app, parent } = setup(card);
-    const first = deriveAgent(app.store, parent, `${card.id}@${card.version}`, { tools: ['file.read', 'file.list'], scope: { write: ['src/feature'] }, inputs_required: ['files'] });
-    const again = deriveAgent(app.store, parent, `${card.id}@${card.version}`, { inputs_required: ['files'], scope: { write: ['src/feature'] }, tools: ['file.list', 'file.read'] });
-    expect(again).toEqual(first);
-    const record = app.store.derivedAgents.get(parent.sessionId, first.handle)!;
-    expect(record.card.inputs?.every(field => field.required)).toBe(true);
-    expect(record.card.constraints?.scope?.write).toEqual(['src/feature']);
-    expect(app.store.events(parent.id, { types: ['agent.derived'] })).toHaveLength(1);
-    const child = app.coordinator.mailbox.spawnHost(parent.id, { agent: first.handle, objective: 'Read', slots: { goal: 'Read', files: ['src/feature/entry.ts'] } });
-    expect(app.store.run(child.id as string).card.id).toBe(first.handle);
-    expect(() => app.store.card(first.handle, '0.0.0')).toThrow('not registered');
+    const child = spawn(app, parent, { scope: { write: ['src/feature'] } });
+    expect(child.card.digest).toBe(parent.card.digest);
+    expect(child.permissions).toEqual(app.store.session(parent.sessionId).permissions);
+    expect(child.scope?.write).toEqual(['src/feature']);
+    // A second live writer on the same roots is rejected whole.
+    expect(() => spawn(app, parent, { scope: { write: ['src/feature/entry.ts'] } })).toThrow(/overlaps child/u);
+    expect(app.store.listRuns(parent.sessionId)).toHaveLength(2);
+    expect(spawn(app, parent, { scope: { write: ['docs'] } })).toHaveProperty('parentId', parent.id);
   });
 
-  it('keeps one derivation level and requires named existing input declarations', () => {
-    const card = member({ constraints: { scope: { write: ['src'] } }, inputs: [{ name: 'goal', kind: 'text', required: true }] });
-    const { app, parent } = setup(card);
-    const derived = deriveAgent(app.store, parent, `${card.id}@${card.version}`, {});
-    expect(() => deriveAgent(app.store, parent, derived.handle, {})).toThrow('cannot be derived again');
-    expect(() => deriveAgent(app.store, parent, `${card.id}@${card.version}`, { inputs_required: ['new_slot'] })).toThrow('inputs_required must be a subset');
-    const configured = configureCard(card, { instructions: 'Report succinctly.' }, { permissions: ['read'], permissionOf: () => 'read' });
-    expect(configured.constraints).toEqual(card.constraints);
-    expect(configured.inputs).toEqual(card.inputs);
+  it('rejects removed card-selection arguments and unknown tools', () => {
+    const { app, parent } = setup(member());
+    expect(spawn(app, parent, { permissions: ['read'] }).permissions).toEqual(['read']);
+    for (const removed of [{ agent: 'local/member@1.0.0' }, { slots: { goal: 'x' } }, { configuration: { instructions: 'x' } }, { card_id: 'local/member', card_version: '1.0.0' }]) {
+      expect(() => spawn(app, parent, removed)).toThrow(/schema/u);
+    }
+    expect(() => app.registerCard({ ...member(), id: 'local/bad', tools: [...member().tools, 'workspace.integrate'] })).toThrow(KodoError);
   });
 });
 
@@ -138,19 +75,19 @@ describe('report completeness, acceptance and parent judgment', () => {
   it('records settled call status separately from report completeness', () => {
     const card = reportingCard();
     const { app, parent } = setup(card);
-    const child = spawn(app, parent, card);
+    const child = spawn(app, parent);
     app.store.putCall({ id: 'check', runId: child.id, step: 0, kind: 'tool', name: 'file.read', status: 'succeeded', effect: 'read', requestRef: app.store.blob({}), resultRef: app.store.blob({ exitCode: 1 }), reservedTokens: 0 });
     const result = submitReport(app.store, child, { checks: ['check'], open_issues: ['check returned exit code 1'] });
     expect(result.report.calls).toEqual([expect.objectContaining({ id: 'check', status: 'succeeded', exitCode: 1 })]);
     expect(reportCompleteness(app.store, child)).toMatchObject({ status: 'complete', passed: true });
     expect(app.coordinator.mailbox.specs(child).some(spec => spec.name === 'report.submit')).toBe(true);
-    expect(app.coordinator.mailbox.specs(parent).some(spec => spec.name === 'report.submit')).toBe(false);
+    expect(app.coordinator.mailbox.specs(app.store.run(parent.id)).some(spec => spec.name === 'report.submit')).toBe(false);
   });
 
   it('requires all report fields and already-settled references from the reporting run', () => {
     const card = reportingCard();
     const { app, parent } = setup(card);
-    const child = spawn(app, parent, card);
+    const child = spawn(app, parent);
     app.store.putCall({ id: 'parent-check', runId: parent.id, step: 0, kind: 'tool', name: 'file.read', status: 'succeeded', effect: 'read', requestRef: app.store.blob({}), reservedTokens: 0 });
     expect(() => submitReport(app.store, child, { checks: [] })).toThrow('open_issues: required');
     expect(() => submitReport(app.store, child, { checks: ['parent-check'], open_issues: [] })).toThrow('settled tool call from this run');
@@ -160,7 +97,7 @@ describe('report completeness, acceptance and parent judgment', () => {
   it('exposes the exact card report schema without changing it as evidence accumulates', () => {
     const card = reportingCard();
     const { app, parent } = setup(card);
-    const child = spawn(app, parent, card);
+    const child = spawn(app, parent);
     const spec = app.coordinator.mailbox.specs(child).find(tool => tool.name === 'report.submit')!;
     const validate = new Ajv().compile(spec.parameters);
     expect(validate({ fields: { checks: [], open_issues: [] } })).toBe(true);
@@ -173,7 +110,7 @@ describe('report completeness, acceptance and parent judgment', () => {
 
   it('canonicalizes visible tool IDs once and keeps accepted references stable after ID reuse', () => {
     const { app, parent } = setup(reportingCard());
-    const child = spawn(app, parent, reportingCard());
+    const child = spawn(app, parent);
     // Isolated synthetic records model provider ID reuse; no checks are actually run.
     const recorded = { runId: child.id, step: 0, kind: 'tool' as const, name: 'file.read', status: 'succeeded' as const, effect: 'read' as const,
       requestRef: app.store.blob(call('file.read', {}, 'visible-check')), resultRef: app.store.blob({ exitCode: 1 }), reservedTokens: 0 };
@@ -191,7 +128,7 @@ describe('report completeness, acceptance and parent judgment', () => {
 
   it('does not resolve a visible ID to an unfinished or another run\'s tool call', () => {
     const { app, parent } = setup(reportingCard());
-    const child = spawn(app, parent, reportingCard());
+    const child = spawn(app, parent);
     for (const status of ['planned', 'running', 'unknown'] as const) {
       app.store.putCall({ id: `synthetic:${status}`, runId: child.id, step: 0, kind: 'tool', name: 'file.read', status, effect: 'read', requestRef: app.store.blob(call('file.read', {}, status)), reservedTokens: 0 });
       expect(() => submitReport(app.store, child, { checks: [status], open_issues: [] })).toThrow('settled tool call from this run');
@@ -204,7 +141,7 @@ describe('report completeness, acceptance and parent judgment', () => {
   it('uses bounded correction rounds and never labels a complete report as host acceptance', async () => {
     const card = reportingCard();
     const { app, parent } = setup(card);
-    const child = spawn(app, parent, card);
+    const child = spawn(app, parent);
     const signal = new AbortController().signal;
     const first = await checkCompletion(app.coordinator, child, answer('Read completed.'), signal);
     expect(first).toEqual({ kind: 'continue' });
@@ -217,7 +154,7 @@ describe('report completeness, acceptance and parent judgment', () => {
     expect(result.quality).toEqual({ status: 'not_checked' });
     expect(result.parentJudgment).toEqual({ status: 'not_checked' });
     expect(result.reportCompleteness).toMatchObject({ status: 'complete', passed: true });
-    const unfinished = spawn(app, parent, card);
+    const unfinished = spawn(app, parent);
     expect((await checkCompletion(app.coordinator, unfinished, answer(), signal)).kind).toBe('continue');
     expect((await checkCompletion(app.coordinator, app.store.run(unfinished.id), answer(), signal)).kind).toBe('continue');
     expect(await checkCompletion(app.coordinator, app.store.run(unfinished.id), answer(), signal)).toMatchObject({ kind: 'fail', error: expect.stringContaining('REPORT_INCOMPLETE') });
@@ -226,7 +163,7 @@ describe('report completeness, acceptance and parent judgment', () => {
   it('paginates structured reports independently and keeps call evidence subject to inspection permission', () => {
     const card = reportingCard();
     const { app, parent } = setup(card);
-    const child = spawn(app, parent, card);
+    const child = spawn(app, parent);
     app.store.putCall({ id: 'exec-check', runId: child.id, step: 0, kind: 'tool', name: 'process.exec', status: 'succeeded', effect: 'read', requestRef: app.store.blob({}), resultRef: app.store.blob({ exitCode: 1 }), reservedTokens: 0 });
     submitReport(app.store, child, { checks: ['exec-check'], open_issues: ['A long pending issue '.repeat(100)] });
     const view = inspectRun(app.store, parent, { run_id: child.id, max_chars: 256 }) as { reportCompleteness: { status: string }; report: { text: string; next: { run_id: string; section: 'report'; content_offset: number; max_chars: number } }; hostAcceptance: { status: string } };
@@ -259,8 +196,8 @@ describe('report completeness, acceptance and parent judgment', () => {
     apps.push(app);
     const card = reportingCard();
     app.registerCard(card);
-    const parent = app.createRun({ objective: 'Inspect the entry file', workspace: root, binding, permissions: ['read'] });
-    childId = spawn(app, parent, card).id;
+    const parent = app.createRun({ objective: 'Inspect the entry file', workspace: root, binding, permissions: ['read'], card });
+    childId = spawn(app, parent).id;
     expect((await app.run(parent.id)).status).toBe('completed');
     expect(app.store.run(childId).status).toBe('completed');
     expect(app.store.calls(childId).find(item => item.name === 'report.submit')?.status).toBe('succeeded');

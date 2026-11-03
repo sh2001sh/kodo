@@ -50,8 +50,10 @@ describe('host-enabled exploration dispatch', () => {
     expect(children).toHaveLength(1);
     const child = children[0]!;
     expect(child).toMatchObject({ permissions: ['read'], scope: { read: ['src'], write: [] }, exploration: { questionId: 'storage', batchId: 'storage-ui', decisionVersion: 0, consumer: 'Storage implementation', knowledgeRefs: [] } });
-    expect(child.card.tools).toEqual(['file.read', 'file.list', 'file.search']);
-    expect(child.card.skills).toEqual([]);
+    // Children inherit the parent card and its tools; permissions are narrowed by the caller.
+    expect(child.card.digest).toBe(app.store.run(run.id).card.digest);
+    expect(child.card.tools).toEqual(app.store.run(run.id).card.tools);
+    expect(child.card.skills).toEqual(app.store.run(run.id).card.skills);
     for (const name of ['process.exec', 'shell.exec', 'file.patch', 'web.search', 'mcp.private', 'skill.load']) {
       await expect(app.coordinator.tools.execute(child.id, name, {}, new AbortController().signal)).rejects.toThrow(/not authorized/);
     }
@@ -60,9 +62,9 @@ describe('host-enabled exploration dispatch', () => {
     expect(JSON.stringify(context)).toContain('inspect_run');
   });
 
-  it('prevalidates the whole batch and leaves no partial assignment for an invalid specialist', () => {
+  it('prevalidates the whole batch and leaves no partial assignment for a removed card selector', () => {
     const { app, mailbox, run } = setup();
-    expect(() => submit(mailbox, run, plan(question(), { ...question('bad'), card_id: 'absent', card_version: '1.0.0' }))).toThrow(/not registered/);
+    expect(() => submit(mailbox, run, plan(question(), { ...question('bad'), card_id: 'absent', card_version: '1.0.0' }))).toThrow(/arguments do not match/);
     expect(app.store.listRuns(run.sessionId)).toHaveLength(1);
     expect(app.store.events(run.id).filter(event => event.type === 'exploration.planned')).toHaveLength(0);
     expect(submit(mailbox, run, plan()).questions[0]!.run_id).toBeTruthy();
@@ -164,15 +166,18 @@ describe('host-enabled exploration dispatch', () => {
     expect(app.store.listRuns(run.sessionId)).toHaveLength(2);
   });
 
-  it('rejects unauthorized scopes, missing read grants and cards without native reading', () => {
+  it('rejects unauthorized scopes and missing read grants before dispatch', () => {
     const { app, mailbox, run } = setup();
     app.store.updateRun(run.id, { scope: { read: ['docs'], write: [] } });
     expect(() => submit(mailbox, app.store.run(run.id), plan())).toThrow(/contained/);
     app.store.updateRun(run.id, { scope: {}, permissions: [] });
     expect(() => submit(mailbox, app.store.run(run.id), plan())).toThrow(/subset/);
+    // The removed read-only card view no longer refuses card tools here: children
+    // inherit the parent card and the read-only permission subset is enforced.
     app.store.updateRun(run.id, { permissions: ['read'], card: { ...run.card, tools: ['process.run'] } });
-    expect(() => submit(mailbox, app.store.run(run.id), plan())).toThrow(/native file.read/);
-    expect(app.store.listRuns(run.sessionId)).toHaveLength(1);
+    const dispatched = submit(mailbox, app.store.run(run.id), plan());
+    expect(dispatched.questions[0]!.run_id).toBeTruthy();
+    expect(app.store.run(dispatched.questions[0]!.run_id!).permissions).toEqual(['read']);
   });
 
   it('requires host authorization for reuse and narrows knowledge authorization to the investigation scope', () => {

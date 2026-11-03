@@ -7,9 +7,9 @@ import type { Budget, CompletionValidator, Permission, Run } from '../runtime/ty
 import { interactive } from './interactive.js';
 import { terminalText } from './terminal.js';
 import type { ReadOnlyCommand } from '../tools/index.js';
+import { methodCatalogDigest } from '../extensions/methods.js';
 import { runWorkspace } from '../runtime/execution-workspace.js';
-import { parseAgentScope, parseAgentSlots } from './agent-input.js';
-import { reviewAgentDrafts } from './agent-review.js';
+import type { FileScope } from '../runtime/types.js';
 import type { TuiActions } from '../tui/types.js';
 import { configuredAgentModels, hasModelCredentials, hydrateConfigCredentials, resolveConfiguredBinding, tuiModelConfig } from './config-binding.js';
 import { readUserConfig, userConfigPath } from './user-config.js';
@@ -18,10 +18,10 @@ const help = `Kodo development preview (collaboration kernel)
   kodo run "task" [--json] [--workspace path] [--allow-write] [--allow-exec]
   kodo                         (TTY: interactive workspace)
   kodo chat ["task"] [--plain] [--workspace path] [--allow-write] [--allow-exec]
-  kodo spawn <session-id> --agent <id@version> --objective "task" [--model-binding ALIAS] [--slot name=value ...] [--scope JSON] [--json]
+  kodo spawn <session-id> --objective "task" [--model-binding ALIAS] [--scope JSON] [--json]
   kodo runs [--json]
   kodo gc [--vacuum] [--older-than-days N]
-  kodo methods <run-id> [--card file | --disable id] [--digest roster-digest]
+  kodo methods <run-id> [--card file | --disable id] [--digest method-catalog-digest]
   kodo inspect <run-id> [--context] [--json]
   kodo context <run-id> [--json]
   kodo context-report <run-id> [--json]  (C0 aggregation across the run's session)
@@ -39,7 +39,6 @@ const help = `Kodo development preview (collaboration kernel)
   kodo doctor [--unlock] [--sandbox]
   kodo config                      (configure providers and select a fetched model)
   kodo package --help
-  kodo agent --help
   kodo case --help
   kodo serve --help
 Options: Model context/output limits are resolved automatically; no budget presets.
@@ -55,7 +54,7 @@ Options: Model context/output limits are resolved automatically; no budget prese
          --compaction off|mask|summary|hybrid [--compaction-trigger-ratio 0.5-0.95 | --compaction-work-tokens N] (default: conditional summary at 0.8 of the effective window; persisted for resume)
          --assembly deterministic [--assembly-work-tokens N] [--assembly-evidence-tokens N] (experimental; no extra model call)
          --inline-methods [--method-unloading on|off] [--method-tool-view stable|active] (card methods via Skills; checkpoint unloading defaults on)
-         --agent-retention review|off --agent-factors A,B,C[,D,E]|none --project-roots JSON_FILE
+         --agent-factors A,B,C[,D,E]|none
          --tool-profile compact-v2|compact-v1|full|lean-solo --task-protocol 3|2|1 (new sessions; defaults compact-v2 and 3)
          --memory --lazy-tools (optional; disabled by default, persisted for resume)
          --verification-config JSON_FILE (fixed WSL/container command; enabled and approved by the host)
@@ -78,10 +77,17 @@ Uncertain writes require reconciliation or explicit evidence before resume; no f
 TTY chat uses the Ink workspace; --plain or non-TTY uses native line input.
 Package management and browsing the TUI do not require model credentials.`;
 
+/** Trusted host spawn scope: JSON object with read/write relative-root arrays only. */
+function parseSpawnScope(raw: string): FileScope {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { throw new KodoError('ARGUMENTS', '--scope must be a JSON object containing read/write path-root arrays'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.entries(value).some(([key, roots]) => !['read', 'write'].includes(key) || !Array.isArray(roots) || roots.some(root => typeof root !== 'string' || !root))) throw new KodoError('ARGUMENTS', '--scope must be a JSON object containing read/write path-root arrays');
+  return value as FileScope;
+}
+
 async function main(): Promise<void> {
   if (process.argv[2] === 'config') { const { configCommand } = await import('./config.js'); await configCommand(process.argv.slice(3)); return; }
   if (process.argv[2] === 'package') { const { packageCommand } = await import('./packages.js'); await packageCommand(process.argv.slice(3)); return; }
-  if (process.argv[2] === 'agent') { const { agentCommand } = await import('./agent-drafts.js'); await agentCommand(process.argv.slice(3)); return; }
   if (process.argv[2] === 'case') { const { caseCommand } = await import('../cases/cli.js'); await caseCommand(process.argv.slice(3)); return; }
   if (process.argv[2] === 'serve') { const { serveCommand } = await import('./serve.js'); await serveCommand(process.argv.slice(3)); return; }
   const args = process.argv.slice(2);
@@ -105,8 +111,8 @@ async function main(): Promise<void> {
     digest: { type: 'string' }, disable: { type: 'string', multiple: true },
     'inline-methods': { type: 'boolean' }, 'method-unloading': { type: 'string' }, 'method-tool-view': { type: 'string' },
     memory: { type: 'boolean' }, 'lazy-tools': { type: 'boolean' }, 'verification-config': { type: 'string' },
-    agent: { type: 'string' }, objective: { type: 'string' }, slot: { type: 'string', multiple: true }, scope: { type: 'string' },
-    'agent-retention': { type: 'string' }, 'agent-factors': { type: 'string' }, 'project-roots': { type: 'string' },
+    objective: { type: 'string' }, scope: { type: 'string' },
+    'agent-factors': { type: 'string' },
     'tool-profile': { type: 'string' }, 'task-protocol': { type: 'string' },
     context: { type: 'boolean' }, to: { type: 'string' }, applied: { type: 'boolean' }, 'not-applied': { type: 'boolean' },
     'parent-id': { type: 'string' }, query: { type: 'string' }, in: { type: 'string' }, 'knowledge-id': { type: 'string' }, revision: { type: 'string' }, after: { type: 'string' }, offset: { type: 'string' },
@@ -120,9 +126,9 @@ async function main(): Promise<void> {
   if (values.plain !== undefined && command !== 'chat') throw new KodoError('ARGUMENTS', '--plain is only valid for chat');
   if (!['run', 'chat', 'spawn', 'methods', 'inspect', 'context', 'context-report', 'knowledge', 'resume', 'reconcile', 'resolve', 'continue', 'input', 'answer', 'cancel', 'interrupt', 'rewind', 'doctor', 'runs', 'list', 'gc'].includes(command!)) throw new KodoError('COMMAND', 'unknown command; use --help');
   if (command === 'spawn') {
-    if (!values.agent?.trim() || !values.objective?.trim()) throw new KodoError('ARGUMENTS', 'spawn requires --agent and --objective');
-  } else if (['agent', 'objective', 'slot', 'scope', 'model-binding'].some(key => values[key as keyof typeof values] !== undefined)) throw new KodoError('ARGUMENTS', '--agent, --objective, --slot, --scope and --model-binding are only valid for spawn');
-  if (['agent-retention', 'agent-factors', 'project-roots', 'tool-profile', 'task-protocol'].some(key => values[key as keyof typeof values] !== undefined) && !['run', 'chat'].includes(command!)) throw new KodoError('ARGUMENTS', 'agent policies are only valid for run or chat; other commands use the saved policy');
+    if (!values.objective?.trim()) throw new KodoError('ARGUMENTS', 'spawn requires --objective');
+  } else if (['objective', 'scope', 'model-binding'].some(key => values[key as keyof typeof values] !== undefined)) throw new KodoError('ARGUMENTS', '--objective, --scope and --model-binding are only valid for spawn');
+  if (['agent-factors', 'tool-profile', 'task-protocol'].some(key => values[key as keyof typeof values] !== undefined) && !['run', 'chat'].includes(command!)) throw new KodoError('ARGUMENTS', 'agent policies are only valid for run or chat; other commands use the saved policy');
   const toolProfile = values['tool-profile'];
   if (toolProfile !== undefined && toolProfile !== 'compact-v1' && toolProfile !== 'compact-v2' && toolProfile !== 'full' && toolProfile !== 'lean-solo') throw new KodoError('ARGUMENTS', '--tool-profile must be compact-v1, compact-v2, full or lean-solo');
   const taskProtocol = values['task-protocol'];
@@ -314,8 +320,8 @@ async function main(): Promise<void> {
     }
     if (command === 'methods') {
       const run = app.store.run(argument!);
-      const roster = app.store.cards.rosterSnapshot(run.sessionId);
-      if (!values.card && !values.disable) { console.log(JSON.stringify(roster, null, 2)); return; }
+      const session = app.store.session(run.sessionId);
+      if (!values.card && !values.disable) { console.log(JSON.stringify({ methods: session.methodCards ?? [], digest: methodCatalogDigest(session.methodCards) }, null, 2)); return; }
       if (!values.digest) throw new KodoError('ARGUMENTS', 'method publication requires the current --digest shown by kodo methods');
       const install = values.card ? [app.parseCard(readFileSync(path.resolve(values.card), 'utf8'))] : [];
       console.log(JSON.stringify(app.updateSessionMethods(run.id, { expectedDigest: values.digest, install, disable: values.disable })));
@@ -361,7 +367,7 @@ async function main(): Promise<void> {
     }
     let result: Run;
     if (command === 'spawn') {
-      const child = app.spawnAgent(argument!, { agent: values.agent!, objective: values.objective!, slots: parseAgentSlots(values.slot), ...(values['model-binding'] ? { model_binding: values['model-binding'] } : {}), ...(values.scope ? { scope: parseAgentScope(values.scope) } : {}) });
+      const child = app.spawnAgent(argument!, { objective: values.objective!, ...(values['model-binding'] ? { model_binding: values['model-binding'] } : {}), ...(values.scope ? { scope: parseSpawnScope(values.scope) } : {}) });
       currentRun = child.id;
       attachVerification(child.id);
       result = await app.run(child.id);
@@ -466,7 +472,6 @@ async function main(): Promise<void> {
       }
       result = command === 'chat' ? await interactive(app, run, id => { currentRun = id; }, attachVerification) : await app.run(run.id);
     }
-    if (!result.parentId && terminal(result.status) && command !== 'chat') await reviewAgentDrafts(app, result.sessionId, { json: values.json });
     const questions = app.coordinator.mailbox.userQuestions(result.sessionId);
     const needsInput = result.status === 'waiting' || (!terminal(result.status) && questions.length > 0);
     if (needsInput) {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mkdirSync } from 'node:fs';
 import { inspectRun } from '../src/runtime/inspection.js';
-import { submitReport } from '../src/agents/contracts.js';
+import { submitReport } from '../src/runtime/report.js';
 import type { Call, Run } from '../src/runtime/types.js';
 import { fixture } from './helpers.js';
 

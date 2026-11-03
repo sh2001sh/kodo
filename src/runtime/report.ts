@@ -1,50 +1,13 @@
-import { statSync } from 'node:fs';
-import path from 'node:path';
 import type { Store } from '../storage/index.js';
-import { assertFileScope, normalizeFileScope } from '../runtime/scope.js';
-import { KodoError } from '../runtime/types.js';
-import type { Card, FileScope, Run, ToolRequest, ToolSpec } from '../runtime/types.js';
+import { normalizeFileScope } from './scope.js';
+import { KodoError } from './types.js';
+import type { Card, Run, ToolRequest, ToolSpec } from './types.js';
 
-/** Validate task data before a child, its context or a queued event is committed. */
-export function validateSlots(store: Store, parent: Run, card: Card, scope: FileScope, value: unknown): Record<string, unknown> {
-  if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) throw new KodoError('INPUT_SLOTS', 'slots must be a named object');
-  const slots = (value ?? {}) as Record<string, unknown>;
-  if (Buffer.byteLength(JSON.stringify(slots)) > 64_000) throw new KodoError('INPUT_SLOTS', 'input slots exceed 64000 bytes');
-  const definitions = card.inputs ?? [];
-  const errors: string[] = [];
-  for (const name of Object.keys(slots)) if (!definitions.some(field => field.name === name)) errors.push(`${name}: undeclared slot`);
-  for (const field of definitions) {
-    const supplied = Object.hasOwn(slots, field.name);
-    const item = slots[field.name];
-    if (!supplied) { if (field.required) errors.push(`${field.name}: required`); continue; }
-    if (field.kind === 'text') {
-      if (typeof item !== 'string' || !item.trim()) errors.push(`${field.name}: expected nonempty text`);
-    } else if (field.kind === 'artifact') {
-      if (typeof item !== 'string' || !item.trim()) errors.push(`${field.name}: expected artifact id`);
-      else {
-        try { store.readArtifact(parent.id, item); }
-        catch (error) { if (!(error instanceof KodoError)) throw error; errors.push(`${field.name}: artifact must resolve in this session`); }
-      }
-    } else if (field.kind === 'paths') {
-      if (!Array.isArray(item) || item.length > 256 || (field.required && !item.length) || item.some(entry => typeof entry !== 'string')) { errors.push(`${field.name}: expected ${field.required ? 'nonempty ' : ''}path list`); continue; }
-      const workspace = store.session(parent.sessionId).workspace;
-      try {
-        const roots = normalizeFileScope({ read: item as string[] }).read!;
-        for (const root of roots) {
-          const target = path.resolve(workspace, root);
-          assertFileScope(scope, 'read', workspace, target);
-          statSync(target);
-        }
-      } catch (error) {
-        if (!(error instanceof KodoError) && !['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
-        errors.push(`${field.name}: each path must exist within the child read scope`);
-      }
-    }
-  }
-  if (errors.length) throw new KodoError('INPUT_SLOTS', errors.join('; '));
-  return structuredClone(slots);
-}
-
+/**
+ * The report tool stays available in this batch (1d narrows the collaboration
+ * tools); the schema lives here because it is driven by the card report fields
+ * that the runtime validates, not by any roster or card-selection subsystem.
+ */
 export const reportSubmissionSpec: ToolSpec = {
   name: 'report.submit',
   description: 'Submit the structured fields declared by your agent card. Required fields must be present. calls fields reference settled tool calls from this run. A complete report proves neither successful checks nor parent acceptance; raw call status remains visible.',
@@ -73,6 +36,7 @@ export interface ReportView {
 }
 export interface ReportCompleteness { status: 'not_required' | 'missing' | 'complete'; passed: boolean; feedback?: string; reportRef?: string; report?: ReportView }
 
+/** Validate a structured member report against the host card fields and settled tool calls. */
 export function validateReport(store: Store, run: Run, value: unknown): ReportView {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Buffer.byteLength(JSON.stringify(value)) > 64_000) throw new KodoError('REPORT_FIELDS', 'report fields must be an object of at most 64000 bytes');
   const fields = structuredClone(value) as Record<string, unknown>;

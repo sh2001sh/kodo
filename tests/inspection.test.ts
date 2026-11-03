@@ -65,16 +65,16 @@ Report the captured output.
     expect(() => invoke(runId, 'inspect_run', { run_id: peer })).toThrowError(expect.objectContaining({ code: 'INSPECT_DENIED' }));
   });
 
-  it('inherits registered cards and explains how to correct an invalid card without creating a child', () => {
+  it('inherits the parent card and rejects removed card selectors without creating a child', () => {
     const { app, runId, invoke, spawn } = setup();
-    expect(() => spawn({ card_id: 'missing/agent', card_version: '1.0.0' })).toThrow(/omit both card_id and card_version/);
-    expect(() => spawn({ card_id: 'invented' })).toThrow(/omit both/);
+    expect(() => spawn({ card_id: 'missing/agent', card_version: '1.0.0' })).toThrow(/unknown field "card_id"/);
+    expect(() => spawn({ card_id: 'invented' })).toThrow(/unknown field "card_id"/);
     expect(app.store.listRuns()).toHaveLength(1);
     const inherited = app.store.run(spawn()).card;
     const parentCard = app.store.run(runId).card;
-    // Children keep the card identity and execution tools but not delegation routing.
+    // Children keep the exact parent card identity, tool list and digest.
     expect(inherited).toMatchObject({ id: parentCard.id, version: parentCard.version, digest: parentCard.digest });
-    expect(inherited.tools).toEqual(parentCard.tools.filter(name => !name.startsWith('agent.')));
+    expect(inherited.tools).toEqual(parentCard.tools);
     const main = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(runId).contextRef));
     const sub = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(spawn()).contextRef));
     expect(main).toContain('Use explore for read-only investigation');

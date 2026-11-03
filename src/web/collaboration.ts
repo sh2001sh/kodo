@@ -39,9 +39,9 @@ export interface AgentView {
 
 export type PendingKind =
   | 'question' | 'failed' | 'unknown_write' | 'interrupted'
-  | 'unverified_result' | 'command_failed' | 'blocked' | 'agent_proposal';
+  | 'unverified_result' | 'command_failed' | 'blocked';
 
-export type PendingAction = 'answer' | 'resume' | 'cancel' | 'view_agent' | 'inspect' | 'retain' | 'discard' | 'edit' | 'skip';
+export type PendingAction = 'answer' | 'resume' | 'cancel' | 'view_agent' | 'inspect';
 
 export interface PendingView {
   id: string;
@@ -56,7 +56,6 @@ export interface PendingView {
   createdAt: string;
   order: number;
   actions: PendingAction[];
-  proposal?: ReturnType<Application['retention']['list']>[number];
 }
 
 export interface CollaborationView {
@@ -66,7 +65,6 @@ export interface CollaborationView {
   children: { maximum: number | null; maximumActive: number | null; created: number; active: number; remainingActive: number | null };
   agents: AgentView[];
   pending: PendingView[];
-  drafts: ReturnType<Application['retention']['list']>;
   generatedAt: string;
 }
 
@@ -98,13 +96,6 @@ export function collaborationView(app: Application, runId: string): Collaboratio
   // Admission is session-wide; the view uses the same occupancy as child creation.
   const capacity = childCapacity(app.store, anchor.sessionId);
   const entries: AgentEntry[] = [{ run: anchor, role: 'main' }, ...childRuns.map((run): AgentEntry => ({ run, role: 'child' }))];
-  const drafts = app.retention.list(anchor.sessionId).filter(draft => ['draft', 'requested', 'editing'].includes(draft.status));
-  const proposals: PendingView[] = terminal(anchor.status) ? drafts.filter(draft => !draft.silent).map(draft => ({
-    id: `agent-proposal:${draft.id}`, kind: 'agent_proposal', severity: 'info', runId: draft.sourceRun,
-    role: 'child', agentObjective: draft.name, title: draft.name,
-    detail: '核对来源、方法与验收记录后保留；将在下一次会话中可用。', createdAt: draft.createdAt,
-    order: Number.MAX_SAFE_INTEGER, actions: ['retain', 'discard', 'edit', 'skip', 'view_agent'], proposal: draft,
-  })) : [];
   return {
     sessionId: anchor.sessionId,
     anchorRunId: anchor.id,
@@ -117,8 +108,7 @@ export function collaborationView(app: Application, runId: string): Collaboratio
       remainingActive: capacity.remainingActive,
     },
     agents: entries.map(entry => agentView(projection, entry)),
-    pending: [...collectPending(projection, entries), ...proposals],
-    drafts,
+    pending: collectPending(projection, entries),
     generatedAt: new Date().toISOString(),
   };
 }

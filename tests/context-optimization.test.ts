@@ -134,7 +134,7 @@ describe('optimization context integration', () => {
     const finished = await app.coordinator.wake(child.id);
     expect(finished.status, finished.error).toBe('completed');
     const event = app.store.latestEvent(child.id, { types: ['child.prefix_shared'] });
-    expect(event?.data).toMatchObject({ parentRunId: runId, parentRequestRef, layersEqual: { L1: false, L2: false, L5: false }, toolsEqual: false });
+    expect(event?.data).toMatchObject({ parentRunId: runId, parentRequestRef, layersEqual: { L1: false, L2: true, L5: false }, toolsEqual: false });
     expect(app.store.countEvents(child.id, { types: ['child.prefix_shared'] })).toBe(1);
   });
 });

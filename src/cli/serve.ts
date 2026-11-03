@@ -19,7 +19,7 @@ const help = `kodo serve [--workspace PATH] [--port 0] [--data-dir PATH] [--json
   --shell-program ABSOLUTE_BASH_PATH --lsp-config JSON_FILE --webfetch [--web-hosts HOST,HOST]
   --compaction off|mask|summary|hybrid [--compaction-trigger-ratio 0.5-0.95 | --compaction-work-tokens N] (default: conditional summary at 0.8 of the effective window)
   --assembly deterministic [--assembly-work-tokens N] [--assembly-evidence-tokens N] (experimental, no extra model call)
-  --agent-retention review|off --agent-factors A,B,C[,D,E]|none --project-roots JSON_FILE
+  --agent-factors A,B,C[,D,E]|none
   --packages (read-only capability-package panel: diagnostics, default-version and run-version views)
   --package-actions (requires --packages or --package; enables sandboxed dependency preparation and default-version switching)
   --npm-cli ABSOLUTE_PATH (requires --package-actions; trusted npm CLI module used for dependency preparation)
@@ -51,7 +51,7 @@ export async function serveCommand(args: string[]): Promise<void> {
       compaction: { type: 'string' }, 'compaction-work-tokens': { type: 'string' }, 'compaction-trigger-ratio': { type: 'string' },
       assembly: { type: 'string' }, 'assembly-work-tokens': { type: 'string' }, 'assembly-evidence-tokens': { type: 'string' },
       'inline-methods': { type: 'boolean' }, 'method-unloading': { type: 'string' }, 'method-tool-view': { type: 'string' },
-      'agent-retention': { type: 'string' }, 'agent-factors': { type: 'string' }, 'project-roots': { type: 'string' },
+      'agent-factors': { type: 'string' },
       packages: { type: 'boolean' }, 'package-actions': { type: 'boolean' }, 'npm-cli': { type: 'string' }, package: { type: 'string' },
       'max-tokens': { type: 'string' }, 'max-model-calls': { type: 'string' }, 'max-tool-calls': { type: 'string' }, 'max-context-tokens': { type: 'string' }, 'max-output-tokens': { type: 'string' },
       'max-active-children': { type: 'string' }, 'max-children': { type: 'string' }, 'max-concurrent-models': { type: 'string' },

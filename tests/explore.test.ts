@@ -2,7 +2,6 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Application } from '../src/application/index.js';
-import { delegationGuidance } from '../src/agents/child-card.js';
 import { exploreReportChars } from '../src/messaging/explore.js';
 import { spawnAgentSpec } from '../src/messaging/spawn-spec.js';
 import { KodoError } from '../src/runtime/types.js';
@@ -11,7 +10,6 @@ import { answer, binding, call, calls, fixture, scripted, temp } from './helpers
 import { Application as App } from '../src/application/index.js';
 
 type Request = Parameters<Provider['complete']>[0];
-const nativeRead = ['file.read', 'file.list', 'file.search', 'image.read'];
 
 function owner(app: Application, request: Request): Run {
   const system = request.messages.find(message => message.role === 'system')?.content ?? '';
@@ -52,13 +50,13 @@ describe('explore: read-only delegation in one control call', () => {
     expect(result.status).toBe('wait_registered');
     expect(result.runs).toHaveLength(4);
     const children = result.runs.map(child => app.store.run(child.id));
+    const parentCard = app.store.run(runId).card;
     for (const child of children) {
       expect(child.parentId).toBe(runId);
+      // Explore children inherit the parent card under the requested read-only permissions.
+      expect(child.card.digest).toBe(parentCard.digest);
       expect(child.permissions).toEqual(['read']);
       expect(child.scope?.write).toEqual([]);
-      expect(child.card.tools.every(name => nativeRead.includes(name))).toBe(true);
-      expect(child.card.tools).toContain('file.read');
-      expect(child.card.skills).toEqual([]);
       expect(child.explore).toMatchObject({ callId: 'explore-call' });
       const packet = JSON.stringify(app.store.readBlob<Message[]>(child.contextRef));
       expect(packet).toContain('no JSON contract is required');
@@ -109,8 +107,9 @@ describe('explore: read-only delegation in one control call', () => {
     const provider: Provider = { async complete(request) {
       const run = owner(app, request);
       if (run.parentId) {
-        // Runtime history and collaboration tools remain; no host tool can change files or run processes.
-        if (request.tools.some(tool => /patch|exec|write|mkdir|rename|delete|spawn|explore|web|lsp|todo|agent\./.test(tool.name))) throw new Error(`explore child received a mutating tool: ${request.tools.map(tool => tool.name).join(', ')}`);
+        // Children inherit the card but never receive main-only delegation controls.
+        if (request.tools.some(tool => ['spawn_agent', 'explore', 'exploration.plan', 'followup_task', 'ask_user', 'cancel_agent'].includes(tool.name))) throw new Error(`explore child received a main-only tool: ${request.tools.map(tool => tool.name).join(', ')}`);
+        expect(run.permissions).toEqual(['read']);
         if (run.step === 0) return calls(call('file.read', { path: 'src/retry.ts' }, 'read'));
         const index = app.store.listRuns(run.sessionId).filter(child => child.parentId).findIndex(child => child.id === run.id);
         return answer(`Conclusion: backoff is exponential. Key file: src/retry.ts:1. Marker ${markers[index]}. Unresolved: none.`);
@@ -293,7 +292,7 @@ describe('explore: read-only delegation in one control call', () => {
     expect(system).toContain('Answer simple questions directly when the required facts are already available');
     expect(system).not.toContain('three or more files');
     expect(system).toContain('Parallel writes require disjoint scopes and agreed interfaces');
-    const wording = [system, spawnAgentSpec.description, delegationGuidance].join('\n');
+    const wording = [system, spawnAgentSpec.description].join('\n');
     expect(wording.split('Start each request with a brief plan').length - 1).toBe(1);
     for (const repeated of ['tightly coupled', 'small or', 'fill capacity', 'flood your context']) expect(wording).not.toContain(repeated);
     const specs = app.coordinator.mailbox.specs(app.store.run(runId)).map(spec => spec.name);

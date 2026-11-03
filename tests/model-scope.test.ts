@@ -228,9 +228,10 @@ Read the host value using custom.child and report its evidence.
     try {
       const card = childCard(original);
       original.registerCard(card);
-      const parent = original.createRun({ objective: 'Main with general card', workspace: root, binding });
+      // The custom card belongs to the parent run; the child inherits it (1c removed card selection).
+      const parent = original.createRun({ objective: 'Main with general card', workspace: root, binding, card });
       parentId = parent.id;
-      childId = spawn(original.coordinator.mailbox, parent, { card_id: card.id, card_version: card.version });
+      childId = spawn(original.coordinator.mailbox, parent);
       expect((await original.coordinator.wake(childId)).status).toBe('completed');
       originalBindings = original.store.run(childId).toolBindings;
     } finally { original.close(); }

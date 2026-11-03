@@ -19,7 +19,7 @@ describe('observed file versions for TUI verification', () => {
     await writeFile(path.join(root, 'read.txt'), 'Synthetic observed fixture.');
     await writeFile(path.join(root, 'unobserved.txt'), 'Synthetic unobserved fixture.');
     app.store.checkpoints.put({ id: 'fixture-checkpoint', preparationId: 'fixture-preparation', runId, step: 0, paths: { path: path.join(root, 'edited.txt') }, before: { path: { kind: 'absent' } } });
-    const child = app.spawnAgent(run.sessionId, { agent: 'kodo/explorer', objective: 'Inspect synthetic fixture.', slots: { question: 'Read the fixture.' } });
+    const child = app.spawnAgent(run.sessionId, { objective: 'Inspect synthetic fixture.' });
     observed(app, child.id, 'file.read', { path: 'read.txt' });
     observed(app, runId, 'file.read', { path: 'unobserved.txt' }, 'failed');
     const foreign = app.createRun({ objective: 'Other session fixture.', workspace: root, binding });

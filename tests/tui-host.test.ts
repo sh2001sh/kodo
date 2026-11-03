@@ -138,7 +138,7 @@ describe('TUI CLI host integration', () => {
     });
     for (const args of [
       ['resume', run.id], ['continue', run.id], ['input', run.id, '--text', 'Continue'], ['answer', question.id, '--text', 'Yes'],
-      ['spawn', run.sessionId, '--agent', 'local/test@1.0.0', '--objective', 'Continue'], ['rewind', run.id, '--to=-1'],
+      ['spawn', run.sessionId, '--objective', 'Continue'], ['rewind', run.id, '--to=-1'],
     ]) {
       const result = await cli(args);
       expect(result.code, result.err).toBe(1);

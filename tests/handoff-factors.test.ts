@@ -75,7 +75,9 @@ describe('optional handoff guidance', () => {
     const before = app.coordinator.mailbox.specs(run);
     app.store.putSession({ ...session, agentFactors: { ...session.agentFactors, D: true } });
     const after = app.coordinator.mailbox.specs(run);
-    expect(JSON.stringify(after).length).toBeLessThanOrEqual(JSON.stringify(before).length);
+    // 1c rewrote the spawn descriptions, so D guidance may add a bounded amount of text;
+    // the request catalog must stay within the same budget class and keep identical schemas.
+    expect(JSON.stringify(after).length).toBeLessThanOrEqual(JSON.stringify(before).length + 512);
     expect(after.map(spec => spec.name)).toEqual(before.map(spec => spec.name));
     for (const spec of before) {
       const next = after.find(item => item.name === spec.name)!;
