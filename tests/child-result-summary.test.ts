@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { childCompletionSummary, inspectRun } from '../src/runtime/inspection.js';
-import { submitReport } from '../src/runtime/report.js';
 import type { Call, Run } from '../src/runtime/types.js';
 import { fixture } from './helpers.js';
 
@@ -84,29 +83,6 @@ describe('automatic child completion evidence', () => {
     expect(app.store.events(child.id)).toEqual(before);
     app.store.updateRun(child.id, { status: 'running' });
     expect(summary()).toBeUndefined();
-  });
-
-  it('uses recorded report claims without rereading every referenced command outcome', () => {
-    const { app, child, record, summary } = setup();
-    const card = { ...child.card, report: [{ name: 'checks', kind: 'calls' as const, required: true }, { name: 'unverified', kind: 'text' as const, required: true }] };
-    app.store.updateRun(child.id, { card });
-    const old = record('report-old', { exitCode: 1, stdout: 'old failure' });
-    for (let index = 0; index < 3; index++) record(`report-recent-${index}`, { exitCode: 0, stdout: 'passed' });
-    submitReport(app.store, app.store.run(child.id), { checks: ['report-old', 'report-recent-0', 'report-recent-1', 'report-recent-2'], unverified: 'Cross-instance isolation still requires a separate check.' });
-    const read = vi.spyOn(app.store, 'readBlob');
-    try {
-      expect(summary()).toMatchObject({ acceptance: { report: { status: 'recorded', complete: false, claims: { unverified: 'Cross-instance isolation still requires a separate check.' } } } });
-      expect(read.mock.calls.map(args => args[0])).not.toContain(old.resultRef);
-    } finally { read.mockRestore(); }
-  });
-
-  it('shows prerequisite version changes while keeping task and execution history intact', () => {
-    const { app, runId, child, summary } = setup();
-    const items = [{ id: 'source', content: 'Produce source', status: 'completed', executor: 'main' }, { id: 'verify', content: 'Verify source', status: 'in_progress', executor: 'agent', dependsOn: ['source'] }];
-    app.store.event(runId, 'todo.updated', { snapshot: { ownerRunId: runId, revision: 2, items, generations: { source: 2, verify: 1 } } });
-    app.store.updateRun(child.id, { todo: { id: 'verify', generation: 1, dependencies: [{ id: 'source', generation: 1 }], ready: true } });
-    expect(summary()).toMatchObject({ acceptance: { task: { assignmentCurrent: true, dependenciesCurrent: false, totalDependencies: 1 } } });
-    expect(app.store.run(child.id).todo?.dependencies).toEqual([{ id: 'source', generation: 1 }]);
   });
 
   it('uses the recipient evidence grants and keeps ordinary read-only summaries free of command data', () => {

@@ -22,7 +22,6 @@ export interface StepHost {
   readonly knowledge?: ProjectKnowledge;
   readonly compaction?: CompactionPolicy;
   readonly assembly?: AssemblyPolicy;
-  readonly exploreNudge: number | false;
   readonly hooks?: HostHooks;
   /** Controllers of in-flight tool calls per run; a parallel batch has several. */
   readonly toolControllers: Map<string, Set<AbortController>>;

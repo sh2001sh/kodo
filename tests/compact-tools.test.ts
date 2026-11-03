@@ -5,7 +5,6 @@ import { compactDefaultCard, defaultCard, parseCard, serializeCard } from '../sr
 import { initialContext } from '../src/runtime/context.js';
 import { roleAllows } from '../src/runtime/role-view.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
-import { childHandoffGuidance } from '../src/messaging/handoff.js';
 import type { Message } from '../src/runtime/types.js';
 import { answer, binding, fixture, scripted, temp } from './helpers.js';
 
@@ -108,9 +107,6 @@ describe('compact stable tool profile', () => {
     expect(current[0]!.content).not.toContain('Start each request with a brief plan');
     expect(current[0]!.content).not.toContain('an active agent todo blocks');
     expect(current[1]!.content).toBe(`Agent method configuration (subordinate to host rules and user task):\n${changedMethod.prompt}`);
-    expect(childHandoffGuidance(true, 2)).toContain('artifact.read');
-    expect(childHandoffGuidance(true, 2)).not.toContain('Read current contents before editing');
-    expect(childHandoffGuidance(false, 2)).toContain('Read current contents before editing');
   });
 
   it('retains a saved compact view when the host reopens with full defaults', async () => {

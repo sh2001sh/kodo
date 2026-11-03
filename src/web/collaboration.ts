@@ -119,7 +119,6 @@ function agentView(projection: Projection, entry: AgentEntry): AgentView {
   const wait = registeredWait(projection, run);
   return {
     id: run.id,
-    ...(run.agentId === undefined ? {} : { agentId: run.agentId }),
     ...(run.parentId === undefined ? {} : { parentId: run.parentId }),
     role,
     objective: redact(run.objective, run),
@@ -222,10 +221,9 @@ function qualityFromBlob(projection: Projection, resultRef: string): AgentResult
   catch { return 'unknown'; }
 }
 
-/** Exploration results wrap their deliverable in a JSON envelope; the panel shows the summary only. */
-function summaryText(run: Run, record: Record<string, unknown>): string {
+/** Completion records wrap their deliverable in a JSON envelope; the panel shows the summary only. */
+function summaryText(_run: Run, record: Record<string, unknown>): string {
   const text = typeof record['text'] === 'string' ? record['text'] : '';
-  if (!run.exploration || !text) return text;
   const parsed = parseObject(text);
   const summary = parsed ? parsed['summary'] : undefined;
   return typeof summary === 'string' ? summary : text;

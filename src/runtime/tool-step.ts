@@ -6,7 +6,6 @@ import type { ImageInput } from '../tools/image.js';
 import { reconciledEvent } from '../tools/effect-scan.js';
 import type { EffectEvidence } from '../tools/effect-scan.js';
 import { attachment, orderAttachments } from './attachments.js';
-import { exploreNudge } from './explore-nudge.js';
 import { changedFilesNotice, changedSinceSeen } from '../tools/read-state.js';
 import { backgroundNotice, backgroundUnknown, markReported } from './background-notice.js';
 import { beforeWriteInstructions, touchedInstructions } from './instruction-layer.js';
@@ -276,7 +275,7 @@ function resultMessages(host: StepHost, modelCall: Call, requests: ToolRequest[]
 }
 
 /** Advisory runtime feedback after a tool batch: corrections, re-read and repeat notices, nudges. */
-function feedback(host: StepHost, run: Run, modelCall: Call, requests: ToolRequest[], repeats: Map<string, number>, changed: string[]): { messages: Message[]; nudge?: { readCalls: number } } {
+function feedback(host: StepHost, run: Run, modelCall: Call, requests: ToolRequest[], repeats: Map<string, number>, changed: string[]): { messages: Message[] } {
   const { store } = host;
   const messages: Message[] = [];
   if (changed.length) {
@@ -301,10 +300,7 @@ function feedback(host: StepHost, run: Run, modelCall: Call, requests: ToolReque
     store.event(run.id, 'progress.write_nudged', { readCalls: progress.readCalls, step: run.step });
   }
   for (const [name, count] of repeats) messages.push(attachment('notice', repeatNotice(name, count)));
-  // A pending wait means the run already delegated or is blocked; the nudge only targets active direct reading.
-  const nudge = host.exploreNudge !== false && !store.run(run.id).waitId && host.mailbox.specs(run).some(spec => spec.name === 'explore') ? exploreNudge(store, run, host.exploreNudge) : undefined;
-  if (nudge) messages.push(attachment('nudge', nudge.text));
-  return { messages, ...(nudge ? { nudge } : {}) };
+  return { messages };
 }
 /**
  * Executes the tool calls of a persisted model response, records every result,
@@ -426,7 +422,6 @@ export async function runToolStep(host: StepHost, run: Run, modelCall: Call, res
     if (!terminal(latest.status) && latest.status !== 'interrupted') {
       store.updateRun(run.id, { contextRef, stepCallId: undefined, step: run.step + 1 });
       markReported(store, run.id, settled.ids);
-      if (extra.nudge) store.event(run.id, 'delegation.nudged', { readCalls: extra.nudge.readCalls, threshold: host.exploreNudge, step: run.step });
     }
   });
   const waitId = store.run(run.id).waitId;

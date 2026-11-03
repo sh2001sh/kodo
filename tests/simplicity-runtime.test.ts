@@ -50,7 +50,7 @@ describe('simple coding workflow through the coordinator', () => {
       { id: 'join', content: 'Join the two accepted files', status: 'pending', executor: 'agent', dependsOn: ['left', 'right'] },
     ] }, new AbortController().signal);
     for (const name of ['left', 'right', 'join']) {
-      const child = app.spawnAgent(app.store.run(mainId).sessionId, { todoId: name, objective: `Create ${name}.txt using the assigned input files.`, scope: { read: ['.'], write: [`${name}.txt`] } });
+      const child = app.spawnAgent(app.store.run(mainId).sessionId, { objective: `Create ${name}.txt using the assigned input files.`, scope: { read: ['.'], write: [`${name}.txt`] } });
       names.set(child.id, name);
     }
     const result = await app.run(mainId);
@@ -61,8 +61,6 @@ describe('simple coding workflow through the coordinator', () => {
     for (const id of names.keys()) {
       const notices = app.store.messages(result.sessionId).filter(message => message.id === `terminal:${id}`);
       expect(notices).toHaveLength(1);
-      expect(JSON.parse(notices[0]!.content)).toHaveProperty('evidence.acceptance.task.assignmentCurrent', true);
-      expect(app.store.events(id, { types: ['report.submitted'] })).toHaveLength(0);
     }
   });
 

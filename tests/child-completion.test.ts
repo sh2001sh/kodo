@@ -37,19 +37,18 @@ describe('completion owns every directly managed child', () => {
     expect((await check(app, runId)).kind).toBe('complete');
   });
 
-  it('requires an interrupted child to resume or cancel, and messaging resumes its existing run', async () => {
+  it('requires an interrupted child to be recovered or cancelled, without peer messaging', async () => {
     const { app, runId } = fixture(scripted());
     const child = spawn(app, runId);
     app.store.updateRun(child.id, { status: 'interrupted', interruptRequested: true });
     expect((await check(app, runId)).kind).toBe('continue');
     const context = app.store.readBlob<Message[]>(app.store.run(runId).contextRef);
-    expect(context.at(-1)?.content).toContain('Waiting alone does not resume');
-    app.coordinator.mailbox.execute(app.store.run(runId), 'resume-child', 'send_message', { to: child.id, kind: 'notice', content: 'Continue the same task.' });
-    expect(app.store.run(child.id)).toMatchObject({ status: 'queued', interruptRequested: false });
-    expect((await check(app, runId)).kind).toBe('wait');
-    expect(app.store.countEvents(runId, { types: ['completion.checked'], match: { passed: false } })).toBe(1);
+    expect(context.at(-1)?.content).toContain('CHILDREN_INCOMPLETE');
+    expect(context.at(-1)?.content).toContain('host recovery');
+    app.coordinator.mailbox.execute(app.store.run(runId), 'cancel-child', 'cancel_agent', { run_id: child.id });
+    expect(app.store.run(child.id).status).toBe('cancelled');
+    expect(childCompletionState(app.store, app.store.run(runId)).result).toMatchObject({ status: 'partial', outcomes: [{ runId: child.id, status: 'cancelled' }] });
   });
-
   it('waits before spending deliverable audits on files still assigned to a child', async () => {
     const { app, runId } = fixture(scripted(answer('Early candidate.')));
     app.store.updateRun(runId, { deliverables: ['not-yet-produced.txt'] });
@@ -69,25 +68,6 @@ describe('completion owns every directly managed child', () => {
     expect(app.store.run(childId)).toMatchObject({ status: 'queued', cancelRequested: false });
     expect(app.store.events(runId, { types: ['completion.invalidated'] }).at(-1)?.data.reason).toContain('managed child state changed');
     expect(app.store.events(runId, { types: ['run.completed'] })).toHaveLength(0);
-  });
-
-  it('does not treat an early inspection or cancelling an already failed child as acknowledgment', async () => {
-    const { app, runId } = fixture(scripted());
-    const child = spawn(app, runId);
-    recordedInspection(app, runId, child.id);
-    app.store.updateRun(child.id, { status: 'failed', error: 'Synthetic child failure.' });
-    app.coordinator.mailbox.execute(app.store.run(runId), 'cancel-failed', 'cancel_agent', { run_id: child.id });
-    expect(app.store.run(child.id).status).toBe('failed');
-    expect((await check(app, runId)).kind).toBe('continue');
-    expect(childCompletionState(app.store, app.store.run(runId)).feedback).toContain(child.id);
-    recordedInspection(app, runId, child.id, { section: 'report' });
-    expect(childCompletionState(app.store, app.store.run(runId)).feedback).toContain(child.id);
-    recordedInspection(app, runId, child.id);
-    const outcome = await check(app, runId);
-    expect(outcome.kind).toBe('complete');
-    if (outcome.kind !== 'complete') throw new Error('expected completion');
-    expect(app.store.readBlob(outcome.resultRef)).toMatchObject({ quality: { status: 'not_checked' }, children: { status: 'partial', outcomes: [{ runId: child.id, status: 'failed', acknowledged: true }] } });
-    expect(app.store.run(child.id).status).toBe('failed');
   });
 
   it('uses a real successful inspect_run tool record to acknowledge failure', async () => {
@@ -114,24 +94,6 @@ describe('completion owns every directly managed child', () => {
     expect(childCompletionState(app.store, app.store.run(runId)).feedback).toContain(child.id);
     recordedInspection(app, runId, child.id, { section: 'acceptance' });
     expect(childCompletionState(app.store, app.store.run(runId)).feedback).toBeUndefined();
-  });
-
-  it('waits for followup work and only a completed continuation resolves the failed predecessor', async () => {
-    const { app, runId } = fixture(scripted());
-    const child = spawn(app, runId);
-    app.store.updateRun(child.id, { status: 'failed', error: 'Synthetic first attempt failed.' });
-    const followup = app.coordinator.mailbox.execute(app.store.run(runId), 'retry', 'followup_task', { target: child.id, objective: 'Repair the failed task.' }) as { id: string };
-    expect((await check(app, runId)).kind).toBe('wait');
-    expect(app.store.events(runId, { types: ['completion.checked'] })).toHaveLength(0);
-    app.store.updateRun(followup.id, { status: 'cancelled' });
-    expect(childCompletionState(app.store, app.store.run(runId)).feedback).toContain(child.id);
-    // Alternate isolated terminal outcome, representing a successful retry.
-    app.store.updateRun(followup.id, { status: 'completed' });
-    const outcome = await check(app, runId);
-    expect(outcome.kind).toBe('complete');
-    if (outcome.kind !== 'complete') throw new Error('expected completion');
-    expect(app.store.readBlob(outcome.resultRef)).toMatchObject({ children: { status: 'settled', outcomes: [{ runId: child.id, status: 'failed', resolvedBy: followup.id }] } });
-    expect(app.store.run(child.id).status).toBe('failed');
   });
 
   it('allows explicit cancellation and preserves its incomplete outcome', async () => {

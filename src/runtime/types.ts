@@ -122,16 +122,10 @@ export interface Run {
   /** A resumable current-turn pause, distinct from cancellation and crash recovery. */
   interruptRequested?: boolean;
   parentId?: string;
-  /** Stable child identity across task runs; initial child ID for newly created agents. */
-  agentId?: string;
   permissions?: Permission[]; inputCursor?: number; waitId?: string;
   scope?: FileScope;
-  /** Explicit parent task association and accepted prerequisite versions. */
+  /** Legacy parent task association retained for old-data reads only; new dispatches have no task association. */
   todo?: { id: string; generation: number; dependencies: { id: string; generation: number }[]; ready?: boolean };
-  /** Host-created, scoped read-only investigation; result contract is enforced at completion. */
-  exploration?: { questionId: string; batchId: string; decisionVersion: number; consumer: string; deliverable: string; knowledgeRefs: { id: string; revision: number }[] };
-  /** Read-only child created by the explore tool; its free-text report is delivered whole on wake. */
-  explore?: { callId: string; thoroughness: 'quick' | 'medium' | 'thorough' };
   /** Host-approved binding alias; model limits belong to each run, spending remains session-wide. */
   modelBindingId?: string;
   modelLimits?: ResolvedModelLimits;

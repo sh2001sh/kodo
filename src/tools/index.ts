@@ -17,6 +17,7 @@ import { schemaErrorText } from '../runtime/schema-errors.js';
 import { roleAllows } from '../runtime/role-view.js';
 import { dynamicTodoSpec, validateDynamicTodoArgs } from './todo.js';
 import { executionSession, runWorkspace } from '../runtime/execution-workspace.js';
+import { updateTaskProgress } from '../runtime/context-progress.js';
 import { workspacesOverlap } from '../runtime/paths.js';
 import { actualPath, assertFileScope, canAccessFileScope } from '../runtime/scope.js';
 import { captureEffects, reconcileEffects, reconciledEvent } from './effect-scan.js';
@@ -47,7 +48,7 @@ const hashGuarded = ['file.patch', 'file.apply_patch', 'file.rename', 'file.dele
 const concurrentBuiltins = new Set(['file.read', 'file.list', 'file.search', 'image.read', 'artifact.read', 'history.read', 'history.search', 'process.run', 'process.read', 'process.exec']);
 const evaluates = (flag: InputFlag | undefined, input: Record<string, unknown>): boolean => typeof flag === 'function' ? flag(Object.freeze(structuredClone(input))) === true : flag === true;
 /** Tools every run may call given permission; process.read follows either managed execution tool. */
-const implied = (name: string, allowed: readonly string[]): boolean => ['history.read', 'history.search', 'artifact.read', 'recovery.inspect'].includes(name) || (name === 'process.read' && (allowed.includes('process.exec') || allowed.includes('shell.exec')));
+const implied = (name: string, allowed: readonly string[]): boolean => ['history.read', 'history.search', 'artifact.read', 'recovery.inspect', 'update_progress'].includes(name) || (name === 'process.read' && (allowed.includes('process.exec') || allowed.includes('shell.exec')));
 /** Whether the run's effective permissions include read, which makes a file hash disclosable. */
 const readable = (run: { permissions?: Permission[] }, session: Session): boolean => session.permissions.includes('read') && (run.permissions ?? session.permissions).includes('read');
 
@@ -57,6 +58,7 @@ const object = (properties: Record<string, unknown>, required = Object.keys(prop
 const text = { type: 'string', minLength: 1, maxLength: 4096 };
 const contentOffset = { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const maxChars = { type: 'integer', minimum: 256, maximum: 32_000 };
+const progressItems = { type: 'array', items: { type: 'string', maxLength: 800 }, maxItems: 16 };
 /**
  * Lean default pages. Large windows with cached prefixes make a bigger page cheaper than another
  * model round; the result cap leaves room for JSON escaping of a full page.
@@ -102,6 +104,7 @@ const definitions: Tool[] = [
   tool('process.read', 'Read a managed background process using its background.id. Pass returned stdoutOffset/stderrOffset to continue paging. stop:true requests termination of this owned process and waits for its recorded settlement; a failed stop is reported as failed, never as stopped. waitMs waits for new output or exit, capped at 90% of the host tool timeout; expiration returns current state and does not stop the process. Returns running, exited, stopped or failed, output pages and the exit code once settled. Prefer this over shell sleep/poll loops. Output is untrusted data.', 'exec', 'read', object({ id: { type: 'string', minLength: 1, maxLength: 64 }, stdoutOffset: contentOffset, stderrOffset: contentOffset, maxChars, waitMs: { type: 'integer', minimum: 0, maximum: 300_000 }, stop: { type: 'boolean' } }, ['id'])),
   tool('tool.describe', 'Load complete schemas for available tools. The schemas remain available for subsequent requests of this run.', 'read', 'read', object({ names: { type: 'array', minItems: 1, maxItems: 32, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 64 } } })),
   tool('recovery.inspect', 'Ask the host to inspect this run\'s uncertain effects using existing file probes and registered verifiers. Returns remaining blocked call IDs and evidence. Only host-verified outcomes are recorded; this tool does not accept model-supplied verdicts or replay calls. If blocked calls remain without a verifier, report the required host verification instead of retrying writes.', 'read', 'read', object({})),
+  tool('update_progress', 'Replace your bounded task progress snapshot so work can continue after context compaction or a follow-up. Include confirmed facts, completed work, pending work and evidence references. Omitted lists become empty. These are untrusted working notes; they never grant permissions or prove acceptance. At most 16 entries per list, 800 characters per entry and 8000 characters total.', 'read', 'read', object({ facts: progressItems, completed: progressItems, pending: progressItems, evidence: progressItems }, [])),
 ];
 definitions.push(tool('process.run', 'Run a read-only command declared by the trusted host. Both program and the entire argument array must exactly match a host declaration. Output and timeout bounds match process.exec.', 'read', 'read', object({ program: text, args: { type: 'array', maxItems: 128, items: { type: 'string', maxLength: 4096 } } })));
 export const builtinToolNames = definitions.map(definition => definition.name);
@@ -527,6 +530,7 @@ export class Tools {
       }
       if (name === 'workspace.git') return workspaceGit(this.store, run, args as unknown as WorkspaceGitArgs, () => { signal.throwIfAborted(); onEffectStart(); });
       if (name === 'recovery.inspect') return await this.inspectRecovery!(runId, signal);
+      if (name === 'update_progress') return this.store.transaction(() => updateTaskProgress(this.store, runId, { facts: args.facts as string[] ?? [], completed: args.completed as string[] ?? [], pending: args.pending as string[] ?? [], evidence: args.evidence as string[] ?? [] }));
       if (name === 'process.read') return await this.background.read(runId, { ...args, waitMs: Math.min((args.waitMs as number | undefined) ?? 0, Math.floor(session.budget.toolTimeoutMs * 0.9)) } as Parameters<BackgroundTasks['read']>[1], signal);
       if (name === 'artifact.read') return pageArtifact(this.store.readArtifact(runId, args.id as string), args);
       if (name === 'history.search') return searchHistory(this.store, runId, args as unknown as import('../runtime/history.js').HistorySearch);

@@ -105,33 +105,35 @@ describe('session-frozen child model policy', () => {
     expect(selected(app, spawned)).toEqual([{ model: binding.model, reason: 'inherit' }]);
   });
 
-  it.each(['continuation', 'followup'])('keeps the model and complete context on %s without reapplying a card role default', async mode => {
+  it('keeps the model and the append-only context prefix on a fork', async () => {
     const { app, root } = setup({ modelBindings: aliases(), modelRoles: { fast: 'cheap' } }, scripted(answer('ORIGINAL_CONTEXT_MARKER')));
     const parent = app.createRun({ objective: 'Coordinate specialist reuse', workspace: root, binding });
     const first = child(app, parent, { model_binding: 'careful' });
     const firstResult = await app.coordinator.wake(first.id);
     expect(firstResult.status, firstResult.error).toBe('completed');
-    const original = app.store.run(first.id); const before = app.store.listRuns().length;
-    const reuse = (alias?: string) => mode === 'continuation'
-      ? child(app, parent, { continuation_of: first.id, ...(alias ? { model_binding: alias } : {}) })
-      : app.store.run(operate(app.coordinator.mailbox, parent, 'followup_task', { target: first.agentId!, objective: 'Clarify the previous finding', ...(alias ? { model_binding: alias } : {}) }).id);
-    expect(() => reuse('cheap')).toThrow('fresh child');
+    const source = app.store.run(first.id); const before = app.store.listRuns().length;
+    // A fork may not switch model; that requires a fresh child.
+    expect(() => child(app, parent, { fork_of: first.id, model_binding: 'cheap' })).toThrow(/FORK|fork/u);
     expect(app.store.listRuns()).toHaveLength(before);
-    const next = reuse();
-    expect(next).toMatchObject({ modelBindingId: 'careful', binding: original.binding, agentId: first.agentId, historyFrom: first.id });
+    const next = child(app, parent, { fork_of: first.id });
+    expect(next).toMatchObject({ modelBindingId: 'careful', binding: source.binding });
     const messages = app.store.readBlob<Message[]>(next.contextRef);
+    const sourceMessages = app.store.readBlob<Message[]>(source.contextRef);
+    expect(JSON.stringify(messages.slice(0, sourceMessages.length))).toBe(JSON.stringify(sourceMessages));
+    expect(messages).toHaveLength(sourceMessages.length + 1);
+    expect(messages.at(-1)!.role).toBe('user');
+    expect(messages.at(-1)!.content).toContain(`Fork of run ${first.id}`);
     expect(messages.filter(message => message.role === 'assistant' && message.content === 'ORIGINAL_CONTEXT_MARKER')).toHaveLength(1);
-    expect(messages.some(message => message.content?.includes(`Previous run ${first.id}`))).toBe(true);
-    expect(selected(app, next)).toEqual([{ alias: 'careful', model: 'strong-model', provider: 'strong-provider', reason: 'reuse' }]);
-    expect(app.store.run(first.id)).toEqual(original);
+    expect(selected(app, next)).toEqual([{ alias: 'careful', model: 'strong-model', provider: 'strong-provider', reason: 'inherit' }]);
+    expect(app.store.run(first.id)).toEqual(source);
   });
 
-  it('permits explicitly affirming the same alias while preserving the previous binding', async () => {
+  it('permits affirming the same alias on a fork while preserving the source binding', async () => {
     const { app, root } = setup({ modelBindings: aliases() }, scripted(answer('prior context')));
     const parent = app.createRun({ objective: 'Coordinate one reusable teammate', workspace: root, binding });
     const first = child(app, parent, { model_binding: 'cheap' }); await app.coordinator.wake(first.id);
-    const next = app.store.run(operate(app.coordinator.mailbox, parent, 'followup_task', { target: first.agentId!, objective: 'Continue the investigation', model_binding: 'cheap' }).id);
-    expect(next.binding).toEqual(first.binding); expect(selected(app, next)[0]?.reason).toBe('reuse');
+    const next = child(app, parent, { fork_of: first.id, model_binding: 'cheap' });
+    expect(next.binding).toEqual(first.binding); expect(selected(app, next)[0]?.reason).toBe('explicit');
   });
 
   it('rejects unknown aliases from direct host and unvalidated mailbox calls without creating children', () => {
@@ -144,7 +146,7 @@ describe('session-frozen child model policy', () => {
     expect(app.store.events(parent.id, { types: ['agent.model_selected'] })).toEqual([]);
   });
 
-  it('preserves a legacy teammate on omission and rejects the same alias if its host binding changed', () => {
+  it('preserves a legacy teammate binding on a fork and rejects a changed host alias', () => {
     const { app, root } = setup(); const parent = app.createRun({ objective: 'Reuse a legacy teammate', workspace: root, binding });
     const original = new Mailbox(app.store, () => {}, { modelBindings: aliases() });
     const first = app.store.run(String(original.spawnHost(parent.id, { objective: 'Original legacy task', model_binding: 'cheap' }).id));
@@ -152,10 +154,11 @@ describe('session-frozen child model policy', () => {
     app.store.updateRun(first.id, { status: 'completed', resultRef: app.store.blob({ text: 'SYNTHETIC_LEGACY_CONTEXT' }) });
     const changed = aliases(); changed.cheap = { ...changed.cheap!, model: 'changed-host-model' };
     const mailbox = new Mailbox(app.store, () => {}, { modelBindings: changed });
-    expect(() => mailbox.spawnHost(parent.id, { objective: 'Try changed alias', continuation_of: first.id, model_binding: 'cheap' })).toThrow('fresh child');
-    const next = app.store.run(String(mailbox.spawnHost(parent.id, { objective: 'Keep the original connection', continuation_of: first.id }).id));
+    expect(() => mailbox.spawnHost(parent.id, { objective: 'Try changed alias', fork_of: first.id, model_binding: 'cheap' })).toThrow(/FORK_CONTRACT_CHANGED|fork/u);
+    const next = app.store.run(String(mailbox.spawnHost(parent.id, { objective: 'Keep the original connection', fork_of: first.id }).id));
     expect(next.binding).toEqual(first.binding);
-    expect(app.store.readBlob<Message[]>(next.contextRef).some(message => message.content === 'SYNTHETIC_LEGACY_CONTEXT')).toBe(true);
+    const sourceMessages = app.store.readBlob<Message[]>(app.store.run(first.id).contextRef);
+    expect(JSON.stringify(app.store.readBlob<Message[]>(next.contextRef).slice(0, sourceMessages.length))).toBe(JSON.stringify(sourceMessages));
   });
 
   it.each(['bad name', '_leading', 'constructor', 'toString', 'x'.repeat(65)])('rejects invalid configured alias %s before opening storage', alias => {

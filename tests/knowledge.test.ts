@@ -12,7 +12,6 @@ function setup() {
   const context = fixture();
   const { app, runId, root } = context;
   writeFileSync(path.join(root, 'source.ts'), 'export const contract = "first";\n');
-  app.store.updateRun(runId, { exploration: { questionId: 'contract', batchId: 'batch', decisionVersion: 0, consumer: 'implementation', deliverable: 'source constraints', knowledgeRefs: [] } });
   const knowledge = new ProjectKnowledge(app.store, { ownerId: 'test-owner' });
   const observe = async (file = 'source.ts', owner = runId) => {
     const request = call('file.read', { path: file }, randomUUID());
@@ -111,7 +110,6 @@ describe('private project knowledge', () => {
     expect(knowledge.read(runId, ref)).toMatchObject({ freshness: 'unknown', confirmation: 'candidate' });
     expect(() => knowledge.validateUse(runId, ref)).toThrow('unknown');
     const another = nextRun();
-    app.store.updateRun(another, { exploration: app.store.run(runId).exploration });
     const unknown = knowledge.persist(knowledge.prepare(another, result([], { open_questions: ['Could not inspect the required source.'] })));
     expect(knowledge.read(another, unknown)).toMatchObject({ freshness: 'unknown', completeness: 'partial' });
     expect(() => knowledge.read(runId, unknown)).toThrow('not available');
@@ -125,7 +123,6 @@ describe('private project knowledge', () => {
     expect(knowledge.persist(knowledge.prepare(runId, result([evidence])))).toEqual(original);
     expect(() => knowledge.persist(knowledge.prepare(runId, result([evidence], { summary: 'A conflicting conclusion.' })))).toThrow('different immutable result');
     const second = nextRun();
-    app.store.updateRun(second, { exploration: app.store.run(runId).exploration });
     const newer = knowledge.persist(knowledge.prepare(second, result([await observe('source.ts', second)], { summary: 'Another interpretation of the same source.' })));
     expect(newer).toEqual({ id: 'contract', revision: 2 });
     expect(knowledge.read(runId, original).summary).toBe('The contract is declared in source.ts.');
@@ -167,7 +164,6 @@ describe('private project knowledge', () => {
     let ref = knowledge.persist(knowledge.prepare(runId, result([evidence])));
     for (let index = 0; index < 6; index++) {
       const owner = nextRun();
-      app.store.updateRun(owner, { exploration: app.store.run(runId).exploration });
       ref = knowledge.persist(knowledge.prepare(owner, result([await observe('source.ts', owner)])));
     }
     const first = knowledge.search(runId, { query: 'CONTRACT', paths: ['source.ts'] });

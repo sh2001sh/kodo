@@ -80,12 +80,8 @@ export interface ApplicationOptions {
   shellProgram?: string;
   webFetch?: WebFetchPolicy;
   lsp?: LspOptions;
-  /** Enabled by default; false disables exploration and knowledge. Private knowledge is bound to this owner and workspace. */
+  /** Enabled by default; false disables the private project knowledge catalog. Private knowledge is bound to this owner and workspace. */
   exploration?: boolean | { ownerId?: string };
-  /** Opt into the exploration workflow and its structured exploration.plan tool. Default false; requires exploration not to be disabled. */
-  structuredExploration?: boolean;
-  /** Opt into the exploration workflow and suggest explore after this many successful main-run reads (evaluated value: 8). Default false. */
-  exploreNudge?: number | false;
   /** Project instruction discovery. `global` defaults to `$KODO_HOME/AGENTS.md` or `~/.kodo/AGENTS.md`; false disables it. */
   instructions?: { global?: string | false };
   /** Cross-process write lock directory; defaults to `$KODO_HOME/locks` or `~/.kodo/locks`; false keeps write locks in-process. */
@@ -123,7 +119,6 @@ export class Application {
   private mcpConnections = new Set<McpConnection>();
   private readonly packageActivations = new Map<string, { workspace: string; workspaceBound: boolean; context: string; names: string[]; skills: string[]; bindings: Record<string, string> }>();
   private readonly sandboxPolicy?: SandboxPolicy;
-  private readonly structuredExploration: boolean;
   private readonly globalInstructions: string | false;
   private readonly projectMemory: boolean;
   private readonly lockDirectory?: string | false;
@@ -134,10 +129,9 @@ export class Application {
     return this.legacyDefaultCard;
   }
   private get legacyDefaultCard(): Card {
-    // Explicit exploration workflows keep their complete capability set. Ordinary
-    // compact sessions do not acquire the knowledge catalog just because storage exists.
-    const explorationWorkflow = this.structuredExploration || this.coordinator.exploreNudge !== false;
-    const base = isLeanProfile(this.toolProfile) ? leanDefaultCard : !explorationWorkflow && this.toolProfile !== 'full' ? (this.toolProfile === 'compact-v2' ? simpleDefaultCard : compactDefaultCard) : this.coordinator.knowledge ? explorationMainCard(this.structuredExploration) : defaultCard;
+    // The knowledge-enabled default keeps the project catalog; compact sessions only
+    // use it when the host enables knowledge. One default identity per profile until 1e.
+    const base = isLeanProfile(this.toolProfile) ? leanDefaultCard : this.toolProfile !== 'full' ? (this.toolProfile === 'compact-v2' ? simpleDefaultCard : compactDefaultCard) : this.coordinator.knowledge ? knowledgeMainCard() : defaultCard;
     if (!this.optionalTools.length) return base;
     const tools = [...new Set([...base.tools, ...this.optionalTools])];
     return parseCard(`---\nschema_version: 1\nid: ${base.id}-${this.optionalTools.map(name => name.split('.')[0]).join('-')}\nversion: ${base.version}\nname: ${base.name}\ndescription: Host-configured local agent with optional capabilities.\n${base.nudges === undefined ? '' : `nudges: ${base.nudges}\n`}capabilities:\n  tools: ${JSON.stringify(tools)}\n---\n${base.prompt}\nUse verify.run for the host-approved verification command when available. Project memory stores concise reusable decisions, never credentials.`, { toolNames: tools });
@@ -159,13 +153,11 @@ export class Application {
     if (options.methodUnloading !== undefined && (typeof options.methodUnloading !== 'boolean' || !this.inlineMethods)) throw new KodoError('METHOD_CONFIG', 'methodUnloading requires inlineMethods and a boolean');
     if (options.inlineMethods !== undefined && typeof options.inlineMethods !== 'boolean' || this.inlineMethods && isLeanProfile(this.toolProfile)) throw new KodoError('METHOD_CONFIG', 'inlineMethods requires a boolean and a Skill-capable full/compact tool profile');
     if (options.agentFactors !== undefined && (!options.agentFactors || typeof options.agentFactors !== 'object' || Array.isArray(options.agentFactors) || Object.entries(options.agentFactors).some(([key, value]) => !['A', 'B', 'C', 'D', 'E'].includes(key) || typeof value !== 'boolean'))) throw new KodoError('AGENT_FACTORS', 'agentFactors accepts boolean A, B, C, D and E flags');
-    if (options.exploreNudge !== undefined && options.exploreNudge !== false && (!Number.isSafeInteger(options.exploreNudge) || options.exploreNudge < 1)) throw new KodoError('DELEGATION_POLICY', 'exploreNudge must be a positive integer or false');
     if (compaction?.workInputTokens !== undefined && options.assembly?.workInputTokens !== undefined && compaction.workInputTokens !== options.assembly.workInputTokens) throw new KodoError('CONTEXT_POLICY', 'assembly and compaction must use the same explicit workInputTokens');
     validateAgentModelPolicy(options.modelBindings, options.modelBindingDescriptions, options.modelRoles);
     if (options.verification?.backend === 'native' && options.verification.enabled && options.verification.approved && !options.sandbox) throw new KodoError('VERIFY_SANDBOX', 'native verification requires an explicitly configured host OS sandbox');
     this.store = new Store(directory, { onSubscriberError: options.onSubscriberError });
     this.sandboxPolicy = options.sandbox ? structuredClone(options.sandbox) : undefined;
-    this.structuredExploration = options.structuredExploration === true;
     this.globalInstructions = options.instructions?.global ?? defaultGlobalInstructions();
     this.projectMemory = options.memory === true;
     this.lockDirectory = options.lockDirectory;
@@ -181,7 +173,7 @@ export class Application {
     this.modelBindingDescriptions = options.modelBindingDescriptions === undefined ? undefined : structuredClone(options.modelBindingDescriptions);
     try {
       const knowledge = options.exploration !== false || this.inlineMethods ? new ProjectKnowledge(this.store, typeof options.exploration === 'object' ? options.exploration : {}) : undefined;
-      this.coordinator = new RunCoordinator(this.store, provider, onText, options.readOnlyCommands, { modelBindings: structuredClone(options.modelBindings ?? {}), ...(options.sandbox ? { sandbox: structuredClone(options.sandbox) } : {}), shellProgram: options.shellProgram, knowledge, structuredExploration: this.structuredExploration, compaction, assembly: options.assembly, exploreNudge: options.exploreNudge, globalInstructions: this.globalInstructions, hooks: options.hooks, lazyTools: options.lazyTools, ...(options.lockDirectory === undefined ? {} : { lockDirectory: options.lockDirectory }) });
+      this.coordinator = new RunCoordinator(this.store, provider, onText, options.readOnlyCommands, { modelBindings: structuredClone(options.modelBindings ?? {}), ...(options.sandbox ? { sandbox: structuredClone(options.sandbox) } : {}), shellProgram: options.shellProgram, knowledge, compaction, assembly: options.assembly, globalInstructions: this.globalInstructions, hooks: options.hooks, lazyTools: options.lazyTools, ...(options.lockDirectory === undefined ? {} : { lockDirectory: options.lockDirectory }) });
       for (const definition of todoTools(this.store, { cancelQueued: (runId, parentId) => this.coordinator.cancel(runId, { initiator: 'agent', by: parentId }) })) this.registerTool(definition);
       if (knowledge) for (const definition of knowledgeTools(knowledge, this.inlineMethods)) this.registerTool(definition);
       for (const definition of memoryTools(this.store, { enabled: this.projectMemory })) this.registerTool(definition);
@@ -403,14 +395,7 @@ export class Application {
     return registry.definitions();
   }
   updateProgress(runId: string, progress: Parameters<typeof updateTaskProgress>[2]): ReturnType<typeof updateTaskProgress> {
-    return this.store.transaction(() => {
-      const snapshot = updateTaskProgress(this.store, runId, progress);
-      if (snapshot.knowledge_uses?.length) {
-        if (!this.coordinator.knowledge) throw new KodoError('KNOWLEDGE_DISABLED', 'project knowledge is not enabled by this host');
-        this.coordinator.knowledge.adopt(runId, snapshot.knowledge_uses);
-      }
-      return snapshot;
-    });
+    return this.store.transaction(() => updateTaskProgress(this.store, runId, progress));
   }
   /** Synchronous creation uses declared/catalog limits or clearly marked provisional limits. */
   createRun(options: CreateRunOptions): Run { return this.createResolvedRun(options); }
@@ -601,27 +586,6 @@ export class Application {
       return this.store.run(run.id);
     });
   }
-  /** A user instruction to a directly managed child; the main run is notified in the same commit so both agree. */
-  submitAgentInput(mainRunId: string, agentRunId: string, content: string): { messageId: string; agent: Run; main: Run } {
-    if (!content.trim() || content.length > 16_000) throw new KodoError('INPUT', 'input must contain 1 to 16000 characters');
-    return this.store.transaction(() => {
-      const main = this.store.run(mainRunId);
-      if (main.parentId) throw new KodoError('MAIN_RUN', 'directed input must be anchored to a main run');
-      const agent = this.store.run(agentRunId);
-      if (agent.sessionId !== main.sessionId) throw new KodoError('SESSION_DENIED', 'directed input target must belong to the main run session');
-      if (agent.parentId !== main.id) throw new KodoError('AGENT_TARGET', 'directed input target must be a direct child of the main run');
-      if (terminal(agent.status) || (agent.status === 'interrupted' && !agent.interruptRequested)) throw new KodoError('RUN_ENDED', `child run ${agent.id} has ended; send a follow-up task to the main run instead`);
-      const messageId = randomUUID();
-      this.store.putMessage({ id: messageId, sessionId: agent.sessionId, from: 'user', to: agent.id, kind: 'input', content });
-      // The notice is coordination evidence, not a new user decision: decisionVersion, grants, scope, card and budget stay unchanged.
-      this.store.putMessage({ id: randomUUID(), sessionId: main.sessionId, from: 'user', to: main.id, kind: 'notice', content: `Directed instruction from the user to child agent ${agent.id} (objective: ${agent.objective}):\n${content}\nAlign your coordination with this instruction; do not issue a conflicting requirement to that child.` });
-      this.store.event(agent.id, 'user.agent_input', { messageId, mainRunId: main.id, content });
-      this.store.event(main.id, 'user.agent_input', { messageId, agentRunId: agent.id, objective: agent.objective, content });
-      if (agent.interruptRequested) this.coordinator.resumeInterrupted(agent.id);
-      this.coordinator.mailbox.refresh(agent.id);
-      return { messageId, agent: this.store.run(agent.id), main: this.store.run(main.id) };
-    });
-  }
   /** Cancel a directly managed child; terminal targets are returned unchanged so retries stay idempotent. */
   cancelAgent(mainRunId: string, agentRunId: string): Run {
     const main = this.store.run(mainRunId);
@@ -630,14 +594,6 @@ export class Application {
     if (agent.sessionId !== main.sessionId) throw new KodoError('SESSION_DENIED', 'cancellation target must belong to the main run session');
     if (agent.parentId !== main.id) throw new KodoError('AGENT_TARGET', 'cancellation target must be a direct child of the main run');
     if (!terminal(agent.status)) this.coordinator.cancel(agent.id);
-    return this.store.run(agent.id);
-  }
-  /** Pause only the child's current turn; a subsequent message can continue its context. */
-  interruptAgent(mainRunId: string, agentRunId: string): Run {
-    const main = this.store.run(mainRunId);
-    const agent = this.store.run(agentRunId);
-    if (main.parentId || agent.sessionId !== main.sessionId || agent.parentId !== main.id) throw new KodoError('AGENT_TARGET', 'interrupt target must be a directly managed child in this session');
-    this.coordinator.interrupt(agent.id);
     return this.store.run(agent.id);
   }
   answer(questionId: string, content: string, options: { decision?: boolean } = {}): Run {
@@ -665,11 +621,6 @@ export class Application {
     this.store.putSession({ ...session, decisionVersion: version });
     this.store.event(run.id, 'decision.updated', { version, content });
     for (const peer of this.store.listRuns(session.id)) if ( !terminal(peer.status)) {
-      // A queued exploration or explore child must not begin work for a superseded decision.
-      if ((peer.exploration || peer.explore) && ['queued', 'running'].includes(peer.status) && peer.step === 0 && !peer.stepCallId) {
-        this.coordinator.cancel(peer.id, { initiator: 'decision', by: run.id });
-        continue;
-      }
       this.store.putMessage({ id: `decision:${session.id}:${version}:${peer.id}`, sessionId: session.id, from: 'user', to: peer.id, kind: 'decision', content: JSON.stringify({ version, content }) });
       this.coordinator.mailbox.refresh(peer.id);
     }
@@ -715,24 +666,21 @@ export class Application {
     this.store.close();
   }
 }
-const knowledgeGuidance = 'Search private knowledge only when useful, read an exact revision, inspect original evidence and record adoption with update_progress.knowledge_uses including its purpose. Current hashes mean freshness, not semantic correctness. A stale or unknown entry needs targeted investigation before adoption. Open questions remain unresolved.';
-/** Both variants embed the default card prompt, so a prompt change needs new immutable versions. */
-function explorationMainCard(structured: boolean): Card {
+const knowledgeGuidance = 'Search private knowledge only when useful, read an exact revision and inspect its original evidence before relying on it. Current hashes mean freshness, not semantic correctness. A stale or unknown entry needs targeted investigation before use. Open questions remain unresolved.';
+/** The knowledge-enabled default embeds the default card prompt, so a prompt change needs a new immutable version. */
+function knowledgeMainCard(): Card {
   const tools = [...defaultCard.tools, 'knowledge.browse', 'knowledge.search', 'knowledge.read'];
-  const guidance = structured
-    ? `exploration.plan dispatches read-only research children: use it for independent investigations with concrete inputs and a consumer, such as mapping unfamiliar modules in parallel. Use spawn_agent for children that implement, test or otherwise change files. Small tasks with known entry points should batch direct reads without planning or knowledge overhead. Continue unrelated work while children investigate; avoid rereading their assigned area. ${knowledgeGuidance}`
-    : knowledgeGuidance;
   return parseCard(`---
 schema_version: 1
-id: builtin/exploration-main
-version: ${structured ? '1.3.0' : '1.2.0'}
-name: Project exploration agent
-description: Complete local tasks with optional bounded exploration and private project knowledge.
+id: builtin/knowledge-main
+version: 1.0.0
+name: Project knowledge agent
+description: Complete local tasks with the private project knowledge catalog.
 capabilities:
   tools: ${JSON.stringify(tools)}
 ---
 ${defaultCard.prompt}
-${guidance}`, { toolNames: tools });
+${knowledgeGuidance}`, { toolNames: tools });
 }
 export { ProjectKnowledge } from '../knowledge/index.js';
 export type { KnowledgeRef, KnowledgeSummary, KnowledgeFreshness, KnowledgePage, KnowledgeSearch, KnowledgeRead, KnowledgeUse, KnowledgeNode, KnowledgeBrowse } from '../knowledge/index.js';

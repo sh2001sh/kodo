@@ -40,17 +40,14 @@ export class RunCoordinator implements StepHost {
   readonly knowledge?: ProjectKnowledge;
   readonly compaction?: CompactionPolicy;
   readonly assembly?: AssemblyPolicy;
-  readonly exploreNudge: number | false;
   private modelCounts = new Map<string, number>();
   private modelQueue: { run: Run; start: () => void }[] = [];
   readonly toolControllers = new Map<string, Set<AbortController>>();
   readonly completionValidators = new Map<string, CompletionValidator>();
   private sessionClocks = new Map<string, { lastAt: number; count: number; timer?: ReturnType<typeof setTimeout> }>();
-  constructor(readonly store: Store, readonly provider: Provider, private readonly textListener: (runId: string, text: string) => void = () => {}, readOnlyCommands: ReadOnlyCommand[] = [], options: { modelBindings?: Record<string, ModelBinding>; sandbox?: SandboxPolicy; shellProgram?: string; knowledge?: ProjectKnowledge; structuredExploration?: boolean; compaction?: CompactionPolicy; assembly?: AssemblyPolicy; exploreNudge?: number | false; globalInstructions?: string | false; lockDirectory?: string | false; hooks?: readonly HookRegistration[]; lazyTools?: boolean } = {}) {
+  constructor(readonly store: Store, readonly provider: Provider, private readonly textListener: (runId: string, text: string) => void = () => {}, readOnlyCommands: ReadOnlyCommand[] = [], options: { modelBindings?: Record<string, ModelBinding>; sandbox?: SandboxPolicy; shellProgram?: string; knowledge?: ProjectKnowledge; compaction?: CompactionPolicy; assembly?: AssemblyPolicy; globalInstructions?: string | false; lockDirectory?: string | false; hooks?: readonly HookRegistration[]; lazyTools?: boolean } = {}) {
     this.knowledge = options.knowledge;
     this.hooks = new HostHooks(store, options.hooks);
-    // Off unless the host opts in: the nudge has no demonstrated net benefit yet.
-    this.exploreNudge = options.exploreNudge ?? false;
     this.compaction = options.compaction;
     this.assembly = options.assembly;
     this.tools = new Tools(store, readOnlyCommands, { sandbox: options.sandbox, shellProgram: options.shellProgram, lazyTools: options.lazyTools, ...(options.lockDirectory === undefined ? {} : { lockDirectory: options.lockDirectory }), inspectRecovery: async (runId, signal) => {
@@ -62,14 +59,8 @@ export class RunCoordinator implements StepHost {
     } });
     this.mailbox = new Mailbox(store, (id, origin) => this.cancel(id, origin), {
       modelBindings: options.modelBindings, bindingSnapshot: (allowed, skillIds) => this.tools.bindingSnapshot(allowed, skillIds),
-      knowledge: options.knowledge, exploration: Boolean(options.knowledge) && options.structuredExploration === true,
-      resolveKnowledge: options.knowledge ? (run, refs) => refs.map(ref => {
-        const summary = options.knowledge!.validateFor(run, ref);
-        return { ...summary, page: options.knowledge!.read(run.id, { ...ref, maxChars: 2000 }) };
-      }) : undefined,
-      knowledgeUses: options.knowledge ? (run, uses) => options.knowledge!.adopt(run.id, uses) : undefined,
+      knowledge: options.knowledge,
       globalInstructions: options.globalInstructions,
-      interrupt: id => this.interrupt(id), resumeInterrupted: id => this.resumeInterrupted(id),
     });
     this.recovery = new RecoveryManager(store, this.tools);
     store.onFault(error => this.stopForStorageFault(error));
@@ -472,19 +463,7 @@ export class RunCoordinator implements StepHost {
           } else if (outcome.kind === 'complete') {
             const unresolved = unresolvedCompletionWrites(this, current);
             if (unresolved.length) throw new KodoError('UNKNOWN_WRITE', `reconcile unsettled effects before completing this task: ${unresolved.map(call => call.id).join(', ')}`);
-            let resultRef = outcome.resultRef;
-            if (current.exploration) {
-              if (!this.knowledge) throw new KodoError('RECOVERY_REQUIRED', 'enable project exploration before completing this run');
-              const result = this.store.readBlob<{ text: string }>(resultRef);
-              const prepared = this.knowledge.prepare(runId, result.text);
-              let knowledge: ReturnType<NonNullable<StepHost['knowledge']>['persist']>;
-              try { knowledge = this.knowledge.persist(prepared); }
-              catch (error) {
-                if (this.store.fault !== undefined) throw error;
-                throw new KodoError('RECOVERY_REQUIRED', `knowledge persistence did not finish; resume this run to retry the recorded result: ${errorText(error)}`);
-              }
-              resultRef = this.store.blob({ ...result, knowledge });
-            }
+            const resultRef = outcome.resultRef;
             this.store.updateRun(runId, { status: 'completed', resultRef });
             this.store.event(runId, 'run.completed', { resultRef });
             this.mailbox.onTerminal(runId);
@@ -539,7 +518,7 @@ export class RunCoordinator implements StepHost {
   }
   private async executeStep(runId: string, signal: AbortSignal): Promise<StepOutcome> {
     const run = this.store.run(runId);
-    if (!this.knowledge && (run.exploration || run.card.tools.some(name => name === 'knowledge.search' || name === 'knowledge.read') || this.store.hasEvent(run.id, { types: ['exploration.planned'] }))) throw new KodoError('RECOVERY_REQUIRED', 'enable project exploration before resuming this run');
+    if (!this.knowledge && run.card.tools.some(name => name === 'knowledge.search' || name === 'knowledge.read')) throw new KodoError('RECOVERY_REQUIRED', 'enable project knowledge before resuming this run');
     assertRunCapabilities(run, this.tools);
     if (this.store.session(run.sessionId).inlineMethods) assertRunCapabilities(effectiveMethodRun(this.store, run), this.tools);
     const failed = await runModelStep(this, runId, signal);
