@@ -45,13 +45,12 @@ export function resolveManagedAgent(store: Store, main: Run, target: string): Ru
 }
 
 /** Preserve conversation evidence, while regenerating authority and the current task contract. */
-export function childFollowupContext(store: Store, source: Run, next: Run, reviseTaskWriteScope = false): Message[] {
+export function childFollowupContext(store: Store, source: Run, next: Run): Message[] {
   if (!isDeepStrictEqual(source.binding, next.binding)) throw new KodoError('FOLLOWUP_CONTEXT_CHANGED', 'reusing a teammate preserves its model and context; create a fresh child and explicitly hand off the necessary context for another model');
   const session = store.session(next.sessionId);
   const oldPermissions = [...source.permissions ?? session.permissions].sort();
   const permissions = [...next.permissions ?? session.permissions].sort();
-  const taskRevision = reviseTaskWriteScope && source.taskNode && next.taskNode && source.taskNode.ownerId === next.taskNode.ownerId && source.taskNode.nodeId === next.taskNode.nodeId && source.taskNode.generation === next.taskNode.generation;
-  const scopeKey = (run: Run) => JSON.stringify({ read: run.scope?.read?.toSorted(), ...(!taskRevision ? { write: run.scope?.write?.toSorted() } : {}) });
+  const scopeKey = (run: Run) => JSON.stringify({ read: run.scope?.read?.toSorted(), write: run.scope?.write?.toSorted() });
   if (JSON.stringify(oldPermissions) !== JSON.stringify(permissions) || scopeKey(source) !== scopeKey(next)) {
     throw new KodoError('FOLLOWUP_CONTEXT_CHANGED', 'permissions or scope changed; create a fresh child with the current task inputs instead of inheriting its previous context');
   }
@@ -68,6 +67,6 @@ export function childFollowupContext(store: Store, source: Run, next: Run, revis
   const result = source.resultRef ? store.readBlob<{ text?: string }>(source.resultRef) : undefined;
   if (result?.text && !(history.at(-1)?.role === 'assistant' && history.at(-1)?.content === result.text)) history.push({ role: 'assistant', content: result.text });
   return [...fresh.slice(0, -1), ...history,
-    { role: 'user', content: `Previous run ${source.id} ended with status ${source.status}. The preceding conversation is historical context. The following task replaces the previous objective; old reports and completion do not satisfy its acceptance. ${taskRevision ? `The host has revised this task's write scope to ${JSON.stringify(next.scope?.write)}; the old scope in historical messages is obsolete. Old source paths must remain authorized to move or delete them. ` : ''}This run starts with an empty task list; use todo.read for its current revision. Use run IDs when inspecting historical evidence.` },
+    { role: 'user', content: `Previous run ${source.id} ended with status ${source.status}. The preceding conversation is historical context. The following task replaces the previous objective; old reports and completion do not satisfy its acceptance. This run starts with an empty task list; use todo.read for its current revision. Use run IDs when inspecting historical evidence.` },
     fresh.at(-1)!];
 }

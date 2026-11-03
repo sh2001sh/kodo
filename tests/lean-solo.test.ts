@@ -104,7 +104,7 @@ describe('lean-solo view', () => {
     expect(readFileSync(path.join(f.root, 'old.txt'), 'utf8')).toBe('two changed\n');
   });
 
-  it.each(['lean-solo', 'lean-team'] as const)('reuses exact content and records writes for subsequent edits in %s', async toolProfile => {
+  it.each(['lean-solo'] as const)('reuses exact content and records writes for subsequent edits in %s', async toolProfile => {
     const { app, root, runId } = fixture(undefined, ['read', 'write'], { toolProfile, taskProtocol: 3 });
     const file = path.join(root, 'known.txt');
     writeFileSync(file, 'alpha beta');

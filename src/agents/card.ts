@@ -202,15 +202,3 @@ export const leanDefaultCard = parseCard(serializeCard({
   tools: ['file.read', 'file.list', 'file.search', 'file.apply_patch', 'file.patch', 'file.mkdir', 'file.rename', 'file.delete', 'shell.exec'],
   prompt: 'Follow project conventions. Make the smallest change that satisfies the task, check it, and stop when the requested result is delivered.',
 }), { toolNames: hostToolNames });
-
-/** Frozen lean teammates use final text plus host-collected evidence instead of report/slot protocols. */
-export const leanBuiltinAgentCards: Card[] = [
-  { role: 'explorer', tools: ['file.read', 'file.search', 'file.list'], prompt: 'Investigate the assigned question using the supplied entry points. Return concrete findings with file paths and remaining uncertainty; do not repeat the parent investigation or modify files.' },
-  { role: 'implementer', tools: leanDefaultCard.tools, prompt: 'Implement the assigned goal within its file scope, starting from the supplied facts and entry points. Read before editing and run focused checks. Report changed files, check outcomes and remaining gaps.' },
-  { role: 'tester', tools: leanDefaultCard.tools, prompt: 'Write and run focused tests for the supplied behavior and interfaces within the assigned scope. Reuse the supplied project findings. Report test changes, actual outcomes and unresolved behavior questions.' },
-  { role: 'reviewer', tools: ['file.read', 'file.search', 'shell.exec'], prompt: 'Review the assigned result and run focused checks in your isolated checkout. Report actionable findings with paths, actual check outcomes and unverified gaps. Your checkout changes are not integrated.' },
-].map(({ role, tools, prompt }) => parseCard(serializeCard({
-  id: `kodo/${role}`, version: '1.4.0', name: role, description: `Lean ${role} for a bounded task.`,
-  tools, prompt: `${prompt} If essential input is missing, end with NEEDS_INPUT: followed by the specific question.`,
-  digest: '',
-}), { toolNames: hostToolNames }));

@@ -25,14 +25,14 @@ export function providerError(value: unknown, status?: number, headers?: Headers
           : status !== undefined && status >= 400 && status < 500 && ![408, 409].includes(status) ? 'MODEL_REQUEST'
             : status !== undefined && status >= 500 ? 'MODEL_TRANSPORT'
             : /invalid_request_error|invalid_request|bad_request|unsupported_parameter/.test(fields) ? 'MODEL_REQUEST' : 'MODEL_TRANSPORT';
-  const retryAfterMs = retryDelay(headers);
+  const retryAfterMs = retryDelay(headers, Date.now(), status !== undefined && status >= 500 ? 300_000 : 60_000);
   return new KodoError(code, message ?? (status ? `provider request failed (HTTP ${status})` : 'provider request failed or stream disconnected'), {
     ...(status !== undefined ? { status } : {}), ...(retryAfterMs !== undefined ? { retryAfterMs } : {}), ...(status === 429 ? { usageKnownZero: true } : {}),
   });
 }
 
 /** Bound server-directed waits; the runtime also applies its remaining duration budget. */
-export function retryDelay(headers?: Headers, now = Date.now()): number | undefined {
+export function retryDelay(headers?: Headers, now = Date.now(), maxMs = 60_000): number | undefined {
   if (!headers) return undefined;
   const ms = headers.get('retry-after-ms');
   const seconds = headers.get('retry-after');
@@ -41,7 +41,7 @@ export function retryDelay(headers?: Headers, now = Date.now()): number | undefi
   else if (seconds !== null) {
     delay = /^\d+(?:\.\d+)?$/.test(seconds.trim()) ? Number(seconds) * 1000 : Date.parse(seconds) - now;
   }
-  return delay !== undefined && Number.isFinite(delay) && delay >= 0 ? Math.min(60_000, Math.ceil(delay)) : undefined;
+  return delay !== undefined && Number.isFinite(delay) && delay >= 0 ? Math.min(maxMs, Math.ceil(delay)) : undefined;
 }
 
 /** Detect gateway envelopes even when they arrive inside an HTTP 200 stream. */

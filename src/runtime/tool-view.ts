@@ -3,8 +3,8 @@ import type { Run, Session, ToolRequest, ToolSpec } from './types.js';
 import { workspaceGitParameters } from './workspace-git.js';
 
 /** Frozen session profiles whose model sees a renamed, smaller tool view. */
-export type LeanProfile = 'lean-solo' | 'lean-team';
-export const leanProfiles: readonly string[] = ['lean-solo', 'lean-team'];
+export type LeanProfile = 'lean-solo';
+export const leanProfiles: readonly string[] = ['lean-solo'];
 export const isLeanProfile = (profile: string | undefined): profile is LeanProfile => profile !== undefined && leanProfiles.includes(profile);
 
 const object = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({ type: 'object', additionalProperties: false, properties, required });
@@ -38,25 +38,8 @@ const viewTools: ViewTool[] = [
   { when: 'noexec', kernel: ['file.delete'], spec: { name: 'delete', description: 'Delete a regular file you have read.', parameters: object({ path: text }, ['path']) } },
 ];
 /** Coordination tools keep their kernel names and schemas in lean views. */
-const passThrough = new Set(['ask_user', 'delegate', 'task', 'find_agents']);
-const childViews: Record<string, readonly string[]> = {
-  explorer: ['read', 'search', 'list'],
-  reviewer: ['read', 'search', 'bash', 'job'],
-  implementer: ['read', 'edit', 'write', 'bash', 'job'],
-  tester: ['read', 'edit', 'write', 'bash', 'job'],
-};
-
-/** A task's role freezes its child view; custom roles retain only their declared native capabilities. */
-export function leanChildRole(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'taskNode'>>): string | undefined {
-  return run.parentId ? run.taskNode?.role ?? 'implementer' : undefined;
-}
-
-function inView(tool: ViewTool, exec: boolean, role?: string): boolean {
-  if (role) {
-    const names = childViews[role] ?? childViews.implementer!;
-    if (!exec && !['explorer', 'reviewer'].includes(role)) return tool.when !== 'exec';
-    return names.includes(tool.spec.name) && (tool.when !== 'exec' || exec);
-  }
+const passThrough = new Set(['ask_user']);
+function inView(tool: ViewTool, exec: boolean): boolean {
   return tool.when === 'always' || (tool.when === 'exec') === exec;
 }
 const byModelName = new Map(viewTools.map(tool => [tool.spec.name, tool]));
@@ -71,14 +54,14 @@ export function viewExec(run: Pick<Run, 'card' | 'permissions'>, session: Pick<S
  * Model-visible tool list for a lean view, built from the kernel tools the run
  * may use. A view tool appears only when its primary kernel tool is available.
  */
-export function leanToolSpecs(kernelSpecs: readonly ToolSpec[], exec: boolean, role?: string): ToolSpec[] {
+export function leanToolSpecs(kernelSpecs: readonly ToolSpec[], exec: boolean): ToolSpec[] {
   const available = new Set(kernelSpecs.map(spec => spec.name));
-  const tools = viewTools.filter(tool => inView(tool, exec, role) && available.has(tool.kernel[0]!)).map(tool => !role && tool.spec.name === 'job' ? {
+  const tools = viewTools.filter(tool => inView(tool, exec) && available.has(tool.kernel[0]!)).map(tool => tool.spec.name === 'job' ? {
     ...tool.spec,
     description: 'Read/stop a job by id; page with offsets. Or action:git with git:{action:status|diff|branch|commit,...} in the original repository. Read status for expectedHead; integrate children before committing.',
     parameters: object({ ...(tool.spec.parameters.properties as Record<string, unknown>), action: { const: 'git' }, git: workspaceGitParameters }),
   } : tool.spec);
-  return [...tools, ...kernelSpecs.filter(spec => !role && passThrough.has(spec.name))];
+  return [...tools, ...kernelSpecs.filter(spec => passThrough.has(spec.name))];
 }
 
 /** Model name a lean view uses for a kernel tool, if any. */
@@ -100,11 +83,11 @@ function readTarget(args: Record<string, unknown>): ToolRequest['name'] {
  * Canonical kernel call for a model call in the session's frozen view. Kernel
  * names the view already covers pass through; anything else is rejected before execution.
  */
-export function resolveToolCall(profile: string | undefined, request: ToolRequest, exec: boolean, role?: string): ToolRequest {
+export function resolveToolCall(profile: string | undefined, request: ToolRequest, exec: boolean): ToolRequest {
   // Kernel names inside the view (recovery retries, equivalent direct calls) keep their identity.
-  if (!isLeanProfile(profile) || leanAllows(request.name, exec, role, profile)) return request;
+  if (!isLeanProfile(profile) || leanAllows(request.name, exec)) return request;
   const tool = byModelName.get(request.name);
-  if (!tool || !inView(tool, exec, role)) throw new KodoError('TOOL_DENIED', `${request.name} is not part of this run's tool view; use the advertised tools`);
+  if (!tool || !inView(tool, exec)) throw new KodoError('TOOL_DENIED', `${request.name} is not part of this run's tool view; use the advertised tools`);
   let args: Record<string, unknown>;
   try { args = JSON.parse(request.arguments) as Record<string, unknown>; }
   catch { throw new KodoError('TOOL_ARGUMENTS', 'arguments must be complete JSON'); }
@@ -123,7 +106,7 @@ export function resolveToolCall(profile: string | undefined, request: ToolReques
     case 'bash': return kernel('shell.exec', pick(args, ['command', 'background', 'timeoutMs']));
     case 'job': {
       if (args.action !== undefined || args.git !== undefined) {
-        if (role || args.action !== 'git' || !args.git || typeof args.git !== 'object' || Array.isArray(args.git) || Object.keys(args).some(key => !['action', 'git'].includes(key))) throw new KodoError('TOOL_ARGUMENTS', 'Git delivery requires main job({action:"git",git:{action,...}}) without process arguments');
+        if (args.action !== 'git' || !args.git || typeof args.git !== 'object' || Array.isArray(args.git) || Object.keys(args).some(key => !['action', 'git'].includes(key))) throw new KodoError('TOOL_ARGUMENTS', 'Git delivery requires main job({action:"git",git:{action,...}}) without process arguments');
         return kernel('workspace.git', args.git as Record<string, unknown>);
       }
       return kernel('process.read', pick(args, ['id', 'stdoutOffset', 'stderrOffset', 'maxChars', 'waitMs', 'stop']));
@@ -141,9 +124,9 @@ export function resolveToolCall(profile: string | undefined, request: ToolReques
  * The canonical request of a model call for this run, or the original with the
  * view error to report. Team children use their own frozen role view; legacy profiles keep canonical names.
  */
-export function canonicalRequest(run: Pick<Run, 'parentId' | 'card' | 'permissions'> & Partial<Pick<Run, 'taskNode'>>, session: Pick<Session, 'toolProfile' | 'permissions'>, request: ToolRequest): { request: ToolRequest; error?: KodoError } {
-  if (!isLeanProfile(session.toolProfile) || (run.parentId && session.toolProfile !== 'lean-team')) return { request };
-  try { return { request: resolveToolCall(session.toolProfile, request, viewExec(run, session), leanChildRole(run)) }; }
+export function canonicalRequest(run: Pick<Run, 'parentId' | 'card' | 'permissions'>, session: Pick<Session, 'toolProfile' | 'permissions'>, request: ToolRequest): { request: ToolRequest; error?: KodoError } {
+  if (!isLeanProfile(session.toolProfile) || run.parentId) return { request };
+  try { return { request: resolveToolCall(session.toolProfile, request, viewExec(run, session)) }; }
   catch (error) { if (error instanceof KodoError) return { request, error }; throw error; }
 }
 
@@ -167,9 +150,9 @@ export function viewResult(profile: string | undefined, value: unknown, depth = 
 
 /** Kernel tools a lean view can reach; everything else stays hidden and is rejected on execution. */
 /** Whether a kernel tool belongs to the frozen lean view of a run; command and file-management tools are exclusive. */
-export function leanAllows(name: string, exec: boolean, role?: string, profile?: string): boolean {
-  if (name === 'workspace.git') return exec && !role;
-  if (passThrough.has(name)) return !role && (name === 'ask_user' || profile === 'lean-team');
+export function leanAllows(name: string, exec: boolean): boolean {
+  if (name === 'workspace.git') return exec;
+  if (passThrough.has(name)) return name === 'ask_user';
   const tool = byKernelName.get(name);
-  return Boolean(tool && inView(tool, exec, role));
+  return Boolean(tool && inView(tool, exec));
 }

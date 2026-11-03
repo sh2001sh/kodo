@@ -25,7 +25,7 @@ function append(f: ReturnType<typeof fixture>, messages: Message[]): void {
 
 describe('view pointer helpers', () => {
   it('detects lean profiles only', () => {
-    expect([...profiles, 'lean-solo', 'lean-team'].map(leanProfile)).toEqual([false, false, false, false, true, true]);
+    expect([...profiles, 'lean-solo'].map(leanProfile)).toEqual([false, false, false, false, true]);
   });
 
   it('keeps the old pointer object as given and renders lean read with stable key order', () => {
@@ -36,7 +36,6 @@ describe('view pointer helpers', () => {
       expect(pointer.args).toBe(args);
     }
     expect(JSON.stringify(historyReadPointer('lean-solo', args))).toBe(`{"tool":"read","args":{"history":"${ref}","offset":3,"contentOffset":9,"limit":1,"maxChars":4000}}`);
-    expect(historyReadPointer('lean-team', { ref, offset: 0 })).toEqual({ tool: 'read', args: { history: ref, offset: 0 } });
   });
 
   it('parses both pointer shapes and rejects malformed ones', () => {

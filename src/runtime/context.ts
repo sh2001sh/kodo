@@ -389,7 +389,7 @@ export function initialContext(workspace: string, permissions: Permission[], car
     ...(instructions ? [instructions] : []),
     { role: 'user', content: objective },
   ];
-  if (isLeanProfile(options?.toolProfile) && (!identity.parentId || options.toolProfile === 'lean-team')) {
+  if (isLeanProfile(options?.toolProfile) && !identity.parentId) {
     // The lean view replaces the whole kernel and delegation rule set with one short prompt.
     messages[0] = { role: 'system', content: leanSystemPrompt({ workspace, permissions, runId: identity.id, finalResponse: identity.finalResponse, scope: identity.scope, exec: permissions.includes('exec') && card.tools.includes('shell.exec'), ...(identity.parentId ? { childRole: card.id.split('/').at(-1) } : {}) }) };
   } else if (structured && !identity.parentId) {

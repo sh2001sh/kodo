@@ -56,7 +56,7 @@ Options: Model context/output limits are resolved automatically; no budget prese
          --assembly deterministic [--assembly-work-tokens N] [--assembly-evidence-tokens N] (experimental; no extra model call)
          --inline-methods [--method-unloading on|off] [--method-tool-view stable|active] (card methods via Skills; checkpoint unloading defaults on)
          --agent-retention review|off --agent-factors A,B,C[,D,E]|none --project-roots JSON_FILE
-         --tool-profile compact-v2|compact-v1|full|lean-solo|lean-team --task-protocol 3|2|1 (new sessions; defaults compact-v2 and 3)
+         --tool-profile compact-v2|compact-v1|full|lean-solo --task-protocol 3|2|1 (new sessions; defaults compact-v2 and 3)
          --memory --lazy-tools (optional; disabled by default, persisted for resume)
          --verification-config JSON_FILE (fixed WSL/container command; enabled and approved by the host)
          --package author/name[@version] (activate imported/adopted package; persisted for resume)
@@ -124,7 +124,7 @@ async function main(): Promise<void> {
   } else if (['agent', 'objective', 'slot', 'scope', 'model-binding'].some(key => values[key as keyof typeof values] !== undefined)) throw new KodoError('ARGUMENTS', '--agent, --objective, --slot, --scope and --model-binding are only valid for spawn');
   if (['agent-retention', 'agent-factors', 'project-roots', 'tool-profile', 'task-protocol'].some(key => values[key as keyof typeof values] !== undefined) && !['run', 'chat'].includes(command!)) throw new KodoError('ARGUMENTS', 'agent policies are only valid for run or chat; other commands use the saved policy');
   const toolProfile = values['tool-profile'];
-  if (toolProfile !== undefined && toolProfile !== 'compact-v1' && toolProfile !== 'compact-v2' && toolProfile !== 'full' && toolProfile !== 'lean-solo' && toolProfile !== 'lean-team') throw new KodoError('ARGUMENTS', '--tool-profile must be compact-v1, compact-v2, full, lean-solo or lean-team');
+  if (toolProfile !== undefined && toolProfile !== 'compact-v1' && toolProfile !== 'compact-v2' && toolProfile !== 'full' && toolProfile !== 'lean-solo') throw new KodoError('ARGUMENTS', '--tool-profile must be compact-v1, compact-v2, full or lean-solo');
   const taskProtocol = values['task-protocol'];
   if (taskProtocol !== undefined && taskProtocol !== '1' && taskProtocol !== '2' && taskProtocol !== '3') throw new KodoError('ARGUMENTS', '--task-protocol must be 1, 2 or 3');
   if (values.context !== undefined && command !== 'inspect') throw new KodoError('ARGUMENTS', '--context is only valid for inspect');

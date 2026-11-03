@@ -45,6 +45,12 @@ async function cli(args: string[], env: Record<string, string> = {}, declareFixt
   });
 }
 describe('built CLI end to end', () => {
+  it('rejects the removed lean-team tool profile before creating runtime state', async () => {
+    const result = await cli(['run', 'Inspect the fixture.', '--tool-profile', 'lean-team']);
+    expect(result.code).not.toBe(0);
+    expect(result.err).toContain('--tool-profile must be compact-v1, compact-v2, full or lean-solo');
+  });
+
   it.each([undefined, 'A,B,C'])('persists default or explicitly selected role factors (%s)', async factors => {
     const root = temp();
     const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'Configuration recorded.' }), delta({}, 'stop')]));

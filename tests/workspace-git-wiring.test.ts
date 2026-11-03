@@ -1,11 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { RecoveryManager } from '../src/runtime/recovery.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
-import { resolveToolCall } from '../src/runtime/tool-view.js';
 import { KodoError } from '../src/runtime/types.js';
 import type { Call, Provider, ToolRequest } from '../src/runtime/types.js';
 import { answer, call, calls, fixture, scripted } from './helpers.js';
@@ -13,7 +11,7 @@ import { answer, call, calls, fixture, scripted } from './helpers.js';
 const signal = () => new AbortController().signal;
 const git = (root: string, ...args: string[]): string => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.autocrlf=false', ...args], { cwd: root, encoding: 'utf8', windowsHide: true });
 function setup(provider?: Provider, permissions: ('read' | 'write' | 'exec')[] = ['read', 'write', 'exec']) {
-  const f = fixture(provider, permissions, { toolProfile: 'lean-team', taskProtocol: 3, instructions: { global: false } });
+  const f = fixture(provider, permissions, { toolProfile: 'lean-solo', taskProtocol: 3, instructions: { global: false } });
   git(f.root, 'init', '-b', 'main');
   writeFileSync(path.join(f.root, 'value.txt'), 'original\n');
   git(f.root, 'add', 'value.txt');
@@ -66,7 +64,7 @@ describe('Git delivery through lean view and real Tools', () => {
     let head = '';
     const f = setup(scripted(
       async request => {
-        expect(request.tools.map(tool => tool.name)).toEqual(['read', 'edit', 'write', 'bash', 'job', 'delegate', 'task', 'find_agents', 'ask_user']);
+        expect(request.tools.map(tool => tool.name)).toEqual(['read', 'edit', 'write', 'bash', 'job', 'ask_user']);
         const job = request.tools.find(tool => tool.name === 'job')!;
         expect(job.parameters.properties).toHaveProperty('git');
         return calls(call('job', { action: 'git', git: { action: 'status' } }, 'git-status'));
@@ -98,20 +96,6 @@ describe('Git delivery through lean view and real Tools', () => {
     await expect(f.tools.execute(f.runId, 'workspace.git', { action: 'branch', name: 'feature/read-only', expectedHead: f.head }, signal(), started)).rejects.toMatchObject({ code: 'EXECUTION_PERMISSION' });
     expect(started).not.toHaveBeenCalled();
     expect(git(f.root, 'branch', '--show-current').trim()).toBe('main');
-  });
-
-  it('omits Git from child job views and retains the ordinary process job interface', async () => {
-    const f = setup();
-    const parent = f.app.store.run(f.runId);
-    const child = { ...parent, id: randomUUID(), parentId: parent.id, status: 'completed' as const, taskNode: { ownerId: parent.id, nodeId: 'child', role: 'implementer', generation: 1 } };
-    f.app.store.putRun(child);
-    const specs = toolSpecs(f.app.coordinator, child, f.app.store.session(parent.sessionId));
-    const job = specs.find(spec => spec.name === 'job')!;
-    expect(job.parameters.properties).not.toHaveProperty('git');
-    expect(job.parameters.required).toEqual(['id']);
-    expect(resolveToolCall('lean-team', call('job', { id: 'ordinary-job' }), true, 'implementer').name).toBe('process.read');
-    expect(() => resolveToolCall('lean-team', call('job', { action: 'git', git: { action: 'status' } }), true, 'implementer')).toThrow('main job');
-    await expect(f.tools.execute(child.id, 'workspace.git', { action: 'status' }, signal())).rejects.toMatchObject({ code: 'TOOL_DENIED' });
   });
 
   it('requires shell execution authorization for the implicit main Git capability', async () => {

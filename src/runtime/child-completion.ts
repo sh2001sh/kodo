@@ -7,12 +7,7 @@ import type { Run } from './types.js';
 export function childCompletionState(store: Store, run: Run) {
   const owners = run.parentId ? [] : recoveryHistoryRuns(store, run);
   const ownerIds = new Set(owners.map(owner => owner.id));
-  // Graph-owned children are settled through node outcomes, including inspected
-  // failures and superseded generations. Checking them again as legacy children
-  // would require tools the lean view deliberately does not expose.
-  const team = store.session(run.sessionId).toolProfile === 'lean-team';
-  const children = store.listRuns(run.sessionId).filter(child => child.parentId && ownerIds.has(child.parentId)
-    && !(team && child.taskNode && ownerIds.has(child.taskNode.ownerId)));
+  const children = store.listRuns(run.sessionId).filter(child => child.parentId && ownerIds.has(child.parentId));
   const inspected = new Set<string>();
   if (children.some(child => child.status === 'failed')) {
     for (const owner of owners) for (const call of store.calls(owner.id)) {

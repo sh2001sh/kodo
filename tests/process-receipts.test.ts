@@ -18,7 +18,7 @@ describe('retained lean command output', () => {
   });
 
   it('keeps the complete settled background output in the finish event receipt', async () => {
-    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], { toolProfile: 'lean-team', taskProtocol: 3 });
+    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], { toolProfile: 'lean-solo', taskProtocol: 3 });
     await app.coordinator.tools.execute(runId, 'shell.exec', { command: "sleep 0.2; printf 'background complete'", background: true }, AbortSignal.timeout(20_000));
     await app.coordinator.tools.backgroundSettled();
     const event = app.store.latestEvent(runId, { types: ['process.background.finished'] })!;

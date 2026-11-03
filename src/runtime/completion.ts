@@ -78,7 +78,7 @@ function requestCorrection(host: StepHost, run: Run, response: ModelResponse, fe
 export async function checkCompletion(host: StepHost, run: Run, response: ModelResponse, signal: AbortSignal): Promise<StepOutcome> {
   const { store } = host;
   const children = childCompletionState(store, run);
-  const graph = !run.parentId && (store.session(run.sessionId).toolProfile === 'lean-team' || store.session(run.sessionId).inlineMethods) ? taskGraphCompletionState(store, run.id) : undefined;
+  const graph = !run.parentId && store.session(run.sessionId).inlineMethods ? taskGraphCompletionState(store, run.id) : undefined;
   const taskGraphStamp = graph ? { taskGraphStamp: graph.fingerprint } : {};
   const text = response.message.content ?? '';
   const delivery = { required: run.finalResponse !== 'optional', passed: run.finalResponse === 'optional' || text.trim().length > 0 };
@@ -91,21 +91,6 @@ export async function checkCompletion(host: StepHost, run: Run, response: ModelR
   if (store.inbox(run.id).length) return unchecked();
   const unresolved = unresolvedCompletionWrites(host, run);
   if (unresolved.length) return { kind: 'fail', error: `UNKNOWN_WRITE: reconcile unsettled effects before completing this task: ${unresolved.map(call => call.id).join(', ')}` };
-  if (graph?.decision === 'wait' && !children.feedback) {
-    if (!host.tasks) throw new KodoError('TASK_RUNTIME', 'the task graph scheduler is unavailable; completion cannot wait safely');
-    return store.transaction(() => {
-      signal.throwIfAborted();
-      const current = store.run(run.id);
-      if (terminal(current.status) || current.status === 'interrupted') throw new KodoError('RECOVERY_REQUIRED', 'run ended or paused before waiting for task nodes');
-      const context = store.readBlob<Message[]>(current.contextRef);
-      context.push(response.message, attachment('completion-check', 'Completion deferred while task nodes are being scheduled, running or integrating. Their outcomes will wake this run; this wait does not count as a failed quality check.'));
-      store.updateRun(run.id, { contextRef: store.blob(context), stepCallId: undefined, step: current.step + 1 });
-      const nodeIds = graph.autonomous.map(item => item.id);
-      const wait = host.tasks!.wait(current, nodeIds, 'all');
-      store.event(run.id, 'completion.deferred', { reason: 'active_task_nodes', nodeIds, waitId: wait.waitId });
-      return { kind: 'wait', waitId: wait.waitId };
-    });
-  }
   if (children.active.length && !children.interrupted.length && graph?.decision !== 'feedback') {
     // Ordinary child progress is not a failed deliverable. Reuse durable waits,
     // retaining the candidate and advancing the model step exactly once.

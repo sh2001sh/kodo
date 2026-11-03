@@ -40,7 +40,7 @@ export function executeMethodStage(store: Store, run: Run, callId: string, args:
   const action = args.action as string;
   if (action === 'declare') {
     const declaration = { tasks: (args.tasks as TaskDeclaration['tasks'] ?? []).map(task => ({ ...task, needs: task.needs ?? {}, owner: 'self' as const })) };
-    return declareTasks(store, run.id, declaration, { maxTaskNodes: session.maxTaskNodes });
+    return declareTasks(store, run.id, declaration, {});
   }
   const graph = readTaskGraph(store, run.id);
   const node = requireTaskNode(graph, args.node_id as string);
