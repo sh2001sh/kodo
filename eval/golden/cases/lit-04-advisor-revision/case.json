@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "lit-04-advisor-revision",
+  "category": "literature",
+  "title": "按导师 5 条意见修订论文草稿",
+  "objective": "你是一名研究生，需要按导师意见修改一篇论文初稿。materials/ 目录下有 4 份材料：materials/draft.md（待修改的初稿）、materials/advisor-comments.md（导师的 5 条修改意见，必须逐条落实）、materials/paper-1-hier-rag.md 与 materials/paper-2-iterwrite.md（初稿所依据的两篇论文，修改时用于核对数据与补引）。请仔细阅读草稿与全部 5 条意见，在 deliverables/revised.md 中写出修订稿，要求：\n1. 逐条落实 advisor-comments.md 中的 5 条意见（补局限、修正结论、补引 paper-2、调整结构、压缩摘要），每条意见的具体验收写法以意见原文为准（例如固定的章节标题、摘要字数上限、结论措辞、引用路径写法）。\n2. 修订稿必须保留初稿中可核对的方法与数据事实，不得篡改数值；需要引用来源时写成 materials/ 下的真实文件路径（例如 materials/paper-2-iterwrite.md）。\n3. 如果逐字引用原文，必须使用材料中的原句并用中文引号“”括起（引号内不少于 10 个字），不得改写。\n4. 不得修改 materials/ 下的任何文件（包括 draft.md 与 advisor-comments.md）；不得写任何外部链接（http/https）；不要联网。\n5. 只使用 materials/ 下的材料与你自己的产出。最终交付物写入 deliverables/revised.md。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 100,
+    "maxTokens": 3000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "grading": {
+    "stage": [{ "from": "verify/stage", "to": "_verify" }]
+  },
+  "notes": "文献类样例 4/4。评测点：把 5 条可机械核验的修改意见逐条落实（新增局限小节 + ≥3 条列表、修正结论措辞、补引 materials/paper-2-iterwrite.md、章节顺序重排、摘要压缩到 ≤180 汉字），并用 protected-unchanged 保护 materials/draft.md 与 materials/advisor-comments.md 不被修改。held-out 脚本 verify/stage/check-revision.mjs 负责结构/字数/顺序检查。参考解见 verify/reference/deliverables/revised.md。"
+}

@@ -1,0 +1,37 @@
+paper,model,dataset,metric,value
+paper-1-retriever-bench.md,BM25,LongDoc-Write-test,nDCG@10,41.3
+paper-1-retriever-bench.md,BM25,LongDoc-Write-test,Recall@100,68.5
+paper-1-retriever-bench.md,BM25,SciRet-zh,nDCG@10,38.7
+paper-1-retriever-bench.md,BM25,SciRet-zh,Recall@100,64.2
+paper-1-retriever-bench.md,DPR-zh,LongDoc-Write-test,nDCG@10,47.9
+paper-1-retriever-bench.md,DPR-zh,LongDoc-Write-test,Recall@100,74.6
+paper-1-retriever-bench.md,DPR-zh,SciRet-zh,nDCG@10,44.5
+paper-1-retriever-bench.md,DPR-zh,SciRet-zh,Recall@100,71.3
+paper-1-retriever-bench.md,DenseRet-Aca,LongDoc-Write-test,nDCG@10,51.6
+paper-1-retriever-bench.md,DenseRet-Aca,LongDoc-Write-test,Recall@100,78.9
+paper-1-retriever-bench.md,DenseRet-Aca,SciRet-zh,nDCG@10,48.2
+paper-1-retriever-bench.md,DenseRet-Aca,SciRet-zh,Recall@100,75.4
+paper-2-rerank.md,单阶段 DenseRet-Aca,LongDoc-Write-test,nDCG@10,51.6
+paper-2-rerank.md,单阶段 DenseRet-Aca,LongDoc-Write-test,MAP,44.8
+paper-2-rerank.md,单阶段 DenseRet-Aca,SciRet-zh,nDCG@10,48.2
+paper-2-rerank.md,单阶段 DenseRet-Aca,SciRet-zh,MAP,41.9
+paper-2-rerank.md,Rerank-Aca,LongDoc-Write-test,nDCG@10,57.4
+paper-2-rerank.md,Rerank-Aca,LongDoc-Write-test,MAP,50.3
+paper-2-rerank.md,Rerank-Aca,SciRet-zh,nDCG@10,53.8
+paper-2-rerank.md,Rerank-Aca,SciRet-zh,MAP,46.7
+paper-2-rerank.md,Rerank-Aca-增强,LongDoc-Write-test,nDCG@10,58.9
+paper-2-rerank.md,Rerank-Aca-增强,LongDoc-Write-test,MAP,52.1
+paper-2-rerank.md,Rerank-Aca-增强,SciRet-zh,nDCG@10,55.2
+paper-2-rerank.md,Rerank-Aca-增强,SciRet-zh,MAP,48.0
+paper-3-hybrid.md,BM25,SciRet-zh,Recall@50,62.4
+paper-3-hybrid.md,BM25,SciRet-zh,MRR,0.412
+paper-3-hybrid.md,BM25,TechDoc-zh,Recall@50,59.1
+paper-3-hybrid.md,BM25,TechDoc-zh,MRR,0.389
+paper-3-hybrid.md,DenseRet-Aca,SciRet-zh,Recall@50,71.8
+paper-3-hybrid.md,DenseRet-Aca,SciRet-zh,MRR,0.478
+paper-3-hybrid.md,DenseRet-Aca,TechDoc-zh,Recall@50,68.5
+paper-3-hybrid.md,DenseRet-Aca,TechDoc-zh,MRR,0.451
+paper-3-hybrid.md,Hybrid-RRF,SciRet-zh,Recall@50,76.3
+paper-3-hybrid.md,Hybrid-RRF,SciRet-zh,MRR,0.512
+paper-3-hybrid.md,Hybrid-RRF,TechDoc-zh,Recall@50,72.9
+paper-3-hybrid.md,Hybrid-RRF,TechDoc-zh,MRR,0.487

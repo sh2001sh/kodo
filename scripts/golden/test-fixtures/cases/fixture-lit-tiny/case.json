@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "fixture-lit-tiny",
+  "category": "literature",
+  "title": "Tiny literature fixture for golden-engine self-test",
+  "objective": "Read materials/paper-a.md and materials/paper-b.md. Write a short brief to deliverables/brief.md that names each paper, reports the accuracy, and quotes at least one sentence verbatim from a source. Finish with a one-line summary.",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 20,
+    "maxTokens": 200000,
+    "maxToolCalls": 40,
+    "maxDurationMs": 300000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "notes": "Engine self-test fixture. Never part of the paid golden matrix."
+}

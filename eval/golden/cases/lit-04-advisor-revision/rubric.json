@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    {
+      "id": "M1",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": { "path": "deliverables/revised.md", "minBytes": 3000 }
+    },
+    {
+      "id": "M2",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/revised.md",
+        "all": ["## 摘要", "## 1 引言", "## 2 方法", "## 3 实验", "## 4 讨论", "## 5 局限与未来工作", "## 6 结论"]
+      }
+    },
+    {
+      "id": "M3",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/revised.md",
+        "all": ["materials/paper-1-hier-rag.md", "materials/paper-2-iterwrite.md"]
+      }
+    },
+    {
+      "id": "M4",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/revised.md",
+        "all": ["84.7", "92.3", "86.1", "90.8"]
+      }
+    },
+    {
+      "id": "M5",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/revised.md",
+        "none": ["全面优于", "显著优于"]
+      }
+    },
+    {
+      "id": "M6",
+      "kind": "command",
+      "weight": 2,
+      "params": {
+        "program": "node",
+        "args": ["_verify/check-revision.mjs"],
+        "expectExit": 0,
+        "timeoutMs": 20000
+      }
+    },
+    {
+      "id": "H1",
+      "kind": "human",
+      "weight": 1,
+      "params": {
+        "question": "修订稿是否忠实保留了初稿的方法与数据事实（未篡改数值）、语言通顺，且 5 条意见都已真正落实而不是机械贴标签？"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "protected-unchanged",
+      "params": { "paths": ["materials/draft.md", "materials/advisor-comments.md"] }
+    },
+    {
+      "id": "R2",
+      "kind": "citation-sources",
+      "params": {
+        "path": "deliverables/revised.md",
+        "allowedRoots": ["materials"],
+        "requireExcerpt": true
+      }
+    },
+    {
+      "id": "R3",
+      "kind": "file-contains",
+      "params": {
+        "path": "deliverables/revised.md",
+        "none": ["http://", "https://"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.7,
+  "rules": [
+    { "id": "R1", "kind": "command", "params": { "program": "node", "args": ["_verify/run_acceptance.mjs"], "expectExit": 0, "timeoutMs": 60000 } },
+    { "id": "R2", "kind": "protected-unchanged", "params": { "paths": ["tests"] } }
+  ],
+  "checks": [
+    { "id": "C1", "kind": "json-values", "weight": 2, "params": { "path": "_verify/result.json", "expect": { "tests.mul_ok": true } } },
+    { "id": "C2", "kind": "command", "weight": 1, "params": { "program": "node", "args": ["tests/existing.test.mjs"], "expectExit": 0, "timeoutMs": 60000 } },
+    { "id": "C3", "kind": "artifact-count", "weight": 1, "params": { "dir": "_verify", "glob": "*.json", "min": 1 } },
+    { "id": "C4", "kind": "human", "weight": 1, "params": { "question": "Does the final reply report the test command and its real result?" } }
+  ]
+}

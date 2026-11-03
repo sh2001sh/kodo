@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.8,
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "citation-sources",
+      "params": { "path": "deliverables/brief.md", "allowedRoots": ["materials"], "requireExcerpt": true }
+    },
+    {
+      "id": "R2",
+      "kind": "protected-unchanged",
+      "params": { "paths": ["materials"] }
+    }
+  ],
+  "checks": [
+    { "id": "C1", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/brief.md", "minBytes": 80 } },
+    { "id": "C2", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/brief.md", "all": ["Accuracy", "AlphaNet"], "none": ["fabricated citation"] } },
+    { "id": "C3", "kind": "final-contains", "weight": 1, "params": { "all": ["summary"] } },
+    { "id": "C4", "kind": "final-regex", "weight": 1, "params": { "patterns": [{ "pattern": "accurate", "flags": "i" }] } },
+    { "id": "C5", "kind": "human", "weight": 1, "params": { "question": "Does the brief compare both papers fairly?" } }
+  ]
+}

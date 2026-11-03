@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    {
+      "id": "M1",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": { "path": "deliverables/extracted.csv", "minBytes": 400 }
+    },
+    {
+      "id": "M2",
+      "kind": "csv-columns",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "required": ["paper", "model", "dataset", "metric", "value"]
+      }
+    },
+    {
+      "id": "M3",
+      "kind": "csv-rows",
+      "weight": 2,
+      "params": { "path": "deliverables/extracted.csv", "minRows": 12 }
+    },
+    {
+      "id": "M4",
+      "kind": "csv-cell",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "where": { "paper": "paper-1-retriever-bench.md", "model": "BM25", "dataset": "LongDoc-Write-test", "metric": "nDCG@10" },
+        "expect": { "value": 41.3 },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M5",
+      "kind": "csv-cell",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "where": { "paper": "paper-1-retriever-bench.md", "model": "DenseRet-Aca", "dataset": "SciRet-zh", "metric": "Recall@100" },
+        "expect": { "value": 75.4 },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M6",
+      "kind": "csv-cell",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "where": { "paper": "paper-2-rerank.md", "model": "Rerank-Aca", "dataset": "LongDoc-Write-test", "metric": "MAP" },
+        "expect": { "value": 50.3 },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M7",
+      "kind": "csv-cell",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "where": { "paper": "paper-2-rerank.md", "model": "Rerank-Aca-增强", "dataset": "SciRet-zh", "metric": "nDCG@10" },
+        "expect": { "value": 55.2 },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M8",
+      "kind": "csv-cell",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "where": { "paper": "paper-3-hybrid.md", "model": "Hybrid-RRF", "dataset": "TechDoc-zh", "metric": "MRR" },
+        "expect": { "value": 0.487 },
+        "tolerance": 0.0005
+      }
+    },
+    {
+      "id": "M9",
+      "kind": "csv-cell",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/extracted.csv",
+        "where": { "paper": "paper-3-hybrid.md", "model": "DenseRet-Aca", "dataset": "SciRet-zh", "metric": "Recall@50" },
+        "expect": { "value": 71.8 },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "H1",
+      "kind": "human",
+      "weight": 1,
+      "params": {
+        "question": "CSV 是否完整抽取了 3 篇论文表 2 的全部行（无遗漏、无重复、无混入消融/附录表），且模型名、数据集名、指标名与数值均与论文一致？"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "protected-unchanged",
+      "params": { "paths": ["materials"] }
+    }
+  ]
+}

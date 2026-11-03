@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "fixture-coding-tiny",
+  "category": "coding",
+  "title": "Tiny coding fixture with grading restore/stage for golden-engine self-test",
+  "objective": "Implement mul(a, b) in src/calc.js without changing tests/. Run the existing tests and finish with a one-line result.",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 30,
+    "maxTokens": 300000,
+    "maxToolCalls": 60,
+    "maxDurationMs": 600000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": ".",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "grading": {
+    "restore": ["tests"],
+    "stage": [{ "from": "verify/stage", "to": "_verify" }]
+  },
+  "notes": "Engine self-test fixture for grading restore/stage + command checks. Never part of the paid matrix."
+}

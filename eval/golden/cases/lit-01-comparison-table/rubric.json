@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    {
+      "id": "M1",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": { "path": "deliverables/comparison.md", "minBytes": 2000 }
+    },
+    {
+      "id": "M2",
+      "kind": "markdown-table",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/comparison.md",
+        "requiredHeaders": ["论文", "方法", "数据集", "样本量", "主要指标", "局限"],
+        "minRows": 5
+      }
+    },
+    {
+      "id": "M3",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/comparison.md",
+        "all": [
+          "materials/paper-1-hier-rag.md",
+          "materials/paper-2-iterwrite.md",
+          "materials/paper-3-longqa-bench.md",
+          "materials/paper-4-outline-write.md",
+          "materials/paper-5-citeguard.md"
+        ]
+      }
+    },
+    {
+      "id": "M4",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/comparison.md",
+        "all": ["84.7", "92.3", "86.1", "90.8", "88.5", "94.6"]
+      }
+    },
+    {
+      "id": "M5",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": { "path": "deliverables/comparison.md", "any": ["1,200", "1200"] }
+    },
+    {
+      "id": "M6",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": { "path": "deliverables/comparison.md", "any": ["1,600", "1600"] }
+    },
+    {
+      "id": "M7",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": { "path": "deliverables/comparison.md", "all": ["综合结论"] }
+    },
+    {
+      "id": "M8",
+      "kind": "command",
+      "weight": 1,
+      "params": {
+        "program": "node",
+        "args": ["_verify/check-conclusion.mjs"],
+        "expectExit": 0,
+        "timeoutMs": 20000
+      }
+    },
+    {
+      "id": "H1",
+      "kind": "human",
+      "weight": 1,
+      "params": {
+        "question": "对比表是否逐篇准确提取方法、数据集、样本量、主要指标与局限（无编造），且综合结论是否覆盖方法路线、数据规模、指标可比性、共同局限四方面？"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "citation-sources",
+      "params": {
+        "path": "deliverables/comparison.md",
+        "allowedRoots": ["materials"],
+        "requireExcerpt": true
+      }
+    },
+    {
+      "id": "R2",
+      "kind": "file-contains",
+      "params": {
+        "path": "deliverables/comparison.md",
+        "none": ["http://", "https://"]
+      }
+    }
+  ]
+}

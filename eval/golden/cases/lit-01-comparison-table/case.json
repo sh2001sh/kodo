@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "lit-01-comparison-table",
+  "category": "literature",
+  "title": "五篇长上下文检索与学术写作辅助论文的方法—结果对比表",
+  "objective": "你是一名文献调研助手。materials/ 目录下有 5 篇中文论文的文本化版本，主题是长上下文检索增强与学术写作辅助，文件为：materials/paper-1-hier-rag.md、materials/paper-2-iterwrite.md、materials/paper-3-longqa-bench.md、materials/paper-4-outline-write.md、materials/paper-5-citeguard.md。请通读全部 5 篇材料，在 deliverables/comparison.md 中产出一份中文对比报告，要求如下。\n1. 报告包含一张 Markdown 对比表，表头必须恰好为：论文 | 方法 | 数据集 | 样本量 | 主要指标 | 局限。对比表至少有 5 个数据行，每份材料对应一行（按 paper-1 到 paper-5 的顺序）。论文列写材料路径加论文标题（例如 materials/paper-1-hier-rag.md 《…》）；方法、数据集、样本量、主要指标、局限五列全部从对应材料中提取，不许编造。主要指标列必须写出材料结果表中出现的精确数值（至少保留一位小数并带 % 或写明单位），每行至少包含 2 个数值。\n2. 报告末尾包含二级标题「## 综合结论」小节，用不少于 300 个汉字综合比较 5 篇工作，需覆盖：方法路线差异、数据集与样本量差异、指标是否可以直接比较、共同局限。\n3. 引用来源必须写成 materials/ 目录下真实存在的文件路径，不得引用材料之外的文件，不得在报告中写任何外部链接（http 或 https）。如果引用原文，必须逐字复制材料中的原句并用中文引号“”括起（引号内不少于 10 个字），不得改写或拼接后再引用。\n4. 只使用 materials/ 下的材料与你自己的产出，不要联网。最终交付物写入 deliverables/comparison.md，不要修改 materials/ 下的任何文件。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 100,
+    "maxTokens": 3000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "grading": {
+    "stage": [{ "from": "verify/stage", "to": "_verify" }]
+  },
+  "notes": "文献类样例 1/4。评测点：跨 5 篇材料做结构化对比（表格结构、行数、精确指标数值、样本量、引用真实路径、禁止外部链接），并用 300 字综合结论考察跨论文综合与指标可比性判断。所有精确数值均可在 materials/ 的摘要与结果表中核对；参考交付物见 verify/reference/deliverables/comparison.md。"
+}

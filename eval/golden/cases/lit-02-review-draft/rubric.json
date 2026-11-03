@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    {
+      "id": "M1",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": { "path": "deliverables/review.md", "minBytes": 2500 }
+    },
+    {
+      "id": "M2",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/review.md",
+        "all": [
+          "materials/paper-1-hier-rag.md",
+          "materials/paper-2-iterwrite.md",
+          "materials/paper-3-longqa-bench.md",
+          "materials/paper-4-outline-write.md",
+          "materials/paper-5-citeguard.md",
+          "materials/paper-6-survey.md"
+        ]
+      }
+    },
+    {
+      "id": "M3",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": { "path": "deliverables/review.md", "all": ["研究空白"] }
+    },
+    {
+      "id": "M4",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/review.md",
+        "all": ["Hier-RAG", "IterWrite", "OutlineWrite", "CiteGuard", "LongQA-Aca"]
+      }
+    },
+    {
+      "id": "M5",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/review.md",
+        "all": ["84.7", "92.3", "86.1", "90.8", "49.8"]
+      }
+    },
+    {
+      "id": "M6",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/review.md",
+        "all": ["LongDoc-Write", "IterBench-500", "LongQA-Aca", "WriteBench-zh", "CiteBench-zh"]
+      }
+    },
+    {
+      "id": "M7",
+      "kind": "command",
+      "weight": 2,
+      "params": {
+        "program": "node",
+        "args": ["_verify/check-review.mjs"],
+        "expectExit": 0,
+        "timeoutMs": 20000
+      }
+    },
+    {
+      "id": "H1",
+      "kind": "human",
+      "weight": 1,
+      "params": {
+        "question": "综述是否准确概括了 6 份材料的贡献、方法与差异，且没有与材料矛盾的事实错误？"
+      }
+    },
+    {
+      "id": "H2",
+      "kind": "human",
+      "weight": 1,
+      "params": {
+        "question": "“研究空白”小节是否给出至少 3 条具体、可操作、与材料一致的空白，而不是泛泛而谈？"
+      }
+    }
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "citation-sources",
+      "params": {
+        "path": "deliverables/review.md",
+        "allowedRoots": ["materials"],
+        "requireExcerpt": true
+      }
+    },
+    {
+      "id": "R2",
+      "kind": "file-contains",
+      "params": {
+        "path": "deliverables/review.md",
+        "none": ["http://", "https://"]
+      }
+    }
+  ]
+}
