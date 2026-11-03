@@ -45,7 +45,8 @@
     "eval:golden": "npm run build && node scripts/golden/run.mjs",
     "test:golden": "node --test scripts/golden/*.test.mjs",
     "verify:installation": "node scripts/verify-installation.mjs",
-    "verify:platform": "npm run build && node scripts/verify-platform.mjs"
+    "verify:platform": "npm run build && node scripts/verify-platform.mjs",
+    "compare:golden": "node scripts/golden/compare.mjs"
   },
   "dependencies": {
     "ajv": "8.20.0",
