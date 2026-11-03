@@ -30,6 +30,7 @@ describe('frozen efficiency defaults', () => {
   it('rejects invalid host profile and protocol values before creating runtime state', () => {
     const directory = path.join(temp(), '.state');
     expect(() => new Application(directory, scripted(), undefined, { toolProfile: 'invalid' as 'full' })).toThrow('toolProfile');
+    expect(() => new Application(directory, scripted(), undefined, { toolProfile: 'lean-team' as 'full' })).toThrow('toolProfile must be compact-v1, compact-v2, full or lean-solo');
     expect(() => new Application(directory, scripted(), undefined, { taskProtocol: 4 as 3 })).toThrow('taskProtocol');
   });
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { compactDefaultCard, leanBuiltinAgentCards, leanDefaultCard, simpleDefaultCard, defaultCard, parseCard, validateCard } from '../agents/card.js';
+import { compactDefaultCard, leanDefaultCard, simpleDefaultCard, defaultCard, parseCard, validateCard } from '../agents/card.js';
 import { RunCoordinator } from '../runtime/coordinator.js';
 import { defaultBudget, KodoError, terminal } from '../runtime/types.js';
 import { resolveModelLimits, validateModelBinding } from '../providers/model-limits.js';
@@ -58,6 +58,7 @@ import { attachment } from '../runtime/attachments.js';
 import type { AgentFactors } from '../runtime/agent-factors.js';
 import { runWorkspace } from '../runtime/execution-workspace.js';
 import { isLeanProfile } from '../runtime/tool-view.js';
+import { assertSessionCompatible } from '../runtime/session-compat.js';
 
 export interface CreateRunOptions { objective: string; workspace: string; binding: ModelBinding; permissions?: Permission[]; scope?: FileScope; budget?: Partial<Budget>; card?: Card; finalResponse?: 'required' | 'optional'; toolChoice?: 'none'; deliverables?: Deliverable[]; team?: SpawnAgentRequest[] | ((main: Run) => SpawnAgentRequest[]) }
 export interface ApplicationOptions {
@@ -67,8 +68,6 @@ export interface ApplicationOptions {
   taskProtocol?: 1 | 2 | 3;
   /** Default programming tool view; custom cards retain their declared capabilities. */
   toolProfile?: Session['toolProfile'];
-  /** Maximum declared task nodes in a lean-team session, independently of active children. */
-  maxTaskNodes?: number;
   projectRoots?: Record<string, string[]>;
   modelRoles?: Partial<Record<'fast' | 'standard' | 'strong', string>>;
   /** Conditional capacity protection enabled by default; false explicitly disables model-generated summaries. */
@@ -121,7 +120,6 @@ export class Application {
   private readonly agentFactors: Required<AgentFactors>;
   private readonly taskProtocol: 1 | 2 | 3;
   private readonly toolProfile: NonNullable<Session['toolProfile']>;
-  private readonly maxTaskNodes: number;
   private readonly projectRoots: Record<string, string[]>;
   private readonly modelRoles: Partial<Record<'fast' | 'standard' | 'strong', string>>;
   private readonly modelBindings?: Record<string, ModelBinding>;
@@ -144,8 +142,8 @@ export class Application {
   private readonly optionalTools: string[];
   get defaultCard(): Card {
     const base = this.legacyDefaultCard;
-    // lean-solo has no roster; delegation arrives with lean-team.
-    if ((!this.agentFactors.A && this.toolProfile !== 'lean-team') || this.toolProfile === 'lean-solo') return base;
+    // lean-solo has no roster; delegation profiles keep it.
+    if (!this.agentFactors.A || this.toolProfile === 'lean-solo') return base;
     const available = new Set(this.coordinator.tools.availableNames());
     const tools = [...new Set([...base.tools, ...(this.toolProfile === 'full' && this.agentRetention === 'review' ? ['agent.propose', 'agent.retain'] : [])])].filter(name => available.has(name));
     const members = this.builtinCards.filter(card => ['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer'].includes(card.id)).map(({ id, version, digest }) => ({ id, version, digest }));
@@ -154,7 +152,7 @@ export class Application {
     const identity = digest(JSON.stringify(card));
     return { ...card, id: `${card.id}-${identity.slice(0, 12)}`, digest: identity };
   }
-  private get builtinCards(): Card[] { return this.toolProfile === 'lean-team' ? leanBuiltinAgentCards : this.toolProfile === 'compact-v2' ? simpleBuiltinAgentCards : this.toolProfile === 'compact-v1' ? compactBuiltinAgentCards : builtinAgentCards; }
+  private get builtinCards(): Card[] { return this.toolProfile === 'compact-v2' ? simpleBuiltinAgentCards : this.toolProfile === 'compact-v1' ? compactBuiltinAgentCards : builtinAgentCards; }
   private get legacyDefaultCard(): Card {
     // Explicit exploration workflows keep their complete capability set. Ordinary
     // compact sessions do not acquire the knowledge catalog just because storage exists.
@@ -170,10 +168,8 @@ export class Application {
     validateCompactionPolicy(compaction);
     validateAssemblyPolicy(options.assembly);
     if (options.taskProtocol !== undefined && ![1, 2, 3].includes(options.taskProtocol)) throw new KodoError('TASK_PROTOCOL', 'taskProtocol must be 1, 2 or 3');
-    if (options.toolProfile !== undefined && !['compact-v1', 'compact-v2', 'full', 'lean-solo', 'lean-team'].includes(options.toolProfile)) throw new KodoError('TOOL_PROFILE', 'toolProfile must be compact-v1, compact-v2, full, lean-solo or lean-team');
+    if (options.toolProfile !== undefined && !['compact-v1', 'compact-v2', 'full', 'lean-solo'].includes(options.toolProfile)) throw new KodoError('TOOL_PROFILE', 'toolProfile must be compact-v1, compact-v2, full or lean-solo');
     if (isLeanProfile(options.toolProfile) && options.taskProtocol !== undefined && options.taskProtocol !== 3) throw new KodoError('TASK_PROTOCOL', 'lean profiles require taskProtocol 3');
-    if (options.maxTaskNodes !== undefined && (!Number.isSafeInteger(options.maxTaskNodes) || options.maxTaskNodes < 1)) throw new KodoError('TASK_BUDGET', 'maxTaskNodes must be a positive safe integer');
-    this.maxTaskNodes = options.maxTaskNodes ?? 32;
     this.taskProtocol = options.taskProtocol ?? 3;
     this.toolProfile = options.toolProfile ?? 'compact-v2';
     this.inlineMethods = options.inlineMethods ?? false;
@@ -451,6 +447,7 @@ export class Application {
   createRun(options: CreateRunOptions): Run { return this.createResolvedRun(options); }
   /** Host and model delegates share the same transaction, scope checks and child budget. */
   spawnAgent(sessionId: string, request: SpawnAgentRequest): Run {
+    assertSessionCompatible(this.store.session(sessionId));
     const active = this.store.listRuns(sessionId).filter(run => !run.parentId && !terminal(run.status) && !run.cancelRequested);
     if (active.length !== 1) throw new KodoError('SPAWN_PARENT', active.length ? 'session has multiple active main runs; resolve the continuation before spawning' : 'session has no active main run; start a follow-up before spawning');
     const parent = active[0]!;
@@ -499,17 +496,17 @@ export class Application {
     const toolBindings = this.coordinator.tools.bindingSnapshot(executableCard.tools, executableCard.skills ?? []);
     const run: Run = { id: runId, sessionId, objective: options.objective, status: 'queued', card: executableCard, binding: options.binding, modelLimits, scope, toolBindings, contextRef: this.store.blob([]), step: 0, cancelRequested: false, decisionVersion: 0, finalResponse: options.finalResponse, ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}), ...(deliverables ? { deliverables } : {}), createdAt };
     this.store.transaction(() => {
-      if (this.agentFactors.A || this.toolProfile === 'lean-team') for (const preset of [...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards, ...(this.toolProfile === 'lean-team' ? leanBuiltinAgentCards : [])]) this.registerCard(preset);
+      if (this.agentFactors.A) for (const preset of [...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards]) this.registerCard(preset);
       for (const projectCard of assets.cards) this.validateCardRegistration(projectCard, assets.cards);
       this.validateCardRegistration(card, assets.cards);
       this.store.registerCard(card);
-      const session: Session = { id: sessionId, workspace, permissions, budget, modelLimits, agentFactors: this.agentFactors, taskProtocol: this.taskProtocol, toolProfile: this.toolProfile, ...(this.toolProfile === 'lean-team' ? { maxTaskNodes: this.maxTaskNodes } : {}), projectRoots, modelRoles: structuredClone(this.modelRoles), ...(this.modelBindings === undefined ? {} : { modelBindings: structuredClone(this.modelBindings) }), ...(this.modelBindingDescriptions === undefined ? {} : { modelBindingDescriptions: structuredClone(this.modelBindingDescriptions) }), modelBudgetCeilings: { ...(options.budget?.maxContextTokens !== undefined ? { maxContextTokens: options.budget.maxContextTokens } : {}), ...(options.budget?.maxOutputTokens !== undefined ? { maxOutputTokens: options.budget.maxOutputTokens } : {}) }, tokens: 0, modelCalls: 0, toolCalls: 0, usageEstimated: false, decisionVersion: 0, createdAt };
+      const session: Session = { id: sessionId, workspace, permissions, budget, modelLimits, agentFactors: this.agentFactors, taskProtocol: this.taskProtocol, toolProfile: this.toolProfile, projectRoots, modelRoles: structuredClone(this.modelRoles), ...(this.modelBindings === undefined ? {} : { modelBindings: structuredClone(this.modelBindings) }), ...(this.modelBindingDescriptions === undefined ? {} : { modelBindingDescriptions: structuredClone(this.modelBindingDescriptions) }), modelBudgetCeilings: { ...(options.budget?.maxContextTokens !== undefined ? { maxContextTokens: options.budget.maxContextTokens } : {}), ...(options.budget?.maxOutputTokens !== undefined ? { maxOutputTokens: options.budget.maxOutputTokens } : {}) }, tokens: 0, modelCalls: 0, toolCalls: 0, usageEstimated: false, decisionVersion: 0, createdAt };
       if (this.inlineMethods) { session.inlineMethods = true; session.methodUnloading = this.methodUnloading; session.methodToolView = this.methodToolView; session.methodTools = executableCard.tools; session.methodSkills = executableCard.skills ?? []; }
       this.store.putSession(session);
       this.store.putRun(run);
       const available = this.coordinator.tools.availableNames();
-      const registered = this.store.registeredCards().filter(candidate => (!this.agentFactors.A && this.toolProfile !== 'lean-team') || (candidate.id !== card.id && !candidate.id.startsWith('builtin/general') && ![...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards, ...leanBuiltinAgentCards].some(preset => preset.id === candidate.id && preset.digest === candidate.digest)));
-      freezeRoster(this.store, session, card, { projectCards: assets.cards, userCards: registered, builtinCards: this.agentFactors.A || this.toolProfile === 'lean-team' ? this.builtinCards : [], skills: [...this.registeredSkillIds], tools: available, mcpServers: [...new Set(available.filter(name => name.startsWith('mcp.')).map(name => name.split('.')[1]!))], projectVariables: projectRoots, catalogDescriptions: assets.descriptions, scope });
+      const registered = this.store.registeredCards().filter(candidate => !this.agentFactors.A || (candidate.id !== card.id && !candidate.id.startsWith('builtin/general') && ![...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards].some(preset => preset.id === candidate.id && preset.digest === candidate.digest)));
+      freezeRoster(this.store, session, card, { projectCards: assets.cards, userCards: registered, builtinCards: this.agentFactors.A ? this.builtinCards : [], skills: [...this.registeredSkillIds], tools: available, mcpServers: [...new Set(available.filter(name => name.startsWith('mcp.')).map(name => name.split('.')[1]!))], projectVariables: projectRoots, catalogDescriptions: assets.descriptions, scope });
       const prepared = prepareInstructionContext(this.store, run, session, { global: this.globalInstructions, memory: this.projectMemory });
       run.contextRef = this.store.blob(prepared.messages);
       run.instructions = prepared.instructions;
@@ -521,7 +518,10 @@ export class Application {
     });
     return run;
   }
-  run(runId: string): Promise<Run> { return this.coordinator.drive(runId); }
+  run(runId: string): Promise<Run> {
+    assertSessionCompatible(this.store.session(this.store.run(runId).sessionId));
+    return this.coordinator.drive(runId);
+  }
   /** Trusted host validation; callbacks must be reattached after reopening the data directory. */
   setCompletionValidator(runId: string, validator: CompletionValidator): void { this.coordinator.setCompletionValidator(runId, validator); }
   reconcile(runId: string, signal?: AbortSignal): Promise<RecoveryPlan> { return this.coordinator.recovery.inspect(runId, signal); }
@@ -541,6 +541,7 @@ export class Application {
   }
   recover(runId: string): Promise<Run> {
     const target = this.store.run(runId);
+    assertSessionCompatible(this.store.session(target.sessionId));
     if (this.coordinator.busy) throw new KodoError('RECOVERY_ACTIVE', 'stop active execution before recovery');
     if (terminal(target.status) && !(target.status === 'failed' && target.error?.startsWith('UNKNOWN_WRITE:'))) throw new KodoError('NOT_INTERRUPTED', 'terminal records remain immutable');
     const recovered = this.store.events(runId, { types: ['recovery.continued'] })[0];
@@ -618,6 +619,7 @@ export class Application {
       let run = this.store.run(runId);
       if (run.parentId) throw new KodoError('INPUT_TARGET', 'user input must target a main run');
       const session = this.store.session(run.sessionId);
+      assertSessionCompatible(session);
       if (terminal(run.status) || options.mode === 'follow_up') {
         const id = randomUUID();
         const permissions = session.permissions.filter(x => (run.permissions ?? session.permissions).includes(x));
