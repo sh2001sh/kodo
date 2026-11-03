@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { Store } from '../storage/index.js';
 import { KodoError } from './types.js';
 import type { Run, Session, ToolRequest } from './types.js';
-import { sha256, workspaceManifest } from './execution-snapshot.js';
+import { sha256, workspaceManifest } from './workspace-manifest.js';
 import { isLeanProfile } from './tool-view.js';
 import { checkPassed, parseCheckCommand } from './check-command.js';
 

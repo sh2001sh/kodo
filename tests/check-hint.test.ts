@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { fixture } from './helpers.js';
 import { recordCheckStart, recordSuitePass, repeatedCheckHint, suitePassedNotice } from '../src/runtime/check-hint.js';
-import * as snapshot from '../src/runtime/execution-snapshot.js';
+import * as snapshot from '../src/runtime/workspace-manifest.js';
 import type { Call } from '../src/runtime/types.js';
 
 afterEach(() => vi.restoreAllMocks());
