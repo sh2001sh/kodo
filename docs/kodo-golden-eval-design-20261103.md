@@ -76,6 +76,22 @@ scripts/golden/
 - `materialsGlobs` 用于引用校验：交付物里引用的来源路径必须落在这里声明的目录内。
 - 编码样例可以带 `workspace/` 代码库；验收在 `verify/` 与 `rubric.json` 的 `command` 检查里。
 
+### 3.1 评分前的工作区处理（`grading`）
+
+编码类样例需要“恢复原始测试 + 注入不可见验收用例”，case.json 用 `grading` 声明：
+
+```json
+"grading": {
+  "restore": ["tests", "conftest.py"],
+  "stage": [{ "from": "verify/stage", "to": "_verify" }]
+}
+```
+
+- `restore`：评分前，把 `eval/golden/cases/<id>/workspace/` 下的这些路径**原样覆盖**回运行工作区，防止模型改动测试作弊，同时保证既有测试是“新代码 + 原始测试”的回归。
+- `stage`：把 `eval/golden/cases/<id>/<from>/` 复制到运行工作区的 `<to>/`，用于 held-out 验收脚本。
+- 两者只影响评分，不影响模型运行期间看到的内容；评分引擎必须先 `restore` 再 `stage`，最后执行 `rules`/`checks`。
+- `protected-unchanged` 的语义：比较运行工作区与样例 `workspace/` 中同一路径的摘要，任一文件新增/删除/修改即失败（路径可以是目录）。
+
 ## 4. rubric.json
 
 ```json
