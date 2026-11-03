@@ -112,7 +112,9 @@ describe('ordinary task continuity', () => {
     expect(next.continuationOf).toBeUndefined();
     const forked = app.store.readBlob<Message[]>(next.contextRef);
     expect(JSON.stringify(forked.slice(0, source.length))).toBe(JSON.stringify(source));
-    expect(forked).toHaveLength(source.length + 1);
+    // The source's final answer lives in resultRef, so the fork appends it before the new instruction.
+    expect(forked).toHaveLength(source.length + 2);
+    expect(forked.at(-2)).toEqual({ role: 'assistant', content: 'PREDECESSOR RESULT' });
     expect(forked.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining(`Fork of run ${predecessor.id}`) });
     expect(forked.at(-1)!.content).toContain('continue original child');
     expect(recoveryHistoryRuns(app.store, next).map(run => run.id)).toEqual([next.id]);
