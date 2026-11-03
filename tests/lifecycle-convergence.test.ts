@@ -22,7 +22,7 @@ describe('lifecycle convergence and resumable turns', () => {
     await new Promise<void>(resolve => setImmediate(resolve));
   });
 
-  it('interrupts a child turn, retains its identity and continues on a new message without replay', async () => {
+  it('interrupts a child turn, retains its identity and continues on host resume without replay', async () => {
     let requests = 0;
     const provider: Provider = { async complete(_request, signal) {
       requests++;
@@ -42,8 +42,9 @@ describe('lifecycle convergence and resumable turns', () => {
     await running;
     expect(app.store.run(child.id)).toMatchObject({ status: 'interrupted', interruptRequested: true, cancelRequested: false, id: child.id });
     expect(app.store.run(runId).status).toBe('queued');
-    app.coordinator.mailbox.execute(parent, 'resume', 'send_message', { to: child.id, kind: 'notice', content: 'Continue with the second part.' });
-    expect(app.store.run(child.id).status).toBe('queued');
+    // Peer messaging was removed; the host (TUI) resumes an intentionally interrupted child directly.
+    app.coordinator.resumeInterrupted(child.id);
+    expect(app.store.run(child.id)).toMatchObject({ status: 'queued', interruptRequested: false });
     expect((await app.coordinator.wake(child.id)).status).toBe('completed');
     expect(requests).toBe(2);
     expect(app.store.calls(child.id).filter(call => call.kind === 'model')).toHaveLength(2);
@@ -105,7 +106,10 @@ describe('lifecycle convergence and resumable turns', () => {
       app.coordinator.interrupt(child.id);
       await vi.advanceTimersByTimeAsync(5000);
       await app.coordinator.waitForStop(child.id);
-      app.coordinator.mailbox.execute(parent, 'resume', 'send_message', { to: child.id, kind: 'notice', content: 'Continue after the old turn exits.' });
+      // A user decision is delivered to every live run, including the interrupted child.
+      app.submitInput(runId, 'Continue after the old turn exits.', { decision: true });
+      expect(app.store.inbox(child.id).some(message => message.kind === 'decision')).toBe(true);
+      app.coordinator.resumeInterrupted(child.id);
       expect(app.store.run(child.id)).toMatchObject({ status: 'interrupted', interruptRequested: true });
       release();
       await execution;

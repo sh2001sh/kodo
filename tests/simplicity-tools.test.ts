@@ -19,13 +19,13 @@ describe('complete coding loop with a simple tool profile', () => {
     const tools = app.coordinator.tools;
     const specs = () => toolSpecs(app.coordinator, app.store.run(runId), session);
     const before = specs();
-    expect(before).toHaveLength(19);
+    expect(before).toHaveLength(16);
     expect(before.map(spec => spec.name)).toEqual(expect.arrayContaining([
       'shell.exec', 'process.read', 'file.read', 'file.search', 'file.patch', 'file.apply_patch',
       'artifact.read', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
-      'spawn_agent', 'followup_task', 'send_message', 'wait_for_events', 'inspect_run', 'ask_user', 'interrupt_agent', 'cancel_agent',
+      'spawn_agent', 'wait_for_events', 'inspect_run', 'ask_user', 'cancel_agent',
     ]));
-    for (const name of ['process.exec', 'file.list', 'file.mkdir', 'file.rename', 'file.delete', 'artifact.write', 'history.search', 'list_agents', 'update_progress', 'agent.derive']) {
+    for (const name of ['process.exec', 'file.list', 'file.mkdir', 'file.rename', 'file.delete', 'artifact.write', 'history.search', 'list_agents', 'update_progress', 'agent.derive', 'followup_task', 'send_message', 'interrupt_agent', 'explore']) {
       expect(before.map(spec => spec.name)).not.toContain(name);
     }
     const result = await tools.execute(runId, 'shell.exec', { command: 'printf simple-main', background: true }, signal()) as { background: { id: string } };
@@ -106,9 +106,10 @@ describe('complete coding loop with a simple tool profile', () => {
       const guidance = parallelMainGuidance(factors, taskProtocol, 'compact-v2');
       expect(guidance).toContain('Do not create a child solely to run a command');
       expect(guidance).not.toContain('Command and specialist tools are assigned');
+      // 1d: the todo paragraph is the same plain checklist for every task protocol.
+      expect(guidance).toContain('Independent items may be in_progress together.');
+      for (const removed of ['keep only one item in_progress', 'dependsOn', 'todoId']) expect(guidance).not.toContain(removed);
     }
-    expect(parallelMainGuidance(factors, 1, 'compact-v2')).toContain('keep only one item in_progress');
-    expect(parallelMainGuidance(factors, 3, 'compact-v2')).toContain('dependsOn only for actual prerequisite outputs');
   });
 
   it('persists the new default tool view across reopening with legacy host defaults', async () => {

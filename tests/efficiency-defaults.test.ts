@@ -52,10 +52,12 @@ describe('frozen efficiency defaults', () => {
       expect(saved.taskProtocol).toBeUndefined();
       expect(saved.toolProfile).toBeUndefined();
       expect(JSON.stringify(toolSpecs(restored.coordinator, restored.store.run(run.id), saved))).toBe(tools);
+      // 1d: todo is the same plain checklist for every task protocol, so several items may be in_progress.
       await expect(restored.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [
-        { id: 'a', content: 'First task', executor: 'main', status: 'in_progress' },
-        { id: 'b', content: 'Second task', executor: 'main', status: 'in_progress' },
-      ] }, new AbortController().signal)).rejects.toThrow('only one task');
+        { id: 'a', content: 'First task', status: 'in_progress' },
+        { id: 'b', content: 'Second task', status: 'in_progress' },
+      ] }, new AbortController().signal)).resolves.toHaveProperty('revision', 1);
+      expect(restored.store.session(run.sessionId).taskProtocol).toBeUndefined();
     } finally { await restored.shutdown(); }
   });
 });

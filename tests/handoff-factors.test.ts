@@ -26,10 +26,13 @@ describe('fresh-child review guidance', () => {
   });
 
   it('rewrites legacy main prompts to fresh black-box review without growing the default identity', () => {
-    const legacy = `${defaultCard.prompt} Use send_message for peer updates and followup_task for reuse.`;
-    const rewritten = applyAgentFactors(legacy, { B: true, C: true, D: true });
-    expect(rewritten).not.toMatch(/send_message|followup_task/u);
+    // Legacy (task protocol 1, full profile) main rendering: the kernel text plus the published card.
+    const [kernel, method] = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' });
+    const rewritten = applyAgentFactors(kernel!.content!, { B: true, C: true, D: true });
+    expect(rewritten).not.toMatch(forbidden);
     expect(rewritten).toContain('fresh child');
+    expect(rewritten.endsWith(reviewGuidance)).toBe(true);
+    expect(applyAgentFactors(method!.content!, { B: true, C: true, D: true })).not.toMatch(forbidden);
     // The published card itself is unchanged by rendering-time factors.
     expect(defaultCard.prompt).not.toMatch(/fork_of/u);
   });
@@ -41,8 +44,15 @@ describe('fresh-child review guidance', () => {
       const run = app.createRun({ objective: 'Inspect a bounded task.', workspace: root, binding });
       expect(app.coordinator.mailbox.specs(run).map(spec => spec.name)).toEqual(['spawn_agent', 'inspect_run', 'wait_for_events', 'ask_user', 'cancel_agent']);
       const native = toolSpecs(app.coordinator, run, app.store.session(run.sessionId)).map(spec => spec.name);
-      expect(native).toContain('update_progress');
+      // update_progress is a native tool, deliberately hidden in the default compact-v2 simple view.
+      expect(native).not.toContain('update_progress');
       for (const removed of ['send_message', 'followup_task', 'explore', 'exploration.plan', 'agent.derive', 'report.submit', 'list_agents', 'interrupt_agent']) expect(native).not.toContain(removed);
     } finally { await app.shutdown(); }
+    const fullApp = new Application(path.join(root, '.state-full'), scripted(answer()), undefined, { toolProfile: 'full', instructions: { global: false } });
+    try {
+      const run = fullApp.createRun({ objective: 'Inspect a bounded task.', workspace: root, binding });
+      expect(fullApp.coordinator.mailbox.specs(run).map(spec => spec.name)).not.toContain('update_progress');
+      expect(toolSpecs(fullApp.coordinator, run, fullApp.store.session(run.sessionId)).map(spec => spec.name)).toContain('update_progress');
+    } finally { await fullApp.shutdown(); }
   });
 });

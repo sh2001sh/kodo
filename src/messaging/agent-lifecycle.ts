@@ -26,8 +26,12 @@ export function forkCompatibility(source: Run): void {
  */
 export function forkContext(store: Store, source: Run, childId: string, task: string, parentId: string): Message[] {
   const messages = store.readBlob<Message[]>(source.contextRef);
+  // Completion stores the final answer in resultRef, not in the context; append it
+  // after the unchanged prefix so the fork sees what its source concluded.
+  const result = source.resultRef ? store.readBlob<{ text?: string }>(source.resultRef) : undefined;
+  const answer: Message[] = result?.text && !(messages.at(-1)?.role === 'assistant' && messages.at(-1)?.content === result.text) ? [{ role: 'assistant', content: result.text }] : [];
   const scope: FileScope | undefined = source.scope;
-  return [...messages, {
+  return [...messages, ...answer, {
     role: 'user',
     content: [
       `Fork of run ${source.id} (parent ${parentId}). This is a new child run ${childId} with the same card, model, permissions and scope.`,

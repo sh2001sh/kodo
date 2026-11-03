@@ -59,7 +59,7 @@ describe('Anthropic Messages adapter', () => {
       const run = app.createRun({ objective: 'test', workspace: root, binding: binding(baseURL), permissions: ['read', 'write'] });
       await todoTools(app.store).find(tool => tool.name === 'todo.write')!.execute({
         run, session: app.store.session(run.sessionId), signal: new AbortController().signal, markEffectStarted() {},
-      }, { expectedRevision: 0, items: [{ id: 'write-fixture', content: 'Write the fixture output and verify the actual tool result.', status: 'in_progress', executor: 'main' }] });
+      }, { expectedRevision: 0, items: [{ id: 'write-fixture', content: 'Write the fixture output and verify the actual tool result.', status: 'in_progress' }] });
       const result = await app.run(run.id);
       expect(result.status).toBe('completed');
       expect(rounds).toBe(2);

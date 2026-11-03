@@ -107,11 +107,14 @@ describe('collaboration through the unified loop', () => {
       const first = app.coordinator.mailbox.userQuestions(main.sessionId);
       expect(first).toHaveLength(1);
       expect(app.store.wait(result.waitId)).toMatchObject({ status: 'registered', questionIds: [first[0]!.id] });
-      operation(app, main.id, 'ask_user', { question: 'Pick a direction.' }, 'ask-again');
+      // Repeating the question reuses it; the run's current wait is the re-registered one.
+      const again = operation(app, main.id, 'ask_user', { question: 'Pick a direction.' }, 'ask-again') as { waitId: string };
       expect(app.coordinator.mailbox.userQuestions(main.sessionId)).toHaveLength(1);
+      expect(app.store.wait(again.waitId)).toMatchObject({ status: 'registered', questionIds: [first[0]!.id] });
+      expect(app.store.run(main.id).waitId).toBe(again.waitId);
       app.answer(first[0]!.id, 'Use the left path.');
       app.coordinator.mailbox.refresh(main.id);
-      expect(app.store.wait(result.waitId).status).toBe('settled');
+      expect(app.store.wait(again.waitId)).toMatchObject({ status: 'settled', reason: 'conditions_met' });
       expect(app.store.answer(first[0]!.id)).toMatchObject({ content: 'Use the left path.' });
     } finally { app.close(); }
   });

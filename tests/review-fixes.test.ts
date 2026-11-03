@@ -113,8 +113,9 @@ describe('review regressions', () => {
     const [a, b, healthy] = [spawn(), spawn(), spawn()] as [string, string, string];
     let args: Record<string, unknown> = { run_ids: [a, healthy], mode: 'any' };
     if (mode === 'question') {
-      const q = operation(app, runId, 'send_message', { to: healthy, kind: 'question', content: 'Need evidence' }).id as string;
-      args = { question_ids: [q] };
+      // Peer questions were removed; an open user question is the unrelated question wait.
+      const asked = operation(app, runId, 'ask_user', { question: 'Need evidence' });
+      args = { question_ids: app.store.wait(asked.waitId as string).questionIds };
     }
     const parent = waiting(app, runId, args);
     waiting(app, a, { run_ids: [b] });

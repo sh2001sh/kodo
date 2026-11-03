@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Application } from '../src/application/index.js';
 import type { Message, Provider, Run } from '../src/runtime/types.js';
+import { delegationState } from '../src/messaging/spawn-spec.js';
 import { answer, binding, call, calls, fixture, scripted } from './helpers.js';
 
 type Request = Parameters<Provider['complete']>[0];
@@ -17,6 +18,8 @@ function result<T>(request: Request, callId: string): T {
   if (!message || message.role !== 'tool') throw new Error(`Missing tool result ${callId}`);
   return JSON.parse(message.content) as T;
 }
+/** list_agents was removed; delegation capacity is read from the same host projection spawn_agent returns. */
+const capacity = (app: Application, runId: string) => delegationState(app.store, app.store.run(runId));
 function operation(app: Application, runId: string, name: string, args: Record<string, unknown>) {
   return app.store.transaction(() => {
     const run = app.store.run(runId);
@@ -35,7 +38,7 @@ describe('autonomous delegation through coordinator tool calls', () => {
         if (run.step === 0) {
           const spawn = request.tools.find(tool => tool.name === 'spawn_agent')!;
           expect(spawn.description).toContain('child limit: 8');
-          expect(spawn.description).toContain('inherit your card');
+          expect(spawn.description).toContain('inherits your card');
           expect(spawn.description).not.toContain('agent.route');
           return calls(call('spawn_agent', {
             objective: 'Review zero-value boundary behavior',
@@ -111,10 +114,7 @@ describe('autonomous delegation through coordinator tool calls', () => {
       },
       async request => {
         expect(result<{ error: string }>(request, 'elevate').error).toContain('PERMISSION_ESCALATION');
-        return calls(call('list_agents', {}, 'capacity'));
-      },
-      async request => {
-        expect(result(request, 'capacity')).toMatchObject({ delegation: { children: { created: 0, remaining: 8 }, sharedBudget: { modelCallsRemaining: null, tokensRemaining: null } } });
+        expect(capacity(app, runId)).toMatchObject({ children: { created: 0, remaining: 8 }, sharedBudget: { modelCallsRemaining: null, tokensRemaining: null } });
         return answer('No child was created. Card selection was removed and process execution was not granted; continuing within existing read access.');
       },
     ), ['read']);
@@ -146,8 +146,7 @@ describe('autonomous delegation through coordinator tool calls', () => {
     expect(app.coordinator.mailbox.result(completed)).toMatchObject({ text: expect.stringContaining('acceptance evidence remains missing') });
     expect(app.store.listRuns(completed.sessionId)).toHaveLength(2);
     expect(app.store.session(completed.sessionId).modelCalls).toBe(7);
-    const capacity = operation(app, runId, 'list_agents', {});
-    expect(capacity).toMatchObject({ delegation: { canSpawn: false, children: { created: 1, active: 0, remaining: 8 } } });
+    expect(capacity(app, runId)).toMatchObject({ canSpawn: false, children: { created: 1, active: 0, remaining: 8 } });
   });
 
   it('returns field-level schema errors and actionable scope errors the model can correct', () => {
@@ -171,7 +170,7 @@ describe('autonomous delegation through coordinator tool calls', () => {
     expect(run.card.tools.some(name => ['agent.route', 'agent.search', 'agent.directory', 'agent.derive'].includes(name))).toBe(false);
     expect(run.card.tools).toContain('file.read');
     const spawn = app.coordinator.mailbox.specs(main).find(tool => tool.name === 'spawn_agent')!;
-    expect(spawn.description).toContain('inherit your card');
+    expect(spawn.description).toContain('inherits your card');
     expect(spawn.description).not.toContain('frozen member');
   });
 
@@ -190,7 +189,7 @@ describe('autonomous delegation through coordinator tool calls', () => {
     expect(() => operation(app, child.id, 'spawn_agent', { objective: 'Grandchild' })).toThrow('not available to a child');
     expect(() => mailbox.execute(app.store.run(child.id), 'direct', 'spawn_agent', { objective: 'Grandchild' })).toThrow('only the main');
     app.store.updateRun(child.id, { status: 'completed' });
-    expect(operation(app, runId, 'list_agents', {})).toMatchObject({ delegation: { canSpawn: false, children: { maximum: 1, created: 1, active: 0, remaining: 0 } } });
+    expect(capacity(app, runId)).toMatchObject({ canSpawn: false, children: { maximum: 1, created: 1, active: 0, remaining: 0 } });
     expect(mailbox.specs(app.store.run(runId)).find(tool => tool.name === 'spawn_agent')?.description).toContain('child limit: 1');
     expect(() => operation(app, runId, 'spawn_agent', { objective: 'Another task' })).toThrow('child creation limit');
     expect(mailbox.specs(app.store.run(runId)).find(tool => tool.name === 'spawn_agent')?.description).not.toContain('agent.route');
@@ -211,9 +210,9 @@ describe('autonomous delegation through coordinator tool calls', () => {
     const session = app.store.session(run.sessionId);
     app.store.putSession({ ...session, modelCalls: 3, tokens: 640, toolCalls: 5 });
     expect(app.coordinator.mailbox.specs(app.store.run(runId))).toEqual(initial);
-    expect(operation(app, runId, 'list_agents', {})).toMatchObject({ delegation: { children: { created: 1, remaining: 7 }, sharedBudget: { modelCallsRemaining: null, tokensRemaining: null } } });
+    expect(capacity(app, runId)).toMatchObject({ children: { created: 1, remaining: 7 }, sharedBudget: { modelCallsRemaining: null, tokensRemaining: null } });
     app.store.putSession({ ...app.store.session(run.sessionId), budget: { ...session.budget, maxModelCalls: 10, maxTokens: 1000, maxToolCalls: 20 } });
     expect(app.coordinator.mailbox.specs(app.store.run(runId))).toEqual(initial);
-    expect(operation(app, runId, 'list_agents', {})).toMatchObject({ delegation: { sharedBudget: { modelCallsRemaining: 7, tokensRemaining: 360, toolCallsRemaining: 15 } } });
+    expect(capacity(app, runId)).toMatchObject({ sharedBudget: { modelCallsRemaining: 7, tokensRemaining: 360, toolCallsRemaining: 15 } });
   });
 });

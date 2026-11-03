@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { defaultCard } from '../src/agents/card.js';
+import { spawnAgentSpec } from '../src/messaging/spawn-spec.js';
 import { followUpContext, initialContext, rebuildSummaryPrefix } from '../src/runtime/context.js';
 import { attachment, attachmentKind } from '../src/runtime/attachments.js';
 import { normalizeAgentFactors } from '../src/runtime/agent-factors.js';
@@ -55,28 +56,27 @@ describe('agent context factors', () => {
     const b = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { B: true } });
     expect(b[0]!.content).toContain('Start each request with a brief plan of the steps and their dependencies.');
     expect(b[0]!.content).toContain('You are the team lead.');
-    expect(b[0]!.content).toContain('Choose delegation when parallel work, specialist expertise or a separate context outweighs handoff and acceptance costs.');
-    expect(b[0]!.content).toContain('Execute small bounded tasks directly, including implementation and verification');
     expect(b[0]!.content).toContain('After acceptance, finish');
-    expect(b[0]!.content).toContain('If delegation is blocked, explain the constraint');
-    expect(b[0]!.content).not.toContain('do small tasks directly');
-    expect(b[0]!.content).toContain('Reuse a suitable idle teammate with followup_task');
     expect(b[0]!.content).toContain('Keep one main phase in_progress');
-    expect(b[0]!.content).not.toContain('three or more files');
-    expect(b[0]!.content).not.toContain('Use spawn_agent only to change');
-    expect(b[0]!.content).toContain('give each child objective, inputs, constraints and acceptance checks');
+    expect(b[0]!.content).toContain('Have each owner deliver the implementation and actual check-call references together.');
+    // 1d: the base main text carries the fresh/fork guidance; no removed collaboration tool is named.
+    expect(b[0]!.content).toContain('fork_of continues a settled child with its exact context');
+    for (const removed of ['followup_task', 'send_message', 'Use explore', 'todoId', 'executor main or agent', 'do small tasks directly', 'three or more files', 'Use spawn_agent only to change']) expect(b[0]!.content).not.toContain(removed);
     expect(b.slice(2)).toEqual(baseline.slice(2));
-    const c = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { C: true } });
-    expect(c[0]!.content).toContain('Use spawn_agent only to change independent modules');
-    // 1c: children inherit the parent card and permissions instead of named slots.
-    expect(c[0]!.content).toContain('Children inherit your card and permissions and may only narrow them.');
+    // Factor C is an independent paragraph of the assembled (task protocol >= 2) policy.
+    const structured = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { taskProtocol: 2 });
+    const c = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { C: true }, taskProtocol: 2 });
+    expect(structured[0]!.content).not.toContain('inherit your card and permissions');
+    expect(c[0]!.content).toContain('Delegate whole independent outcomes to children that inherit your card and permissions; they may only narrow them.');
+    expect(c[0]!.content).toContain('Use a fresh child for independent black-box review.');
     expect(c[0]!.content).not.toContain('named input slots');
+    expect(c.slice(1)).toEqual(structured.slice(1));
   });
 
   it('keeps team-lead responsibilities out of child prompts', () => {
     const context = initialContext('workspace', ['read'], defaultCard, 'Find the parser entry point.', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true, B: true, C: true } });
     const text = context.map(message => message.content).join('\n');
-    expect(text).toContain('You cannot spawn agents');
+    expect(text).toContain('You cannot spawn children, cancel runs or ask the user');
     expect(text).not.toContain('Start each request with a brief plan');
     expect(text).not.toContain('You are the team lead');
     expect(text).not.toContain('Delegate substantive investigation');
@@ -100,12 +100,10 @@ describe('agent context factors', () => {
     for (const request of requests) {
       expect(request.messages[0]!.content!.includes('You are the team lead.')).toBe(factors.B);
       const spawn = request.tools.find(tool => tool.name === 'spawn_agent')!;
-      expect(spawn.description.includes('Choose delegation when its benefit exceeds handoff and acceptance costs')).toBe(factors.B);
-      if (factors.B) {
-        expect(spawn.description).not.toContain('For read-only investigation use explore instead.');
-        expect(spawn.description).not.toContain('continue your independent work');
-        expect(request.messages[0]!.content).toContain('Have each owner deliver the implementation and actual check-call references together');
-      }
+      // 1d: the spawn description no longer varies with agent factors.
+      expect(spawn.description.startsWith(spawnAgentSpec.description)).toBe(true);
+      for (const removed of ['Choose delegation', 'explore', 'followup_task', 'continue your independent work']) expect(spawn.description).not.toContain(removed);
+      if (factors.B) expect(request.messages[0]!.content).toContain('Have each owner deliver the implementation and actual check-call references together');
       // The roster selectors are gone for every card and factor combination.
       expect(Object.hasOwn(spawn.parameters.properties as object, 'agent')).toBe(false);
       expect(Object.hasOwn(spawn.parameters.properties as object, 'slots')).toBe(false);

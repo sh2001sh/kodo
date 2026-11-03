@@ -21,14 +21,31 @@ export function childCompletionState(store: Store, run: Run) {
       if (result.status === 'failed' && result.runId === args.run_id) inspected.add(result.runId!);
     }
   }
-  const outcomes = children.filter(child => child.status === 'failed' || child.status === 'cancelled').map(child => ({ runId: child.id, status: child.status, ...(child.status === 'failed' ? { acknowledged: inspected.has(child.id) } : {}) }));
+  // Only audited verified-effect recovery sets continuationOf now; a completed
+  // recovery successor resolves the failed source it replaced.
+  const latestContinuation = (source: Run): Run => {
+    let latest = source;
+    const seen = new Set([latest.id]);
+    while (true) {
+      const next = children.filter(child => child.continuationOf === latest.id);
+      if (next.length !== 1 || seen.has(next[0]!.id)) return latest;
+      latest = next[0]!;
+      seen.add(latest.id);
+    }
+  };
+  const outcomes = children.filter(child => child.status === 'failed' || child.status === 'cancelled').map(child => {
+    const latest = latestContinuation(child);
+    return { runId: child.id, status: child.status,
+      ...(child.status === 'failed' ? { acknowledged: inspected.has(child.id) } : {}),
+      ...(latest.id !== child.id && latest.status === 'completed' ? { resolvedBy: latest.id } : {}) };
+  });
   const interrupted = children.filter(child => child.status === 'interrupted').map(child => child.id);
-  const unhandled = outcomes.filter(child => child.status === 'failed' && !child.acknowledged).map(child => child.runId);
+  const unhandled = outcomes.filter(child => child.status === 'failed' && !child.acknowledged && !child.resolvedBy).map(child => child.runId);
   const feedback = [
     interrupted.length ? `CHILDREN_INCOMPLETE: interrupted children ${interrupted.join(', ')} need host recovery for fault interruptions or cancel_agent to cancel. Waiting alone does not resume them.` : '',
     unhandled.length ? `CHILDREN_INCOMPLETE: failed children ${unhandled.join(', ')} need inspect_run without call_id after failure. Cancelling an already failed run does not resolve it. Inspection acknowledges failure, not acceptance; disclose incomplete work in the final answer.` : '',
   ].filter(Boolean).join('\n');
   return { active: children.filter(child => !terminal(child.status) && child.status !== 'interrupted').map(child => child.id), interrupted,
     feedback: feedback || undefined,
-    result: outcomes.length ? { status: outcomes.some(child => !child.acknowledged) ? 'partial' : 'settled', outcomes } : undefined };
+    result: outcomes.length ? { status: outcomes.some(child => !child.resolvedBy) ? 'partial' : 'settled', outcomes } : undefined };
 }

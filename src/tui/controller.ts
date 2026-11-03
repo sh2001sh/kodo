@@ -821,7 +821,7 @@ export class TuiController implements TuiActions {
       const next = evidence.evidence?.next ?? evidence.result?.next;
       this.panel = { title: 'Original evidence · Page', lines: jsonLines(evidence).map(line => this.clean(line)), ...(next ? { items: [{ id: 'next', label: 'Next page', command: `/tasks ${action} ${target.id}${callId ? ` ${callId}` : ''} ${next.content_offset}` }] } : {}) }; return;
     }
-    if (action !== 'show') throw new KodoError('TUI_TASKS', 'Use /tasks, show, logs, message, interrupt, cancel, answer or resolve.');
+    if (action !== 'show') throw new KodoError('TUI_TASKS', 'Use /tasks, show, logs, result, evidence, cancel, resume, answer or resolve.');
     const evidence = inspectRun(this.options.app.store, main, { run_id: target.id, max_chars: 8000 });
     const activity = this.options.app.store.latestEvent(target.id);
     this.panel = { title: `${target.parentId ? 'Child task' : 'Main task'} · ${target.card.name}`, lines: [
@@ -834,8 +834,6 @@ export class TuiController implements TuiActions {
       { id: 'changes', label: 'View task changes and deliverables', command: `/changes task ${target.id}` },
       ...(target.parentId && !terminal(target.status) ? [
         ...(target.status === 'interrupted' && target.interruptRequested ? [{ id: 'resume', label: 'Resume this child turn', command: `/tasks resume ${target.id}` }] : []),
-        { id: 'message', label: `Send to ${target.card.name}`, input: `/tasks message ${target.id} ` },
-        { id: 'interrupt', label: 'Interrupt this child turn', command: `/tasks interrupt ${target.id}` },
         { id: 'cancel', label: 'Cancel this child (retain files)', command: `/tasks cancel ${target.id}` },
       ] : []),
     ] };

@@ -6,6 +6,7 @@ import { roleAllows } from '../runtime/role-view.js';
 import { Ajv } from 'ajv';
 import { executionSession, runWorkspace } from '../runtime/execution-workspace.js';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { Store } from '../storage/index.js';
 import { initialContext } from '../runtime/context.js';
 import { inspectRun } from '../runtime/inspection.js';
@@ -166,6 +167,9 @@ export class Mailbox {
       // A fork reuses the source contract only; one permission or scope difference
       // would invalidate the byte-identical cached prefix.
       if (args.model_binding !== undefined && args.model_binding !== source.modelBindingId) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source model; create a fresh child for another model');
+      // Naming the source alias must not hide a host remapping: the fork keeps the source binding only if the alias still resolves to it.
+      const remapped = args.model_binding !== undefined && source.modelBindingId !== undefined ? (session.modelBindings ?? this.modelBindings)[source.modelBindingId] : undefined;
+      if (remapped && !isDeepStrictEqual(remapped, source.binding)) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source binding, but its model alias now maps to another binding; create a fresh child for the new model');
       if (JSON.stringify([...permissions].sort()) !== JSON.stringify([...(source.permissions ?? session.permissions)].sort())) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source permissions; create a fresh child to narrow or change them');
       if (args.scope !== undefined) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source scope; create a fresh child for another scope');
       forkCompatibility(source);

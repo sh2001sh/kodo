@@ -118,7 +118,7 @@ describe('built CLI end to end', () => {
       if (++requests === 1) {
         advertised = body.tools;
         sendStream(response, [delta({ tool_calls: [
-          { index: 0, id: 'read-only-plan', function: { name: 'todo_write', arguments: JSON.stringify({ expectedRevision: 0, items: [{ id: 'verify', content: 'Run the declared read-only verification command', status: 'in_progress', executor: 'main' }] }) } },
+          { index: 0, id: 'read-only-plan', function: { name: 'todo_write', arguments: JSON.stringify({ expectedRevision: 0, items: [{ id: 'verify', content: 'Run the declared read-only verification command', status: 'in_progress' }] }) } },
           { index: 1, id: 'read-only', function: { name: 'process_run', arguments: JSON.stringify(actual) } },
         ] }), delta({}, 'tool_calls')]);
       } else sendStream(response, [delta({ content: 'Checked the actual command result.' }), delta({}, 'stop')]);
@@ -523,7 +523,7 @@ describe('built CLI end to end', () => {
     const data = path.join(root, 'state');
     const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('effect.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
     const run = app.createRun({ objective: 'append exactly once and report evidence', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 } });
-    await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Append the controlled effect once and verify its result', status: 'in_progress', executor: 'main' }] }, new AbortController().signal);
+    await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Append the controlled effect once and verify its result', status: 'in_progress' }] }, new AbortController().signal);
     const session = app.store.session(run.sessionId);
     app.store.putSession({ ...session, verificationCommand: { program: process.execPath, args: ['-e', 'console.log("recovery verification")'] } });
     app.setCompletionValidator(run.id, () => ({ passed: true }));
@@ -574,7 +574,7 @@ describe('built CLI end to end', () => {
     const data = path.join(root, 'state');
     const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('retry.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
     const run = app.createRun({ objective: 'apply controlled effect', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 } });
-    await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Apply the controlled effect only after verification or explicit retry authorization', status: 'in_progress', executor: 'main' }] }, new AbortController().signal);
+    await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Apply the controlled effect only after verification or explicit retry authorization', status: 'in_progress' }] }, new AbortController().signal);
     let uncertainCall: string;
     try {
       app.coordinator.tools.execute = async (_id, _name, _args, _signal, onEffectStart) => { onEffectStart?.(); throw new Error('test uncertainty after external execution begins'); };

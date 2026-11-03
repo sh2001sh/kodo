@@ -80,11 +80,14 @@ describe('web collaboration endpoints', () => {
     await vi.waitFor(() => { expect(web.app.store.run(child.id).status).toBe('completed'); });
 
     // Simulate a durable spawn receipt whose async drive never ran before the process exited.
-    const replayTarget = spawnChild(web.app, main.id, 'replay after restart');
+    // The first main has completed by now, so the undriven receipt belongs to a second, still-queued main.
+    const pending = web.createMain('coordinate a child after restart');
+    const replayTarget = spawnChild(web.app, pending.id, 'replay after restart');
     const fingerprint = 'restart-spawn-fingerprint';
     storageTestConnection(web.app.store).prepare('INSERT INTO web_requests VALUES (?,?,?,?,?,?)').run('restart_agent_spawn_01', fingerprint,
-      JSON.stringify({ requestId: 'restart_agent_spawn_01', runId: main.id, sessionId: main.sessionId, agentRunId: replayTarget.id, status: 'accepted' }),
-      'agent_spawn', main.id, new Date().toISOString());
+      JSON.stringify({ requestId: 'restart_agent_spawn_01', runId: pending.id, sessionId: pending.sessionId, agentRunId: replayTarget.id, status: 'accepted' }),
+      'agent_spawn', pending.id, new Date().toISOString());
+    expect(web.app.store.run(replayTarget.id).status).toBe('queued');
     await web.restart();
     await vi.waitFor(() => { expect(web.app.store.run(replayTarget.id).status).toBe('completed'); });
     expect(requests.length).toBeGreaterThanOrEqual(2);

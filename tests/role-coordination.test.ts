@@ -62,7 +62,7 @@ describe('lead coordination with delegated execution tools', () => {
     const delegatedTools = toolSpecs(app.coordinator, run, delegated);
     for (const spec of ordinaryCoordination) expect(delegatedTools.find(tool => tool.name === spec.name)).toEqual(spec);
     const names = delegatedTools.map(tool => tool.name);
-    expect(names).toEqual(expect.arrayContaining(['ask_user', 'wait_for_events', 'inspect_run', 'cancel_agent', 'spawn_agent', 'followup_task', 'recovery.inspect', 'file.read', 'artifact.write']));
+    expect(names).toEqual(expect.arrayContaining(['ask_user', 'wait_for_events', 'inspect_run', 'cancel_agent', 'spawn_agent', 'update_progress', 'recovery.inspect', 'file.read', 'artifact.write']));
     expect(ordinaryTools.map(tool => tool.name)).toContain('shell.exec');
     expect(names).not.toContain('shell.exec');
   });

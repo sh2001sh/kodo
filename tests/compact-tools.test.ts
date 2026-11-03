@@ -24,22 +24,24 @@ describe('compact stable tool profile', () => {
     expect(names).toEqual(expect.arrayContaining([
       'file.read', 'file.list', 'file.search', 'file.apply_patch', 'file.patch', 'file.mkdir', 'file.rename', 'file.delete',
       'artifact.read', 'artifact.write', 'history.read', 'history.search', 'recovery.inspect', 'todo.read', 'todo.write',
-      'spawn_agent', 'followup_task', 'send_message', 'wait_for_events', 'inspect_run', 'ask_user', 'interrupt_agent', 'cancel_agent',
+      'spawn_agent', 'wait_for_events', 'inspect_run', 'ask_user', 'cancel_agent',
     ]));
-    for (const name of ['agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain', 'knowledge.browse', 'knowledge.search', 'knowledge.read', 'explore', 'exploration.plan', 'update_progress', 'list_agents']) expect(names).not.toContain(name);
+    // update_progress stays hidden in the compact default view; the 1d collaboration removals are absent everywhere.
+    for (const name of ['agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain', 'knowledge.browse', 'knowledge.search', 'knowledge.read', 'explore', 'exploration.plan', 'update_progress', 'list_agents', 'followup_task', 'send_message', 'interrupt_agent', 'report.submit']) expect(names).not.toContain(name);
     expect(names.length).toBeLessThan(view(full).length);
-    expect(Buffer.byteLength(JSON.stringify(before))).toBeLessThan(Buffer.byteLength(JSON.stringify(view(full))) * 0.85);
+    // 1d removed the collaboration tools both views carried, so the compact view now saves only knowledge.*/update_progress (re-measured: 16339 vs 18573 bytes).
+    expect(Buffer.byteLength(JSON.stringify(before))).toBeLessThan(Buffer.byteLength(JSON.stringify(view(full))) * 0.9);
 
-    await compact.app.coordinator.tools.execute(compact.runId, 'todo.write', { expectedRevision: 0, items: [{ id: 'independent', content: 'Independent work', executor: 'main', status: 'in_progress' }] }, signal());
+    await compact.app.coordinator.tools.execute(compact.runId, 'todo.write', { expectedRevision: 0, items: [{ id: 'independent', content: 'Independent work', status: 'in_progress' }] }, signal());
     expect(view(compact)).toEqual(before);
     const artifact = await compact.app.coordinator.tools.execute(compact.runId, 'artifact.write', { name: 'shared-contract', content: 'A single immutable behavior source.' }, signal()) as { id: string };
     expect(await compact.app.coordinator.tools.execute(compact.runId, 'artifact.read', { id: artifact.id }, signal())).toHaveProperty('content');
   });
 
-  it.each([{ structuredExploration: true }, { exploreNudge: 3 }])('retains explicitly configured exploration workflows with compact defaults: %j', async workflow => {
+  it('retains explicitly configured memory and web workflows with compact defaults', async () => {
     const root = temp();
     const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, {
-      ...workflow, taskProtocol: 2, toolProfile: 'compact-v1', instructions: { global: false }, memory: true,
+      taskProtocol: 2, toolProfile: 'compact-v1', instructions: { global: false }, memory: true,
       webFetch: { enabled: true, allowedHosts: ['example.org'] }, agentFactors: { E: false },
     });
     try {
@@ -47,8 +49,9 @@ describe('compact stable tool profile', () => {
       const session = app.store.session(run.sessionId);
       expect(session.toolProfile).toBe('compact-v1');
       const names = toolSpecs(app.coordinator, run, session).map(tool => tool.name);
-      expect(names).toEqual(expect.arrayContaining(['explore', 'knowledge.read', 'knowledge.search', 'update_progress', 'memory.write', 'web.fetch']));
-      expect(names.includes('exploration.plan')).toBe('structuredExploration' in workflow);
+      expect(names).toEqual(expect.arrayContaining(['memory.write', 'web.fetch']));
+      // 1d removed the exploration workflows; update_progress stays hidden in the compact default view.
+      for (const name of ['explore', 'exploration.plan', 'update_progress']) expect(names).not.toContain(name);
       expect((await app.run(run.id)).status).toBe('completed');
       expect(app.store.listRuns(session.id)).toHaveLength(1);
     } finally { await app.shutdown(); }
@@ -65,7 +68,7 @@ describe('compact stable tool profile', () => {
     const configuredDefault = { card: { ...compactDefaultCard, id: 'builtin/general-compact-web-lsp' } };
     expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'web.fetch')).toBe(true);
     expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'lsp.hover')).toBe(true);
-    expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'agent.derive')).toBe(false);
+    expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'update_progress')).toBe(false);
   });
 
   it('creates a compact worker that inherits the parent card and keeps managed execution', async () => {
@@ -76,7 +79,7 @@ describe('compact stable tool profile', () => {
     expect(child.card.id).toBe(parent.card.id);
     expect(child.permissions).toEqual(app.store.session(parent.sessionId).permissions);
     const names = toolSpecs(app.coordinator, child, app.store.session(child.sessionId)).map(tool => tool.name);
-    expect(names).toEqual(expect.arrayContaining(['shell.exec', 'process.read', 'artifact.read', 'history.read', 'recovery.inspect', 'send_message', 'wait_for_events']));
+    expect(names).toEqual(expect.arrayContaining(['shell.exec', 'process.read', 'artifact.read', 'history.read', 'recovery.inspect', 'inspect_run', 'wait_for_events']));
     expect(names).not.toContain('process.exec');
     expect(names).not.toContain('workspace.commit');
     expect(names).not.toContain('workspace.integrate');
@@ -103,7 +106,8 @@ describe('compact stable tool profile', () => {
     const changedMethod = { ...compactDefaultCard, prompt: 'You are the main agent. Own delivery and acceptance. Custom method wording.' };
     const current = initialContext('/workspace', ['read'], changedMethod, 'Find an entry.', { id: 'lead' }, undefined, { factors, taskProtocol: 2, toolProfile: 'compact-v1' });
     expect(current[0]!.content).toContain('Independent items may be in_progress together');
-    expect(current[0]!.content).toContain('Explicitly pass todoId');
+    expect(current[0]!.content).toContain('Todo state is planning guidance, not a dispatch machine or an acceptance record.');
+    expect(current[0]!.content).not.toContain('todoId');
     expect(current[0]!.content).not.toContain('Start each request with a brief plan');
     expect(current[0]!.content).not.toContain('an active agent todo blocks');
     expect(current[1]!.content).toBe(`Agent method configuration (subordinate to host rules and user task):\n${changedMethod.prompt}`);
@@ -137,25 +141,17 @@ describe('compact stable tool profile', () => {
     const spawn = specs.find(spec => spec.name === 'spawn_agent')!;
     const properties = spawn.parameters.properties as Record<string, unknown>;
     const items = [
-      { id: 'one', content: 'First independent task', executor: 'main', status: 'in_progress' },
-      { id: 'two', content: 'Second independent task', executor: 'main', status: 'in_progress' },
+      { id: 'one', content: 'First independent task', status: 'in_progress' },
+      { id: 'two', content: 'Second independent task', status: 'in_progress' },
     ];
     expect(session.taskProtocol).toBe(options.taskProtocol);
-    if (options.taskProtocol === 1) {
-      expect(context[0]!.content).toContain('keep only one item in_progress');
-      expect(context[0]!.content).not.toContain('Explicitly pass todoId');
-      expect(context[0]!.content).not.toContain('Use dependsOn');
-      expect(properties).not.toHaveProperty('todoId');
-      await expect(app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items }, signal())).rejects.toMatchObject({ code: 'TODO_ITEMS' });
-      expect(specs.map(spec => spec.name)).not.toContain('agent.route');
-    } else {
-      expect(context[0]!.content).toContain('Independent items may be in_progress together');
-      expect(context[0]!.content).toContain('Explicitly pass todoId');
-      expect(properties).toHaveProperty('todoId');
-      await expect(app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items }, signal())).resolves.toHaveProperty('revision', 1);
-      expect(specs.map(spec => spec.name)).not.toContain('agent.route');
-      expect(specs.map(spec => spec.name)).not.toContain('agent.derive');
-    }
+    // 1d: todo is the same plain checklist for every task protocol; several items may be in_progress.
+    expect(context[0]!.content).toContain('Independent items may be in_progress together');
+    for (const removed of ['keep only one item in_progress', 'todoId', 'Use dependsOn', 'executor main or agent']) expect(context[0]!.content).not.toContain(removed);
+    expect(properties).not.toHaveProperty('todoId');
+    await expect(app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items }, signal())).resolves.toHaveProperty('revision', 1);
+    expect(specs.map(spec => spec.name)).not.toContain('agent.route');
+    expect(specs.map(spec => spec.name)).not.toContain('agent.derive');
     expect(app.store.run(runId).scope).toEqual(run.scope);
   });
 });

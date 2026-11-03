@@ -65,7 +65,7 @@ describe('stable role tool view', () => {
     const bytes = () => JSON.stringify(toolSpecs(app.coordinator, app.store.run(runId), app.store.session(run.sessionId)));
     const before = bytes();
     expect(JSON.stringify(toolSpecs(app.coordinator, run, { ...session, agentFactors: { ...session.agentFactors, E: false } }))).toBe(before);
-    await app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items: [{ id: 'work', content: 'Delegated task', executor: 'agent', status: 'in_progress' }] }, signal());
+    await app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items: [{ id: 'work', content: 'Delegated task', status: 'in_progress' }] }, signal());
     expect(bytes()).toBe(before);
   });
 

@@ -39,7 +39,7 @@ describe('session-frozen child model policy', () => {
     expect(session.modelBindingDescriptions).toEqual({ cheap: 'Fast for narrow investigations', careful: '' });
     expect(session.modelRoles).toEqual({ fast: 'cheap', strong: 'careful' });
     const specs = app.coordinator.mailbox.specs(parent);
-    for (const name of ['spawn_agent', 'followup_task']) {
+    for (const name of ['spawn_agent']) {
       const parameters = specs.find(tool => tool.name === name)!.parameters;
       expect(parameters).toMatchObject({ properties: { model_binding: { enum: ['cheap', 'careful'], description: expect.stringContaining('Fast for narrow investigations') } } });
       expect(JSON.stringify(parameters)).not.toContain(binding.baseURL);
@@ -120,7 +120,8 @@ describe('session-frozen child model policy', () => {
     const messages = app.store.readBlob<Message[]>(next.contextRef);
     const sourceMessages = app.store.readBlob<Message[]>(source.contextRef);
     expect(JSON.stringify(messages.slice(0, sourceMessages.length))).toBe(JSON.stringify(sourceMessages));
-    expect(messages).toHaveLength(sourceMessages.length + 1);
+    expect(messages).toHaveLength(sourceMessages.length + 2);
+    expect(messages.at(-2)).toEqual({ role: 'assistant', content: 'ORIGINAL_CONTEXT_MARKER' });
     expect(messages.at(-1)!.role).toBe('user');
     expect(messages.at(-1)!.content).toContain(`Fork of run ${first.id}`);
     expect(messages.filter(message => message.role === 'assistant' && message.content === 'ORIGINAL_CONTEXT_MARKER')).toHaveLength(1);

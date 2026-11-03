@@ -142,7 +142,7 @@ describe('private project knowledge', () => {
     expect(() => knowledge.validateUse(runId, ref)).toThrow('superseded decision');
   });
 
-  it('accepts current-decision re-reads from an older dispatched exploration while keeping its original provenance', async () => {
+  it('rejects pre-decision evidence and records current-decision re-reads with current provenance', async () => {
     const { knowledge, observe, result, runId, app } = setup();
     const previousEvidence = await observe();
     const session = app.store.session(app.store.run(runId).sessionId);
@@ -153,9 +153,10 @@ describe('private project knowledge', () => {
     app.store.putCall({ ...app.store.call(currentEvidence), decisionVersion: 1 });
     const ref = knowledge.persist(knowledge.prepare(runId, result([currentEvidence])));
     const page = knowledge.read(runId, ref);
-    expect(page).toMatchObject({ freshness: 'current', decisionStale: true });
-    expect(JSON.parse(page.text).source_decision_version).toBe(0);
-    expect(() => knowledge.validateUse(runId, ref)).toThrow('superseded decision');
+    // Without a dispatched exploration snapshot, provenance is the observing run's current decision.
+    expect(page).toMatchObject({ freshness: 'current', decisionStale: false });
+    expect(JSON.parse(page.text).source_decision_version).toBe(1);
+    expect(() => knowledge.validateUse(runId, ref)).not.toThrow();
   });
 
   it('caps search at five summaries and supports stable bounded reads and path filtering', async () => {
