@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.9,
+  "passThreshold": 0.95,
   "checks": [
     {
       "id": "M1",
@@ -21,7 +21,7 @@
       "id": "M3",
       "kind": "csv-rows",
       "weight": 2,
-      "params": { "path": "deliverables/extracted.csv", "minRows": 12 }
+      "params": { "path": "deliverables/extracted.csv", "minRows": 36, "maxRows": 36 }
     },
     {
       "id": "M4",

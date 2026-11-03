@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.9,
+  "passThreshold": 0.95,
   "checks": [
     {
       "id": "M1",
@@ -68,7 +68,7 @@
     {
       "id": "R1",
       "kind": "protected-unchanged",
-      "params": { "paths": ["materials/draft.md", "materials/advisor-comments.md"] }
+      "params": { "paths": ["materials"] }
     },
     {
       "id": "R2",

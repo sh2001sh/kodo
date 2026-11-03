@@ -13,6 +13,7 @@ Files:
 | file | role |
 |---|---|
 | `run.mjs` | CLI entry + orchestration (matrix, relay, grading pipeline, report/progress/summary, `--rescore`). Imports `dist/` lazily. |
+| `compare.mjs` | Baseline vs candidate comparison and stage-1 gate: pass-rate/mean deltas, cell flips, new rule violations, data completeness. Pure analysis + a small CLI. |
 | `score.mjs` | Pure scoring engine: every check kind in contract §4.1, rules/checks/human semantics, `grading`-aware protected comparison. No I/O. |
 | `metrics.mjs` | Pure metrics aggregation: per-run §6 fields and `summary.json` means/pass rates/re-read baseline. |
 | `pollution.mjs` | Pure §7 wire-pollution analysis (request/response model identity, usage, HTTP status). |
@@ -214,6 +215,57 @@ Get-Content .kodo/golden/<stamp>/runs/coding-01-statemachine/r1/report.json
 node scripts/golden/run.mjs --rescore .kodo/golden/<stamp>
 ```
 
+## Baseline comparison (stage-1 gate)
+
+```powershell
+node scripts/golden/compare.mjs --baseline .kodo/golden/baseline-<stamp> `
+  --candidate .kodo/golden/<rerun> [--out comparison.json] [--json] [--fail-on-gate]
+```
+
+Both inputs are completed golden run directories (`summary.json` +
+`runs/<case>/r<N>/report.json`); a `summary.json` path is also accepted. A matrix
+that is still running (only `progress.json`), a missing directory or a malformed
+summary is a `GoldenError` with a non-zero exit — partial evidence is never
+compared silently.
+
+The Markdown summary is printed; the JSON report is written to `--out` (default
+`.kodo/golden/compare-<stamp>.json`). `--json` prints exactly one JSON document to
+stdout (the path goes to stderr) for machine consumption. Exit codes: `0` report
+produced; `2` with `--fail-on-gate` unless the gate status is `passed`
+(inconclusive counts as not passed); `1` input/format error.
+
+**Gate (§8 stage 1).** The gate status is one of `passed`, `failed`,
+`undetermined`, `inconclusive`:
+
+1. `passRateNotBelow`: per case, the candidate's passed count must be `>=` the
+   baseline's (3 runs per case, equal allowed), and the overall count must not drop.
+2. `noNewRuleViolations`: no new `(cell key, rule id)` violation instance; rule
+   ids that never appeared for a case in the baseline are listed separately.
+3. `costRegression` / `wallRegression`: mean cost and mean `wallMs` may regress at
+   most `+10%` (`candidate <= baseline * 1.10`). Means only include cells with
+   `usageComplete && !polluted`; `eligibleRuns` is the denominator. A baseline
+   mean of `0`/`null` makes the criterion `undetermined` — never a pass. A cost
+   basis mismatch (`tokens` vs `price`) makes the cost criterion undetermined.
+
+The gate is **inconclusive** (and `gate.blockedBy` lists the reasons) whenever the
+comparison is not a valid conclusion: either matrix not `complete`/has missing,
+duplicated or unexpected cells, different plans, a stopped matrix, missing
+`report.json` files, polluted cells, human-pending cells, cells with incomplete
+usage, or incomparable cost bases. In that case the tool says explicitly that the
+comparison cannot be used as a stage-1 gate conclusion — it never reports a
+silent pass.
+
+JSON report fields: `baseline`/`candidate` (dir, mode, model, matrixState,
+costBasis, stop, plan), `completeness` (conclusive, blocker reasons, matrix,
+cell-set/plan diffs, polluted/human-pending/usage-incomplete/missing-report
+lists), `gate` (status, passed, conclusive, summary, `triggered`,
+`undetermined`, `blockedBy`, `criteria`, limits), `overall` (baseline/candidate/
+delta), `categories`, `cases` (per case: baseline/candidate aggregates incl.
+`eligibleRuns`/`humanPendingRuns` and §6 means, delta, `passRateNotBelow`,
+verdict), `flips` (per cell key `PASSED→FAILED` / `FAILED→PASSED`, plus byCase),
+`violations` (added/removed instances, byCase, case-level new/removed rule ids),
+`means` (eligibility rule, both sides, deltas), and `notes`.
+
 ## --dry mode
 
 `--dry` uses an offline scripted provider that reads a probe file once and then
@@ -257,3 +309,12 @@ aggregation, read-reread baselines, and pollution analysis.
   workspace), so a case with a heavy verification command will be slow even in
   dry mode.
 - `meanCost` with `--prices` assumes one price table for all cases in a batch.
+- `--rescore` reloads the current `eval/golden/cases/<id>/rubric.json`; if a rubric
+  changes after a run, rescoring that old run fails loudly
+  (`SCORE_UNPREPARED_CHECK`, e.g. a new `protected-unchanged` rule with no stored
+  comparison) instead of silently rescoring against a different rubric. Rubrics
+  are expected to stay frozen for a baseline/candidate pair.
+- `compare.mjs` compares the recorded evidence; it never reruns cells. Any
+  incompleteness on either side makes the gate inconclusive by design (see above),
+  so a rerun that aborts (`SMOKE_ABORT`/`RELAY_REJECTED`/…) cannot be used as a
+  stage-1 conclusion even if the finished cells look fine.

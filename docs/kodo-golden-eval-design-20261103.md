@@ -97,7 +97,7 @@ scripts/golden/
 ```json
 {
   "schemaVersion": 1,
-  "passThreshold": 0.9,
+  "passThreshold": 0.95,
   "checks": [
     { "id": "M1", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/comparison.md", "minBytes": 500 } },
     { "id": "M2", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/comparison.md", "all": ["Sample", "Accuracy"] } },
@@ -114,7 +114,8 @@ scripts/golden/
 - `rules` 是“不能违反的规则”。任何一条失败 → 本次运行不合格（`violations`），与得分无关。
 - `checks` 参与加权得分。`score = Σ(通过项权重) / Σ(已评分项权重)`。
 - `human` 项由人工在 `runs/.../human.json`（`{"H1": true}`）中填写；未填写时该项从分母中排除，并标记 `humanPending=true`。人工项全部补评后重算总分与合格率。
-- `passed = violations.length === 0 && score >= passThreshold`。
+- `passed = violations.length === 0 && score >= passThreshold`。文本黄金样例的阈值定为 **0.95**（防止单个核心检查失败仍合格；独立复核的变异实验见 [rubric 复核](kodo-rubric-review-20261103.md)）；编码样例 0.7 并由 rules 兜底旧行为回归。
+- 所有文本样例必须带 `protected-unchanged: ["materials"]` 规则，防止模型改写输入材料后仍得高分。
 - 未实现 `kind` 视为评测错误（不是失败），必须修评分引擎而不是改样例。
 
 ### 4.1 支持的检查类型
@@ -133,7 +134,7 @@ scripts/golden/
 | `markdown-table` | `path`、`requiredHeaders[]`、`minRows` | Markdown 表格结构 |
 | `json-values` | `path`、`expect{path: value}` | JSON 产物关键值（点路径） |
 | `citation-sources` | `path`、`allowedRoots[]`、`requireExcerpt?` | 引用的来源文件必须真实存在；`requireExcerpt` 时引用的原文片段必须能在对应来源里逐字找到 |
-| `protected-unchanged` | `paths[]`、`beforeDigest` | 受保护文件内容未变（运行前后摘要一致） |
+| `protected-unchanged` | `paths[]` | 受保护文件内容未变（运行工作区与样例 workspace 同一路径比较，新增/删除/修改均失败；路径可以是目录） |
 | `command` | `program`、`args[]`、`cwd?`、`expectExit`、`timeoutMs?` | 在运行后的工作区执行验收命令 |
 | `artifact-count` | `dir`、`glob`、`min` | 产物数量 |
 | `human` | `question` | 人工判断 |

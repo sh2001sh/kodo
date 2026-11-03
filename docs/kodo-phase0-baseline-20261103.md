@@ -25,10 +25,16 @@
 | 单次预算 | 见各 case.json：文本类 maxModelCalls 100 / maxTokens 3M / maxDurationMs 45min；编码类 120 / 8M / 60min |
 | 凭据 | `test_api.json` 的 codego1 provider（不进入 Kodo 进程，只进入 loopback relay） |
 | 成本口径 | token 计费（输入/输出/缓存读/缓存写分别记录）；价格换算仅在同一口径下比较 |
-| 运行命令 | `node scripts/golden/run.mjs --run --cases all --repeat 3 --concurrency 4 --provider-config test_api.json --provider codego1 --model deepseek-v4.1-flash`（以实际落地脚本为准，见 scripts/golden/README.md） |
+| 运行命令 | `node scripts/golden/run.mjs --run --cases <smoke 在前、编码最后> --repeat 3 --concurrency 3 --provider-config test_api.json --provider codego1 --model deepseek-v4.1-flash`（详见 scripts/golden/README.md） |
 | 产物 | `.kodo/golden/<stamp>/`（registration.json、progress.json、runs/**/report.json、summary.json） |
 
-冒烟顺序：先跑 1 个样例 1 次（`--cases lit-01-comparison-table --repeat 1`），检查逐请求模型、usage、污染与评分链路，再跑完整矩阵。
+冒烟顺序：先跑 1 个样例 1 次（data-01，成本最低），检查逐请求模型、usage、污染与评分链路，再跑完整矩阵。矩阵首格即冒烟门禁，因此 `--cases` 顺序把 data-01 放在最前、coding-01 放在最后。
+
+### 2.1 复核发现与第一次基线中止
+
+- 真实付费冒烟（data-01 × 1）已通过：11 次模型调用、161,919 tokens、68.5s、缓存读取占比 83.8%、无污染、评分 1.0。
+- 第一次 30 格基线在跑完 data-01:r1 后被**主动中止**：独立复核 [docs/kodo-rubric-review-20261103.md](kodo-rubric-review-20261103.md) 用 28 组变异实验证明当时评分标准存在 P0 安全网缺口（passThreshold 0.9 太松、7/9 样例缺 materials 保护、report-01 材料时间线矛盾），基线数据不能用于阶段 1 对比。中止产物保留在 `.kodo/golden/baseline-aborted-20261103/`（不计入结论）。
+- 修正：文本样例阈值统一 0.95、全部补 `protected-unchanged: ["materials"]`、report-01 材料时间线由作者修正；修完重跑全部自检与真实引擎回归后再启动正式基线。
 
 ## 3. 样例与评分标准复核清单
 

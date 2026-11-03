@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.9,
+  "passThreshold": 0.95,
   "checks": [
     {
       "id": "M1",
@@ -97,6 +97,11 @@
         "path": "deliverables/comparison.md",
         "none": ["http://", "https://"]
       }
+    },
+    {
+      "id": "R3",
+      "kind": "protected-unchanged",
+      "params": { "paths": ["materials"] }
     }
   ]
 }
