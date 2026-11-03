@@ -86,11 +86,12 @@ else {
 const review = readText('deliverables/review.md');
 if (review === null) problems.push('deliverables/review.md is missing');
 else {
-  const headings = [...review.matchAll(/^#{2,4}\s.*$/gmu)].map(match => ({ title: match[0], index: match.index }));
+  const headings = [...review.matchAll(/^(#{2,4})\s.*$/gmu)].map(match => ({ title: match[0], level: match[1].length, index: match.index }));
   for (const vendor of VENDORS) {
     const heading = headings.find(entry => vendor.names.some(name => entry.title.includes(name)));
     if (!heading) { problems.push(`review.md has no section heading for ${vendor.key}`); continue; }
-    const next = headings.find(entry => entry.index > heading.index);
+    // A vendor section spans its sub-headings (### 总价 …) up to the next heading of the same or a higher level.
+    const next = headings.find(entry => entry.index > heading.index && entry.level <= heading.level);
     const body = review.slice(heading.index, next ? next.index : review.length);
     if (!/一致/u.test(body)) problems.push(`review.md section for ${vendor.key} has no 一致/不一致 verdict`);
     const quotes = [...body.matchAll(/“([^”\n]{10,})”/gu)];

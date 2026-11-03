@@ -21,6 +21,7 @@ const MUTATIONS = [
   ['duplicate vendor row', { comparison: text => text.replace('| 远帆信息（', '| 星衡科技备选 | 116 | 14 | 99.95% | 境内 | 是 |\n| 远帆信息（') }],
   ['review drops a vendor section', { review: text => text.replace(/## 远帆信息[\s\S]*?(?=## 云途)/u, '') }],
   ['review without quotes', { review: text => text.replace(/“[^”]*”/gu, '原文') }],
+  ['nested review section without verdict', { review: text => text.replace('## 蓝桥数智\n', '## 蓝桥数智\n\n### 总价\n').replace(/(## 蓝桥数智[\s\S]*?)(?=## 远帆)/u, section => section.replaceAll('一致', '相符')) }],
 ];
 
 function check(comparison, review) {
