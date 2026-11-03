@@ -18,17 +18,11 @@ export const methodCatalogDigest = (cards: readonly CardReference[] | undefined)
 
 /** Session method cards resolved from the registry; unavailable versions stay visible with a reason. */
 export function sessionMethodCards(store: Store, session: Session): { ref: CardReference; card?: Card; reason?: string }[] {
-  if (session.methodCards !== undefined) {
-    return session.methodCards.map(ref => {
-      const card = store.card(ref.id, ref.version);
-      if (!card || card.digest !== ref.digest) return { ref, reason: 'this session method version is no longer registered' };
-      return { ref, card };
-    });
-  }
-  // Transitional fallback for sessions created before the session method catalog existed.
-  const members = store.cards.rosterSnapshot(session.id)?.members ?? [];
-  return members.filter(member => member.card.execution?.modes.includes('inline'))
-    .map(member => ({ ref: { id: member.card.id, version: member.card.version, digest: member.card.digest }, card: member.card }));
+  return (session.methodCards ?? []).map(ref => {
+    const card = store.card(ref.id, ref.version);
+    if (!card || card.digest !== ref.digest) return { ref, reason: 'this session method version is no longer registered' };
+    return { ref, card };
+  });
 }
 
 /** A method can narrow the host-approved resource pool, never grant new resources. */

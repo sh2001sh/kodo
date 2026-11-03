@@ -26,7 +26,7 @@ function operation(app: Application, mainId: string, name: string, args: Record<
   return mailbox.execute(run, callId, name, mailbox.validate(run, name, JSON.stringify(args))) as { id: string; agentId: string };
 }
 function spawn(app: Application, runId: string, callId?: string) {
-  return operation(app, runId, 'spawn_agent', { objective: 'Synthetic bounded investigation', agent: 'kodo/explorer', slots: { question: 'Synthetic investigation; no model is run.' } }, callId);
+  return operation(app, runId, 'spawn_agent', { objective: 'Synthetic bounded investigation' }, callId);
 }
 const work: TodoItem = { id: 'investigate', content: 'Investigate the assigned question', status: 'in_progress', executor: 'agent' };
 
@@ -85,7 +85,7 @@ describe('todo delegation ownership and durable dispatch', () => {
     expect(todoDispatchState(app.store, runId)[0]?.state).toBe('needs_attention');
     expect(() => write(app, runId, [{ ...work, status: 'completed' }])).toThrow('requires a completed child');
 
-    const retry = operation(app, runId, 'followup_task', { target: failed.agentId, objective: 'Synthetic retry task', slots: { question: 'Synthetic successful follow-up.' } });
+    const retry = operation(app, runId, 'followup_task', { target: failed.agentId, objective: 'Synthetic retry task' });
     expect(todoDispatchState(app.store, runId)[0]).toMatchObject({ state: 'running', runIds: [failed.id, retry.id] });
     app.store.updateRun(retry.id, { status: 'completed', resultRef: app.store.blob({ text: 'Synthetic accepted evidence' }) });
     expect(todoDispatchState(app.store, runId)[0]?.state).toBe('awaiting_acceptance');

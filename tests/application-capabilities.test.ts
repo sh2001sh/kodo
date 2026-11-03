@@ -20,7 +20,7 @@ describe('application capability integration', () => {
     active.push(app);
     const card = app.parseCard(cardSource('skill.list, skill.load', 'evidence'));
     app.registerCard(card);
-    expect(app.searchCards({ query: 'approved host' }).cards).toHaveLength(1);
+    expect(app.store.registeredCards().map(item => item.id)).toContain(card.id);
     const run = app.createRun({ objective: 'Use the evidence skill.', workspace: root, binding, card });
     expect((await app.run(run.id)).status).toBe('completed');
     const tool = app.calls(run.id).items.find(item => item.kind === 'tool')!;

@@ -50,7 +50,7 @@ describe('simple coding workflow through the coordinator', () => {
       { id: 'join', content: 'Join the two accepted files', status: 'pending', executor: 'agent', dependsOn: ['left', 'right'] },
     ] }, new AbortController().signal);
     for (const name of ['left', 'right', 'join']) {
-      const child = app.spawnAgent(app.store.run(mainId).sessionId, { agent: 'kodo/implementer', todoId: name, objective: `Create ${name}.txt using the assigned input files.`, scope: { read: ['.'], write: [`${name}.txt`] } });
+      const child = app.spawnAgent(app.store.run(mainId).sessionId, { todoId: name, objective: `Create ${name}.txt using the assigned input files.`, scope: { read: ['.'], write: [`${name}.txt`] } });
       names.set(child.id, name);
     }
     const result = await app.run(mainId);

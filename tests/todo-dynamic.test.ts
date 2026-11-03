@@ -18,7 +18,7 @@ function write(app: Application, runId: string, change: Record<string, unknown>)
 }
 function dispatch(app: Application, runId: string, todoId: string): string {
   const parent = app.store.run(runId), mailbox = app.coordinator.mailbox;
-  const args = { objective: `Investigate ${todoId}`, agent: 'kodo/explorer', slots: { question: `Investigate ${todoId}` }, todoId };
+  const args = { objective: `Investigate ${todoId}`, todoId };
   return (mailbox.execute(parent, crypto.randomUUID(), 'spawn_agent', mailbox.validate(parent, 'spawn_agent', JSON.stringify(args))) as { id: string }).id;
 }
 function accept(app: Application, runId: string, id: string, childId: string): void {
@@ -158,7 +158,7 @@ describe('dynamic task graph protocol 3', () => {
     write(app, runId, { updates: [{ id: 'a', status: 'completed' }] });
     expect(() => write(app, runId, { updates: [{ id: 'b', status: 'completed' }] })).toThrow('needs a completed child');
     const mailbox = app.coordinator.mailbox, parent = app.store.run(runId);
-    const request = { target: b, objective: 'Verify revised contract', slots: { question: 'Verify revised contract' }, todoId: 'b' };
+    const request = { target: b, objective: 'Verify revised contract', todoId: 'b' };
     const newB = (mailbox.execute(parent, 'reuse-b', 'followup_task', mailbox.validate(parent, 'followup_task', JSON.stringify(request))) as { id: string }).id;
     expect(app.store.run(newB)).toMatchObject({ continuationOf: b, todo: { generation: 4, dependencies: [{ id: 'a', generation: 4 }] } });
     accept(app, runId, 'b', newB);

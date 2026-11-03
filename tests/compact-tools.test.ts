@@ -2,7 +2,6 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Application } from '../src/application/index.js';
 import { compactDefaultCard, defaultCard, parseCard, serializeCard } from '../src/agents/card.js';
-import { builtinAgentCards, compactBuiltinAgentCards } from '../src/agents/presets.js';
 import { initialContext } from '../src/runtime/context.js';
 import { roleAllows } from '../src/runtime/role-view.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
@@ -30,7 +29,7 @@ describe('compact stable tool profile', () => {
     ]));
     for (const name of ['agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain', 'knowledge.browse', 'knowledge.search', 'knowledge.read', 'explore', 'exploration.plan', 'update_progress', 'list_agents']) expect(names).not.toContain(name);
     expect(names.length).toBeLessThan(view(full).length);
-    expect(Buffer.byteLength(JSON.stringify(before))).toBeLessThan(Buffer.byteLength(JSON.stringify(view(full))) * 0.8);
+    expect(Buffer.byteLength(JSON.stringify(before))).toBeLessThan(Buffer.byteLength(JSON.stringify(view(full))) * 0.85);
 
     await compact.app.coordinator.tools.execute(compact.runId, 'todo.write', { expectedRevision: 0, items: [{ id: 'independent', content: 'Independent work', executor: 'main', status: 'in_progress' }] }, signal());
     expect(view(compact)).toEqual(before);
@@ -70,19 +69,18 @@ describe('compact stable tool profile', () => {
     expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'agent.derive')).toBe(false);
   });
 
-  it('creates a compact worker without requiring a redundant contract artifact and keeps managed execution', async () => {
+  it('creates a compact worker that inherits the parent card and keeps managed execution', async () => {
     const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], { toolProfile: 'compact-v1', taskProtocol: 2, agentFactors: factors });
     const parent = app.store.run(runId);
-    const child = app.spawnAgent(parent.sessionId, { agent: 'kodo/implementer', objective: 'Check the assigned module.', scope: { read: ['.'], write: ['result.txt'] } });
-    expect(child.card.version).toBe('1.3.0');
-    expect(child.card.tools).toEqual(['file.read', 'file.list', 'file.search', 'artifact.read', 'file.patch', 'file.apply_patch', 'shell.exec']);
+    const child = app.spawnAgent(parent.sessionId, { objective: 'Check the assigned module.', scope: { read: ['.'], write: ['result.txt'] } });
+    expect(child.card.digest).toBe(parent.card.digest);
+    expect(child.card.id).toBe(parent.card.id);
+    expect(child.permissions).toEqual(app.store.session(parent.sessionId).permissions);
     const names = toolSpecs(app.coordinator, child, app.store.session(child.sessionId)).map(tool => tool.name);
-    expect(names).toEqual(expect.arrayContaining(['shell.exec', 'process.read', 'artifact.read', 'history.read', 'recovery.inspect', 'send_message', 'wait_for_events', 'report.submit']));
+    expect(names).toEqual(expect.arrayContaining(['shell.exec', 'process.read', 'artifact.read', 'history.read', 'recovery.inspect', 'send_message', 'wait_for_events']));
     expect(names).not.toContain('process.exec');
     expect(names).not.toContain('workspace.commit');
     expect(names).not.toContain('workspace.integrate');
-    expect(names).not.toContain('list_agents');
-    expect(names).not.toContain('update_progress');
     const result = await app.coordinator.tools.execute(child.id, 'shell.exec', { command: 'printf compact-worker', background: true }, signal()) as { background: { id: string } };
     let observed: unknown;
     let stdoutOffset = 0, stderrOffset = 0;
@@ -94,14 +92,10 @@ describe('compact stable tool profile', () => {
     expect(observed).toMatchObject({ state: 'exited', exitCode: 0 });
   });
 
-  it('versions compact cards separately from both published generations', () => {
+  it('has one default identity per profile and no specialist preset matrix', () => {
     expect(compactDefaultCard.id).not.toBe(defaultCard.id);
-    for (const compact of compactBuiltinAgentCards) {
-      const prior = builtinAgentCards.find(card => card.id === compact.id)!;
-      expect(compact.version).toBe('1.3.0');
-      expect(compact.digest).not.toBe(prior.digest);
-      expect(prior.version).toBe(prior.routing?.mode === 'write' ? '1.1.0' : '1.0.0');
-    }
+    expect(compactDefaultCard.version).toBe('1.2.0');
+    expect(defaultCard.version).toBe('0.7.0');
   });
 
   it('assembles new coordination rules independently of method wording and retains legacy rendering', () => {
@@ -163,9 +157,9 @@ describe('compact stable tool profile', () => {
       expect(context[0]!.content).toContain('Explicitly pass todoId');
       expect(properties).toHaveProperty('todoId');
       await expect(app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items }, signal())).resolves.toHaveProperty('revision', 1);
-      expect(specs.map(spec => spec.name)).toContain('agent.route');
+      expect(specs.map(spec => spec.name)).not.toContain('agent.route');
+      expect(specs.map(spec => spec.name)).not.toContain('agent.derive');
     }
-    expect(app.store.cards.rosterMember(session.id, 'kodo/implementer')?.card.version).toBe(options.toolProfile === 'compact-v1' ? '1.3.0' : '1.1.0');
     expect(app.store.run(runId).scope).toEqual(run.scope);
   });
 });

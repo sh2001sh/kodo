@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { parseCard, serializeCard } from '../src/agents/card.js';
-import { activeMethod, methodSkillId } from '../src/extensions/methods.js';
+import { activeMethod, methodCatalogDigest, methodSkillId } from '../src/extensions/methods.js';
 import { digest } from '../src/storage/index.js';
 import type { Card, Provider } from '../src/runtime/types.js';
 import { readHistory } from '../src/runtime/history.js';
@@ -20,6 +20,10 @@ function appAt(root: string, provider: Provider, inlineMethods = true): Applicat
   const app = new Application(path.join(root, 'data'), provider, undefined, { ...options, inlineMethods });
   applications.add(app); return app;
 }
+/** Publish the session method catalog: the roster is gone, so hosts install explicitly. */
+function publish(app: Application, runId: string, install: Card[]): void {
+  app.updateSessionMethods(runId, { expectedDigest: methodCatalogDigest(app.store.session(app.store.run(runId).sessionId).methodCards), install });
+}
 
 describe('inline card methods', () => {
   it.each([true, false])('shows method discovery in the first real request (enabled=%s), without preloading bodies', async enabled => {
@@ -30,21 +34,21 @@ describe('inline card methods', () => {
     const app = appAt(root, { async complete(request) { seen.push(structuredClone(request)); return responses.shift()!; } }, enabled);
     [inline, child, incompatible].forEach(card => app.registerCard(card));
     const run = app.createRun({ workspace: root, objective: 'Prepare a release.', binding });
+    if (enabled) publish(app, run.id, [inline, incompatible]);
     expect((await app.run(run.id)).status).toBe('completed');
     const first = JSON.stringify(seen[0]!.messages);
-    expect(first.includes(methodSkillId(inline))).toBe(enabled);
+    // The catalog is discovered through skill.list; bodies are never preloaded.
     expect(first).not.toContain('PRIVATE_RELEASE_RULE');
     expect(first).not.toContain('PRIVATE_CHILD_RULE');
     expect(first).not.toContain(methodSkillId(child));
+    const listed = app.store.calls(run.id).find(call => call.name === 'skill.list');
     if (enabled) {
-      expect(first).toContain('execution_modes');
-      expect(first).toContain('skill.load');
-      expect(first).toContain('availability_check');
-      const listed = app.store.calls(run.id).find(call => call.name === 'skill.list')!;
-      const result = app.store.readBlob<{ skills: { id: string }[]; unavailableMethods: { id: string; reason: string }[] }>(listed.resultRef!);
+      const result = app.store.readBlob<{ skills: { id: string }[]; unavailableMethods: { id: string; reason: string }[] }>(listed!.resultRef!);
       expect(result.skills.map(skill => skill.id)).toContain(methodSkillId(inline));
       expect(result.skills.map(skill => skill.id)).not.toContain(methodSkillId(incompatible));
       expect(result.unavailableMethods).toContainEqual(expect.objectContaining({ id: methodSkillId(incompatible), reason: expect.stringContaining('task activate') }));
+    } else {
+      expect(listed?.status).toBe('failed');
     }
   });
 
@@ -56,6 +60,7 @@ describe('inline card methods', () => {
       { ...options, compaction: { strategy: 'mask', workInputTokens: 4000 } });
     applications.add(app); app.registerCard(first); app.registerCard(second);
     const run = app.createRun({ workspace: root, objective: 'Keep the budget ceiling at 2100 and compare figures.', binding });
+    publish(app, run.id, [first, second]);
     expect((await app.run(run.id)).status).toBe('completed');
     const last = JSON.stringify(seen.at(-1)!.messages);
     expect(last).not.toContain('OLD_METHOD');
@@ -79,6 +84,7 @@ describe('inline card methods', () => {
       { ...options, methodUnloading: false, compaction: { strategy: 'mask', workInputTokens: 4000 } });
     applications.add(app); app.registerCard(first); app.registerCard(second);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [first, second]);
     expect((await app.run(run.id)).status).toBe('completed');
     expect(app.store.events(run.id, { types: ['context.methods.unloaded'] })).toHaveLength(0);
     expect(JSON.stringify(seen.at(-1)!.messages)).toContain('CURRENT_METHOD');
@@ -91,6 +97,7 @@ describe('inline card methods', () => {
     const app = appAt(root, { async complete(request) { seen.push(structuredClone(request)); return responses.shift()!; } });
     app.registerCard(first); app.registerCard(second);
     const run = app.createRun({ workspace: root, objective: 'Compare proposals and prepare the budget.', binding });
+    publish(app, run.id, [first, second]);
     expect((await app.run(run.id)).status).toBe('completed');
     expect(seen.every(request => JSON.stringify(request.tools) === JSON.stringify(seen[0]!.tools))).toBe(true);
     const before = seen[2]!.messages.filter(message => message.role === 'tool');
@@ -113,6 +120,7 @@ describe('inline card methods', () => {
     app.registerSkills([plain]); app.registerCard(first);
     const main = app.parseCard('---\nschema_version: 1\nid: test/main\nversion: 1.0.0\nname: Main\ndescription: Main\ncapabilities:\n  tools: [file.read, skill.list, skill.load]\n  skills: [reference]\n---\nComplete the task.\n');
     const run = app.createRun({ workspace: root, objective: 'Inspect the figures.', binding, card: main });
+    publish(app, run.id, [first]);
     expect((await app.run(run.id)).status).toBe('completed');
     expect(app.store.events(run.id, { types: ['method.loaded'] })).toHaveLength(1);
     const results = app.store.calls(run.id).filter(item => item.name === 'skill.load').map(item => app.store.readBlob<Record<string, unknown>>(item.resultRef!));
@@ -130,6 +138,7 @@ describe('inline card methods', () => {
     }));
     app.registerCard(first); app.registerCard(second);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [first, second]);
     expect((await app.run(run.id)).status).toBe('completed');
     expect(app.store.events(run.id, { types: ['method.loaded'] })).toHaveLength(1);
   });
@@ -139,6 +148,7 @@ describe('inline card methods', () => {
     const app = appAt(root, scripted(calls(call('skill.load', { id: methodSkillId(first) }, 'one'), call('skill.load', { id: methodSkillId(second) }, 'two')), answer()));
     app.registerCard(first); app.registerCard(second);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [first, second]);
     expect((await app.run(run.id)).status).toBe('completed');
     const results = app.store.calls(run.id).filter(item => item.name === 'skill.load').map(item => app.store.readBlob<Record<string, unknown>>(item.resultRef!));
     expect(results[1]!.methodNotice).toContain(methodSkillId(first));
@@ -153,6 +163,7 @@ describe('inline card methods', () => {
     })));
     app.registerCard(card);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [card]);
     expect((await app.run(run.id)).status).toBe('interrupted');
     expect(activeMethod(app.store, run.id)?.id).toBe(methodSkillId(card));
     await app.shutdown(); applications.delete(app);
@@ -169,6 +180,7 @@ describe('inline card methods', () => {
     const app = appAt(root, scripted(calls(call('skill.list', {})), answer()));
     app.registerCard(first); app.registerCard(legacy);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [first]);
     app.registerCard(method('pinned', 'A newer method.', { version: '2.0.0' }));
     expect((await app.run(run.id)).status).toBe('completed');
     const listed = app.store.calls(run.id).find(item => item.name === 'skill.list')!;
@@ -176,23 +188,26 @@ describe('inline card methods', () => {
   });
 
   it('reports incompatible method contracts instead of silently dropping requirements', async () => {
-    const root = temp(), card = method('contract', undefined, { inputs: [{ name: 'budget', kind: 'text', required: true }] });
+    const root = temp(), card = method('contract', undefined, { inputs: [{ name: 'budget', kind: 'text', required: true }], execution: { modes: ['inline'] } });
     const app = appAt(root, scripted(calls(call('skill.list', {})), calls(call('skill.load', { id: methodSkillId(card) })), answer()));
     app.registerCard(card);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [card]);
     expect((await app.run(run.id)).status).toBe('completed');
     const listed = app.store.calls(run.id).find(item => item.name === 'skill.list')!;
     expect(app.store.readBlob(listed.resultRef!)).toMatchObject({ skills: [], unavailableMethods: [{ id: methodSkillId(card), reason: expect.stringContaining('named inputs') }] });
     expect(app.store.events(run.id, { types: ['method.loaded'] })).toHaveLength(0);
   });
 
-  it('honors inline-only cards while preserving independently runnable cards', () => {
+  it('keeps inline-only cards registered while children inherit the parent card', () => {
     const root = temp(), inline = method('inline'), both = method('both', undefined, { execution: { modes: ['inline', 'child'] } });
     const app = appAt(root, scripted());
     app.registerCard(inline); app.registerCard(both);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
-    expect(() => app.spawnAgent(run.sessionId, { agent: inline.id, objective: 'Inspect figures.' })).toThrow('inline method loading only');
-    expect(app.spawnAgent(run.sessionId, { agent: both.id, objective: 'Inspect figures.' }).card.id).toBe(both.id);
+    // Card selection was removed with the roster: every child inherits the parent card.
+    expect(app.spawnAgent(run.sessionId, { objective: 'Inspect figures.' }).card.digest).toBe(run.card.digest);
+    expect(app.store.card(inline.id, inline.version).id).toBe(inline.id);
+    expect(app.store.card(both.id, both.version).id).toBe(both.id);
   });
 
   it('does not silently reactivate a finished method on a new user follow-up', async () => {
@@ -203,6 +218,7 @@ describe('inline card methods', () => {
     }));
     app.registerCard(card);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [card]);
     await app.run(run.id);
     const followup = app.submitInput(run.id, 'Explain the result briefly.', { mode: 'follow_up' });
     expect(activeMethod(app.store, followup.id)).toBeUndefined();
@@ -216,6 +232,7 @@ describe('inline card methods', () => {
     const app = appAt(root, scripted(calls(call('skill.load', { id: methodSkillId(first) })), calls(call('skill.load', { id: methodSkillId(second) })), answer()));
     app.registerCard(first); app.registerCard(second);
     const run = app.createRun({ workspace: root, objective: 'Inspect figures.', binding });
+    publish(app, run.id, [first, second]);
     const unsubscribe = app.store.subscribe(event => {
       if (event.runId === run.id && event.type === 'method.loaded') app.coordinator.interrupt(run.id);
     });

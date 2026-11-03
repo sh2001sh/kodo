@@ -5,9 +5,6 @@ import path from 'node:path';
 import type { Call, Card, Envelope, Run, RuntimeEvent, Session, Wait } from '../runtime/types.js';
 import { defaultBudget, KodoError } from '../runtime/types.js';
 import { BlobStore } from './blobs.js';
-import { CardRecords } from './cards.js';
-import { DerivedAgentRecords } from './derived-agents.js';
-import { AgentDraftRecords, agentDraftSchema } from './agent-drafts.js';
 import { CaseRecords } from './case-records.js';
 import { KnowledgeRecords } from './knowledge.js';
 import { WebRequestRecords } from './web-requests.js';
@@ -47,10 +44,6 @@ export class Store {
   private readonly blobs: BlobStore;
   /** Named knowledge-table queries for the knowledge service. */
   readonly knowledge: KnowledgeRecords;
-  /** Agent metadata search and discovery accounting. */
-  readonly cards: CardRecords;
-  readonly derivedAgents: DerivedAgentRecords;
-  readonly agentDrafts: AgentDraftRecords;
   /** Case evidence tables, created on first use. */
   readonly cases: CaseRecords;
   /** HTTP adapter idempotency receipts, created on first use. */
@@ -124,16 +117,12 @@ export class Store {
         ${counterSchema}
         ${fileStateSchema}
         ${checkpointSchema}
-        ${agentDraftSchema}
         ${counted ? '' : counterBackfill}
         PRAGMA user_version = 7;
         COMMIT;
       `);
       this.blobs = new BlobStore(this.directory, this.#db);
       this.knowledge = new KnowledgeRecords(this.#db);
-      this.cards = new CardRecords(this.#db);
-      this.derivedAgents = new DerivedAgentRecords(this.#db);
-      this.agentDrafts = new AgentDraftRecords(this.#db);
       this.cases = new CaseRecords(this.#db);
       this.webRequests = new WebRequestRecords(this.#db);
       this.fileStates = new FileStateRecords(this.#db);
@@ -378,6 +367,18 @@ export class Store {
   waits(sessionId?: string, registeredOnly = false): Wait[] {
     return (this.#db.prepare(`SELECT w.data FROM waits w JOIN runs r ON r.id=w.run_id WHERE (@sessionId IS NULL OR r.session_id=@sessionId) ${registeredOnly ? "AND json_extract(w.data,'$.status')='registered'" : ''}`).all({ sessionId: sessionId ?? null }) as { data: string }[]).map(x => JSON.parse(x.data) as Wait);
   }
+  /**
+   * Read-only probe for tables that only the deleted roster, draft and derived-agent
+   * subsystems wrote. This build never creates or reads them, but a data directory
+   * written by an older build may still contain matching rows for a session.
+   */
+  legacyAgentSession(sessionId: string): boolean {
+    const has = (table: string): boolean => Boolean(this.#db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table));
+    if (has('roster_snapshots') && this.#db.prepare('SELECT 1 FROM roster_snapshots WHERE session_id=? LIMIT 1').get(sessionId)) return true;
+    if (has('derived_agents') && this.#db.prepare('SELECT 1 FROM derived_agents WHERE session_id=? LIMIT 1').get(sessionId)) return true;
+    if (has('agent_drafts') && this.#db.prepare('SELECT 1 FROM agent_drafts WHERE session_id=? LIMIT 1').get(sessionId)) return true;
+    return false;
+  }
   /** Exclusive directory ownership makes mark/sweep safe between runtime operations. */
   gc(options: { vacuum?: boolean; olderThanDays?: number } = {}): { removedBlobs: number; freedBytes: number; removedSessions: number } {
     if (this.#db.inTransaction || this.listRuns(undefined, 'running').length) throw new KodoError('GC_ACTIVE', 'stop active execution before garbage collection');
@@ -385,7 +386,6 @@ export class Store {
     const hasCaseRuns = Boolean(this.#db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='case_runs'").get());
     // Retained case evidence owns its execution history, including failed and interrupted attempts.
     const caseSessions = new Set(hasCaseRuns ? (this.#db.prepare("SELECT DISTINCT r.session_id FROM runs r JOIN case_runs c ON r.id=json_extract(c.data,'$.execution.runId')").all() as { session_id: string }[]).map(row => row.session_id) : []);
-    const draftSessions = new Set(this.agentDrafts.sessionIds());
     let removedSessions = 0;
     if (options.olderThanDays !== undefined) this.transaction(() => {
       const cutoff = Date.now() - options.olderThanDays! * 86_400_000;
@@ -393,7 +393,7 @@ export class Store {
       for (const row of sessions) {
         const session = JSON.parse(row.data) as Session;
         const runs = this.listRuns(session.id);
-        if (caseSessions.has(session.id) || draftSessions.has(session.id) || session.activeSince !== undefined || Date.parse(session.createdAt) >= cutoff || runs.some(run => !['completed', 'failed', 'cancelled'].includes(run.status)) || this.unresolvedWrites(undefined, session.id).length) continue;
+        if (caseSessions.has(session.id) || session.activeSince !== undefined || Date.parse(session.createdAt) >= cutoff || runs.some(run => !['completed', 'failed', 'cancelled'].includes(run.status)) || this.unresolvedWrites(undefined, session.id).length) continue;
         // Retention is measured from the last activity, not merely session creation.
         const latest = this.#db.prepare('SELECT MAX(time) AS time FROM events WHERE session_id=?').get(session.id) as { time: string | null };
         if (latest.time && Date.parse(latest.time) >= cutoff) continue;

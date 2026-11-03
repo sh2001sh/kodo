@@ -12,7 +12,6 @@ import type { TaskDeclaration } from './task-declare.js';
 import { currentDependencies, dependenciesCurrent, descendants, moveTaskNode, predecessorsSatisfied, readTaskGraph, requireTaskNode, writeTaskNode } from './task-graph.js';
 import { activeMethod, methodContract, methodSkillId, sessionMethodCards } from '../extensions/methods.js';
 import { reportCompleteness, validateReport } from './report.js';
-import { validateSlots } from '../agents/contracts.js';
 import { assertFileScope, intersectFileScopes } from './scope.js';
 import { ProjectKnowledge } from '../knowledge/index.js';
 import { createInputTokenEstimator, estimateTextTokens } from './context-tokens.js';
@@ -144,11 +143,12 @@ export function executeMethodStage(store: Store, run: Run, callId: string, args:
   });
   if (child) {
     if (card.execution && !card.execution.modes.includes('child')) throw new KodoError('METHOD_INCOMPATIBLE', 'this card does not support independent execution');
-    const result = invoke('spawn_agent', { agent: card.id, objective: node.goal, slots: args.inputs, context: JSON.stringify({ refs, found }) }) as { id: string };
+    const result = invoke('spawn_agent', { objective: node.goal, context: JSON.stringify({ refs, found }) }) as { id: string };
     return moveTaskNode(store, run.id, node, 'running', { runId: result.id, activationCallId: callId, boundScope: contract.scope, boundCard: { id: card.id, version: card.version, digest: card.digest }, dependencies: currentDependencies(graph, node), resultDecisionVersion: session.decisionVersion ?? 0 });
   }
   if (!card.execution?.modes.includes('inline') || card.model || card.members?.length) throw new KodoError('METHOD_INCOMPATIBLE', 'this card requires independent execution');
-  const inputs = validateSlots(store, run, card, contract.scope, args.inputs);
+  if (args.inputs !== undefined) throw new KodoError('METHOD_INPUTS', 'method stages no longer accept named inputs; pass evidence through requiredRefs or knowledge queries');
+  const inputs = {};
   const rules = (card.constraints?.rules ?? []).map(file => {
     const target = path.resolve(session.workspace, file); assertFileScope(contract.scope, 'read', session.workspace, target);
     const content = readFileSync(target, 'utf8'); if (content.length > 128000) throw new KodoError('METHOD_SIZE', 'rule file exceeds 128000 characters');

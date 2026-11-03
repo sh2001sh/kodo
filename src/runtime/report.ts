@@ -1,7 +1,34 @@
 import type { Store } from '../storage/index.js';
 import { normalizeFileScope } from './scope.js';
 import { KodoError } from './types.js';
-import type { Run, ToolRequest } from './types.js';
+import type { Card, Run, ToolRequest, ToolSpec } from './types.js';
+
+/**
+ * The report tool stays available in this batch (1d narrows the collaboration
+ * tools); the schema lives here because it is driven by the card report fields
+ * that the runtime validates, not by any roster or card-selection subsystem.
+ */
+export const reportSubmissionSpec: ToolSpec = {
+  name: 'report.submit',
+  description: 'Submit the structured fields declared by your agent card. Required fields must be present. calls fields reference settled tool calls from this run. A complete report proves neither successful checks nor parent acceptance; raw call status remains visible.',
+  parameters: { type: 'object', additionalProperties: false, required: ['fields'], properties: { fields: { type: 'object', maxProperties: 32, additionalProperties: true } } },
+};
+
+/** Card fields are stable for the run; live call IDs stay out of the tool schema. */
+export function reportSpecForCard(card: Card): ToolSpec {
+  const fields = card.report ?? [];
+  return { ...reportSubmissionSpec,
+    description: 'Submit your declared report fields once checks are settled. For calls fields use an exact call_id from inspect_run or an unambiguous tool_call_id from your own tool messages; stored references are canonical. Reuse existing evidence instead of rerunning checks to produce a report. Completeness does not prove successful checks or parent acceptance.',
+    parameters: { ...reportSubmissionSpec.parameters, properties: { fields: {
+      type: 'object', additionalProperties: false,
+      required: fields.filter(field => field.required).map(field => field.name),
+      properties: Object.fromEntries(fields.map(field => [field.name, {
+        ...(field.kind === 'text' ? { type: 'string', minLength: 1 } : { type: 'array', maxItems: 256, items: { type: 'string', minLength: 1 } }),
+        description: [field.description, field.kind === 'calls' ? 'Settled tool-call IDs from this run; [] when no checks ran. Disclose unrun checks in your report.' : field.kind === 'paths' ? 'Workspace-relative paths.' : undefined].filter(Boolean).join(' '),
+      }])),
+    } } },
+  };
+}
 
 export interface ReportView {
   fields: Record<string, unknown>;

@@ -17,7 +17,7 @@ function write(app: Application, runId: string, items: TodoItem[], markEffectSta
 }
 function dispatch(app: Application, runId: string, taskProtocol: 1 | 2) {
   const run = app.store.run(runId), mailbox = app.coordinator.mailbox;
-  const args = { objective: 'Isolated synthetic lifecycle; no model runs', agent: 'kodo/explorer', slots: { question: 'Synthetic fixture question' }, ...(taskProtocol === 2 ? { todoId: work.id } : {}) };
+  const args = { objective: 'Isolated synthetic lifecycle; no model runs', ...(taskProtocol === 2 ? { todoId: work.id } : {}) };
   return mailbox.execute(run, crypto.randomUUID(), 'spawn_agent', mailbox.validate(run, 'spawn_agent', JSON.stringify(args))) as { id: string };
 }
 

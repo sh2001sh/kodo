@@ -27,9 +27,6 @@ import { connectMcp, skillTools } from '../extensions/index.js';
 import { methodCatalogDigest, withCardMethods } from '../extensions/methods.js';
 import { roleAllows } from '../runtime/role-view.js';
 import type { McpConfig, McpConnection, Skill } from '../extensions/index.js';
-import { cardDirectoryTool, cardSearchTool, searchCards } from '../agents/discovery.js';
-import { cardRoutingTool } from '../agents/routing.js';
-import type { RoutingPolicy } from '../agents/routing.js';
 import { carryRecoveryTodo, todoTools } from '../tools/todo.js';
 import { lspTools } from '../tools/lsp.js';
 import type { LspOptions } from '../tools/lsp.js';
@@ -46,10 +43,6 @@ import { createVerificationTool } from '../tools/verify.js';
 import type { VerificationPolicy } from '../tools/verify.js';
 import type { HookRegistration } from '../runtime/hooks.js';
 import { rewindRun } from '../runtime/rewind.js';
-import { builtinAgentCards, compactBuiltinAgentCards, simpleBuiltinAgentCards, legacyBuiltinCards } from '../agents/presets.js';
-import { freezeRoster } from '../agents/roster.js';
-import { projectAgentAssets } from '../agents/project-cards.js';
-import { AgentRetention, retentionTools } from '../agents/retention.js';
 import { validateAgentModelPolicy } from '../messaging/spawn-spec.js';
 import type { SpawnAgentRequest } from '../messaging/spawn-spec.js';
 import { prepareInstructionContext } from '../runtime/instruction-layer.js';
@@ -61,7 +54,6 @@ import { assertSessionCompatible } from '../runtime/session-compat.js';
 
 export interface CreateRunOptions { objective: string; workspace: string; binding: ModelBinding; permissions?: Permission[]; scope?: FileScope; budget?: Partial<Budget>; card?: Card; finalResponse?: 'required' | 'optional'; toolChoice?: 'none'; deliverables?: Deliverable[]; team?: SpawnAgentRequest[] | ((main: Run) => SpawnAgentRequest[]) }
 export interface ApplicationOptions {
-  agentRetention?: 'review' | 'off';
   agentFactors?: AgentFactors;
   /** Frozen for new sessions; absent in saved sessions preserves legacy task association. */
   taskProtocol?: 1 | 2 | 3;
@@ -88,7 +80,6 @@ export interface ApplicationOptions {
   shellProgram?: string;
   webFetch?: WebFetchPolicy;
   lsp?: LspOptions;
-  discovery?: RoutingPolicy;
   /** Enabled by default; false disables exploration and knowledge. Private knowledge is bound to this owner and workspace. */
   exploration?: boolean | { ownerId?: string };
   /** Opt into the exploration workflow and its structured exploration.plan tool. Default false; requires exploration not to be disabled. */
@@ -115,7 +106,6 @@ export interface RunSnapshot {
 export class Application {
   readonly store: Store;
   readonly coordinator: RunCoordinator;
-  readonly retention: AgentRetention;
   private readonly agentFactors: Required<AgentFactors>;
   private readonly taskProtocol: 1 | 2 | 3;
   private readonly toolProfile: NonNullable<Session['toolProfile']>;
@@ -123,7 +113,6 @@ export class Application {
   private readonly modelRoles: Partial<Record<'fast' | 'standard' | 'strong', string>>;
   private readonly modelBindings?: Record<string, ModelBinding>;
   private readonly modelBindingDescriptions?: Record<string, string>;
-  private readonly agentRetention: 'review' | 'off';
   private registeredToolNames = new Set<string>();
   private registeredSkillIds = new Set<string>();
   private readonly skills = new Map<string, Skill>();
@@ -140,18 +129,10 @@ export class Application {
   private readonly lockDirectory?: string | false;
   private readonly optionalTools: string[];
   get defaultCard(): Card {
-    const base = this.legacyDefaultCard;
-    // lean-solo has no roster; delegation profiles keep it.
-    if (!this.agentFactors.A || this.toolProfile === 'lean-solo') return base;
-    const available = new Set(this.coordinator.tools.availableNames());
-    const tools = [...new Set([...base.tools, ...(this.toolProfile === 'full' && this.agentRetention === 'review' ? ['agent.propose', 'agent.retain'] : [])])].filter(name => available.has(name));
-    const members = this.builtinCards.filter(card => ['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer'].includes(card.id)).map(({ id, version, digest }) => ({ id, version, digest }));
-    const card: Card = { ...base, schemaVersion: 2, id: `${base.id}-roster`, tools, members, catalog: { path: 'coordination/general' }, routing: { use_when: ['Coordinate a bounded local task and integrate member reports.'], mode: 'write' } };
-    // Host availability changes may create another default; never overwrite an immutable ID/version.
-    const identity = digest(JSON.stringify(card));
-    return { ...card, id: `${card.id}-${identity.slice(0, 12)}`, digest: identity };
+    // Builtin cards are gone with the roster; profile selection over the five
+    // immutable default variants remains until 1e converges them.
+    return this.legacyDefaultCard;
   }
-  private get builtinCards(): Card[] { return this.toolProfile === 'compact-v2' ? simpleBuiltinAgentCards : this.toolProfile === 'compact-v1' ? compactBuiltinAgentCards : builtinAgentCards; }
   private get legacyDefaultCard(): Card {
     // Explicit exploration workflows keep their complete capability set. Ordinary
     // compact sessions do not acquire the knowledge catalog just because storage exists.
@@ -192,8 +173,6 @@ export class Application {
       ...(this.toolProfile !== 'full' && options.webFetch?.enabled ? ['web.fetch'] : []),
       ...(this.toolProfile !== 'full' && options.lsp?.servers.length ? ['lsp.hover', 'lsp.definition', 'lsp.references', 'lsp.symbols', 'lsp.diagnostics'] : [])];
     this.agentFactors = { A: options.agentFactors?.A ?? true, B: options.agentFactors?.B ?? true, C: options.agentFactors?.C ?? true, D: options.agentFactors?.D ?? true, E: options.agentFactors?.E ?? true };
-    this.agentRetention = options.agentRetention ?? 'review';
-    if (!['review', 'off'].includes(this.agentRetention)) { this.store.close(); throw new KodoError('AGENT_RETENTION', 'agentRetention must be review or off'); }
     this.projectRoots = structuredClone(options.projectRoots ?? {});
     try { for (const roots of Object.values(this.projectRoots)) normalizeFileScope({ write: roots }); }
     catch (error) { this.store.close(); throw error; }
@@ -203,11 +182,6 @@ export class Application {
     try {
       const knowledge = options.exploration !== false || this.inlineMethods ? new ProjectKnowledge(this.store, typeof options.exploration === 'object' ? options.exploration : {}) : undefined;
       this.coordinator = new RunCoordinator(this.store, provider, onText, options.readOnlyCommands, { modelBindings: structuredClone(options.modelBindings ?? {}), ...(options.sandbox ? { sandbox: structuredClone(options.sandbox) } : {}), shellProgram: options.shellProgram, knowledge, structuredExploration: this.structuredExploration, compaction, assembly: options.assembly, exploreNudge: options.exploreNudge, globalInstructions: this.globalInstructions, hooks: options.hooks, lazyTools: options.lazyTools, ...(options.lockDirectory === undefined ? {} : { lockDirectory: options.lockDirectory }) });
-      this.registerTool(cardSearchTool(this.store, options.discovery));
-      this.registerTool(cardDirectoryTool(this.store, options.discovery));
-      this.registerTool(cardRoutingTool(this.store, options.discovery));
-      this.retention = new AgentRetention(this.store, { mode: this.agentRetention, registerCard: card => this.registerCard(card) });
-      for (const definition of retentionTools(this.retention)) this.registerTool(definition);
       for (const definition of todoTools(this.store, { cancelQueued: (runId, parentId) => this.coordinator.cancel(runId, { initiator: 'agent', by: parentId }) })) this.registerTool(definition);
       if (knowledge) for (const definition of knowledgeTools(knowledge, this.inlineMethods)) this.registerTool(definition);
       for (const definition of memoryTools(this.store, { enabled: this.projectMemory })) this.registerTool(definition);
@@ -258,7 +232,7 @@ export class Application {
     if (!cards.length && !change.disable?.length) return { digest: beforeDigest };
     if (new Set(cards.map(card => card.id)).size !== cards.length) throw new KodoError('METHOD_CONFIG', 'install each card ID at most once');
     if (change.disable?.some(id => !before.some(ref => ref.id === id) && !cards.some(card => card.id === id))) throw new KodoError('METHOD_CONFIG', 'cannot disable an unknown session method');
-    for (const card of cards) this.validateCardRegistration(card, cards);
+    for (const card of cards) this.validateCardRegistration(card);
     const tools = [...new Set([...(session.methodTools ?? run.card.tools), ...cards.flatMap(card => [...card.tools, ...(card.mcp ?? []).flatMap(server => server.tools.map(tool => `mcp.${server.server}.${tool}`))])])];
     const skills = [...new Set([...(session.methodSkills ?? run.card.skills ?? []), ...cards.flatMap(card => card.skills ?? [])])];
     const bindings = this.coordinator.tools.bindingSnapshot(tools, skills);
@@ -280,7 +254,7 @@ export class Application {
     });
     return { digest: nextDigest };
   }
-  private validateCardRegistration(card: Card, projectCards: readonly Card[] = []): void {
+  private validateCardRegistration(card: Card): void {
     if (card.schemaVersion === 2 || card.execution) {
       const known = new Set<string>([...builtinToolNames, ...hostToolNames, ...this.registeredToolNames]);
       if (card.tools.some(name => !known.has(name))) throw new KodoError('CARD_SCHEMA', 'card references an unknown tool');
@@ -289,12 +263,7 @@ export class Application {
       this.coordinator.tools.bindingSnapshot(card.tools, card.skills ?? []);
       if (card.skills?.some(id => !this.registeredSkillIds.has(id))) throw new KodoError('SKILL_UNAVAILABLE', 'register the required skills before registering this card');
     }
-    for (const member of card.members ?? []) {
-      const referenced = projectCards.find(candidate => candidate.id === member.id && candidate.version === member.version && candidate.digest === member.digest) ?? this.store.card(member.id, member.version);
-      if (referenced.digest !== member.digest) throw new KodoError('CARD_MEMBER', 'member reference digest does not match its registered card');
-    }
   }
-  searchCards(options: Parameters<typeof searchCards>[1] = {}): ReturnType<typeof searchCards> { return searchCards(this.store, options); }
   /** Skill IDs are immutable; adding unrelated skills does not change existing run contracts. */
   registerSkills(skills: readonly Skill[]): void {
     const prepared = this.prepareSkills(skills);
@@ -479,8 +448,7 @@ export class Application {
     let permissions = options.permissions ?? ['read'];
     if (permissions.some(x => !['read', 'write', 'exec'].includes(x))) throw new KodoError('PERMISSIONS', 'unknown permission');
     const card = options.card ?? this.defaultCard;
-    const assets = projectAgentAssets(workspace, source => this.parseCard(source));
-    const projectRoots = { ...assets.roots, ...this.projectRoots };
+    const projectRoots = structuredClone(this.projectRoots);
     if (card.constraints?.permissions) permissions = permissions.filter(permission => card.constraints!.permissions!.includes(permission));
     if (card.routing?.mode === 'read') permissions = permissions.filter(permission => permission === 'read');
     if (card.routing?.mode === 'review') permissions = permissions.filter(permission => permission !== 'write');
@@ -496,23 +464,12 @@ export class Application {
     const toolBindings = this.coordinator.tools.bindingSnapshot(executableCard.tools, executableCard.skills ?? []);
     const run: Run = { id: runId, sessionId, objective: options.objective, status: 'queued', card: executableCard, binding: options.binding, modelLimits, scope, toolBindings, contextRef: this.store.blob([]), step: 0, cancelRequested: false, decisionVersion: 0, finalResponse: options.finalResponse, ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}), ...(deliverables ? { deliverables } : {}), createdAt };
     this.store.transaction(() => {
-      if (this.agentFactors.A) for (const preset of [...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards]) this.registerCard(preset);
-      for (const projectCard of assets.cards) this.validateCardRegistration(projectCard, assets.cards);
-      this.validateCardRegistration(card, assets.cards);
+      this.validateCardRegistration(card);
       this.store.registerCard(card);
       const session: Session = { id: sessionId, workspace, permissions, budget, modelLimits, agentFactors: this.agentFactors, taskProtocol: this.taskProtocol, toolProfile: this.toolProfile, projectRoots, modelRoles: structuredClone(this.modelRoles), ...(this.modelBindings === undefined ? {} : { modelBindings: structuredClone(this.modelBindings) }), ...(this.modelBindingDescriptions === undefined ? {} : { modelBindingDescriptions: structuredClone(this.modelBindingDescriptions) }), modelBudgetCeilings: { ...(options.budget?.maxContextTokens !== undefined ? { maxContextTokens: options.budget.maxContextTokens } : {}), ...(options.budget?.maxOutputTokens !== undefined ? { maxOutputTokens: options.budget.maxOutputTokens } : {}) }, tokens: 0, modelCalls: 0, toolCalls: 0, usageEstimated: false, decisionVersion: 0, createdAt };
-      if (this.inlineMethods) { session.inlineMethods = true; session.methodUnloading = this.methodUnloading; session.methodToolView = this.methodToolView; session.methodTools = executableCard.tools; session.methodSkills = executableCard.skills ?? []; }
+      if (this.inlineMethods) { session.inlineMethods = true; session.methodUnloading = this.methodUnloading; session.methodToolView = this.methodToolView; session.methodTools = executableCard.tools; session.methodSkills = executableCard.skills ?? []; session.methodCards = []; }
       this.store.putSession(session);
       this.store.putRun(run);
-      const available = this.coordinator.tools.availableNames();
-      const registered = this.store.registeredCards().filter(candidate => !this.agentFactors.A || (candidate.id !== card.id && !candidate.id.startsWith('builtin/general') && ![...legacyBuiltinCards, ...builtinAgentCards, ...compactBuiltinAgentCards, ...simpleBuiltinAgentCards].some(preset => preset.id === candidate.id && preset.digest === candidate.digest)));
-      freezeRoster(this.store, session, card, { projectCards: assets.cards, userCards: registered, builtinCards: this.agentFactors.A ? this.builtinCards : [], skills: [...this.registeredSkillIds], tools: available, mcpServers: [...new Set(available.filter(name => name.startsWith('mcp.')).map(name => name.split('.')[1]!))], projectVariables: projectRoots, catalogDescriptions: assets.descriptions, scope });
-      if (this.inlineMethods) {
-        const methodRefs = (this.store.cards.rosterSnapshot(session.id)?.members ?? [])
-          .filter(member => member.card.execution?.modes.includes('inline'))
-          .map(member => ({ id: member.card.id, version: member.card.version, digest: member.card.digest }));
-        this.store.putSession({ ...this.store.session(session.id), methodCards: methodRefs });
-      }
       const prepared = prepareInstructionContext(this.store, run, session, { global: this.globalInstructions, memory: this.projectMemory });
       run.contextRef = this.store.blob(prepared.messages);
       run.instructions = prepared.instructions;
@@ -780,10 +737,6 @@ ${guidance}`, { toolNames: tools });
 export { ProjectKnowledge } from '../knowledge/index.js';
 export type { KnowledgeRef, KnowledgeSummary, KnowledgeFreshness, KnowledgePage, KnowledgeSearch, KnowledgeRead, KnowledgeUse, KnowledgeNode, KnowledgeBrowse } from '../knowledge/index.js';
 export { ModelProvider, ChatCompletionsProvider, ResponsesProvider, AnthropicProvider } from '../providers/index.js';
-export { searchCards, directoryCards, cardSearchTool, cardDirectoryTool } from '../agents/discovery.js';
-export type { CardSearchOptions, CardSearchResult, CardDirectoryOptions, ExplorationPolicy } from '../agents/discovery.js';
-export { routeCards, cardRoutingTool } from '../agents/routing.js';
-export type { CardRouteOptions, CardRouteResult, RoutingPolicy } from '../agents/routing.js';
 export { createAgentDraft, saveAgentMethod, writeAgentDraft } from '../agents/authoring.js';
 export { saveConfigurationDraft } from '../agents/configuration-save.js';
 export * from '../cases/index.js';

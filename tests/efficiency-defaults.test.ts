@@ -23,7 +23,8 @@ describe('frozen efficiency defaults', () => {
       expect(toolSpecs(reopened.coordinator, reopened.store.run(run.id), reopened.store.session(run.sessionId)).map(tool => tool.name)).toEqual(names);
       const legacy = reopened.createRun({ objective: 'Legacy workflow.', workspace: root, binding });
       expect(reopened.store.session(legacy.sessionId)).toMatchObject({ taskProtocol: 1, toolProfile: 'full' });
-      expect(legacy.card.members?.some(member => member.version === '1.1.0')).toBe(true);
+      expect(legacy.card.members).toBeUndefined();
+      expect(legacy.card.id).not.toMatch(/-roster/u);
     } finally { await reopened.shutdown(); }
   });
 

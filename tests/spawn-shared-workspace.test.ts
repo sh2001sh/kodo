@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Application } from '../src/application/index.js';
 import { compactDefaultCard, defaultCard, leanDefaultCard, parseCard, simpleDefaultCard, legacySimpleDefaultCard } from '../src/agents/card.js';
-import { compactBuiltinAgentCards, simpleBuiltinAgentCards } from '../src/agents/presets.js';
 import { builtinToolNames } from '../src/tools/index.js';
 import { fixture } from './helpers.js';
 
@@ -53,22 +52,9 @@ describe('card tool surface after the delivery-tool removal', () => {
       expect(card.tools).not.toContain('workspace.commit');
       expect(card.tools).not.toContain('workspace.integrate');
     }
-    expect(compactDefaultCard.version).toBe('1.1.0');
-    expect(legacySimpleDefaultCard.version).toBe('1.1.0');
-    expect(simpleDefaultCard.version).toBe('1.2.0');
-  });
-
-  it('agent presets are bumped and no longer carry the delivery tool', () => {
-    for (const card of compactBuiltinAgentCards) {
-      expect(card.version).toBe('1.3.0');
-      expect(card.tools).not.toContain('workspace.commit');
-      expect(card.tools).not.toContain('workspace.integrate');
-    }
-    for (const card of simpleBuiltinAgentCards) {
-      expect(card.version).toBe('1.4.0');
-      expect(card.tools).not.toContain('workspace.commit');
-      expect(card.tools).not.toContain('workspace.integrate');
-    }
+    expect(compactDefaultCard.version).toBe('1.2.0');
+    expect(legacySimpleDefaultCard.version).toBe('1.2.0');
+    expect(simpleDefaultCard.version).toBe('1.3.0');
   });
 
   it('fails fast for a card that still declares a removed delivery tool', () => {

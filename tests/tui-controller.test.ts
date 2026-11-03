@@ -172,7 +172,7 @@ describe('TUI application controller', () => {
     const complete = vi.fn<Provider['complete']>().mockResolvedValue(answer('done'));
     const env = setup({ complete }); await open(env);
     const main = env.app.store.run(env.runId);
-    const child = env.app.spawnAgent(main.sessionId, { agent: 'kodo/explorer', objective: 'Inspect the local implementation.', slots: { question: 'Which module handles input?' } });
+    const child = env.app.spawnAgent(main.sessionId, { objective: 'Inspect the local implementation.' });
     await env.controller.submit(`/tasks show ${child.id}`);
     expect(complete).not.toHaveBeenCalled(); expect(env.controller.snapshot().runId).toBe(main.id);
     await env.controller.submit(`/tasks message ${child.id} "Inspect input behavior"`);

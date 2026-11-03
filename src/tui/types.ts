@@ -58,7 +58,7 @@ export interface AgentCommandContext {
   activatePackage?: TuiOptions['activatePackage'];
   authoringHost?: AgentAuthoringHost;
   caseHost?: AgentCaseHost;
-  /** Starts the primary task flow when an explicit member has no active owner. */
-  startTask: (objective: string, member?: { agent: string; slots?: Record<string, unknown>; scope?: { read?: string[]; write?: string[] } }) => Promise<void>;
+  /** Starts the primary task flow for /agents authoring or case operations. */
+  startTask: (objective: string) => Promise<void>;
   wake: (runId: string) => void;
 }

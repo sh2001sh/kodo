@@ -1,5 +1,5 @@
 import { Ajv } from 'ajv';
-import type { Card, ToolSpec } from './types.js';
+import type { ToolSpec } from './types.js';
 import { KodoError } from './types.js';
 import { digest } from '../storage/index.js';
 
@@ -14,8 +14,6 @@ export interface ExplorationQuestion {
   reason: string;
   read_scope?: string[];
   knowledge_refs?: KnowledgeReference[];
-  card_id?: string;
-  card_version?: string;
   dependencies?: string[];
   blocked_reason?: string;
 }
@@ -26,7 +24,7 @@ const strings = { type: 'array', items: text, uniqueItems: true, maxItems: 16 };
 export const knowledgeReferenceSchema = { type: 'object', additionalProperties: false, properties: { id, revision: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } }, required: ['id', 'revision'] };
 export const explorationPlanSpec: ToolSpec = {
   name: 'exploration.plan',
-  description: 'Main only, host enabled: atomically record up to four independent exploration questions and dispatch ready child questions. Use main for small direct reads, reuse only with authorized current knowledge versions, deferred for unavailable inputs/dependencies. Child requires concrete inputs, bounded read_scope, consumer and deliverable; it receives only scoped native file reading tools. No implicit history, waiting dependencies, writes, exec, web or MCP. Same batch_id/decision_version/content replays original mapping after recovery; changed content or duplicate question IDs fail. decision_version must match the current session.',
+  description: 'Main only, host enabled: atomically record up to four independent exploration questions and dispatch ready child questions. Use main for small direct reads, reuse only with authorized current knowledge versions, deferred for unavailable inputs/dependencies. Child requires concrete inputs, bounded read_scope, consumer and deliverable; it inherits your card with read-only permissions. No implicit history, writes, exec, web or MCP. Same batch_id/decision_version/content replays original mapping after recovery; changed content or duplicate question IDs fail. decision_version must match the current session.',
   parameters: {
     type: 'object', additionalProperties: false,
     properties: {
@@ -38,7 +36,7 @@ export const explorationPlanSpec: ToolSpec = {
           execution: { enum: ['main', 'child', 'reuse', 'deferred'] }, reason: text,
           read_scope: { ...strings, maxItems: 256 },
           knowledge_refs: { type: 'array', maxItems: 16, uniqueItems: true, items: knowledgeReferenceSchema },
-          card_id: id, card_version: id, dependencies: { ...strings, items: id }, blocked_reason: text,
+          dependencies: { ...strings, items: id }, blocked_reason: text,
         },
         required: ['id', 'question', 'inputs', 'consumer', 'deliverable', 'execution', 'reason'],
       } },
@@ -59,7 +57,6 @@ export function validateExplorationPlan(value: unknown): ExplorationPlan {
     if (question.execution === 'reuse' && !question.knowledge_refs?.length) throw new KodoError('EXPLORATION_KNOWLEDGE', 'reuse requires exact knowledge ID/revision references');
     if (question.execution === 'deferred' && !question.dependencies?.length && !question.blocked_reason?.trim()) throw new KodoError('EXPLORATION_DEPENDENCY', 'deferred exploration requires dependency question IDs or a missing-input explanation');
     if (question.execution !== 'deferred' && (question.dependencies?.length || question.blocked_reason)) throw new KodoError('EXPLORATION_DEPENDENCY', 'unresolved dependencies require deferred execution');
-    if (question.execution !== 'child' && (question.card_id || question.card_version)) throw new KodoError('EXPLORATION_CARD', 'only child exploration may select a card');
   }
   return plan;
 }
@@ -68,14 +65,6 @@ export function validateExplorationPlan(value: unknown): ExplorationPlan {
 export function explorationFingerprint(plan: ExplorationPlan): string {
   const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)])) : value;
   return digest(JSON.stringify(canonical(plan)));
-}
-
-/** Only native, scope-enforcing file capabilities can survive an inherited specialist card. */
-export function explorationCard(card: Card): Card {
-  const tools = card.tools.filter(name => ['file.read', 'file.list', 'file.search', 'image.read'].includes(name));
-  if (!tools.includes('file.read')) throw new KodoError('EXPLORATION_CAPABILITY', 'exploration card must provide native file.read');
-  // Skills may expose additional tool contracts, so exploratory runs do not inherit them.
-  return { ...card, tools, skills: [] };
 }
 
 export function explorationResultContract(questionId: string): string {

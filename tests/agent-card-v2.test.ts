@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stringify } from 'yaml';
 import { defaultCard, parseCard, serializeCard } from '../src/agents/card.js';
-import { builtinAgentCards, defaultMemberReferences } from '../src/agents/presets.js';
 import { digest } from '../src/storage/index.js';
 
 const metadata = () => ({
@@ -67,28 +66,23 @@ describe('agent card schema v2', () => {
   });
 });
 
-describe('legacy cards and builtin members', () => {
-  it('keeps the builtin general v1 digest and representation unchanged', () => {
-    expect(defaultCard.digest).toBe('1758e68d91ec5e4c0fb58d21d74d0ed58110cf8ec499bb801e02dc3ebb80338f');
+describe('legacy cards and the single default identity', () => {
+  it('keeps the published general v1 representation unchanged except the 1c tool removal', () => {
+    expect(defaultCard.digest).toBe('6a3d4558e55aaa927e551c9c4bc40115178a73415c8eded062aa9722eceb348d');
     expect(defaultCard).not.toHaveProperty('schemaVersion');
     expect(defaultCard).not.toHaveProperty('members');
+    // The deleted roster/routing tools cannot be referenced by the builtin card.
+    expect(defaultCard.tools.filter(name => name.startsWith('agent.'))).toEqual([]);
     const legacy = { schema_version: 1, id: 'test/legacy', version: '1.0.0', name: 'Legacy', description: 'Legacy card.', capabilities: { tools: ['file.read'], skills: ['known/skill'] } };
     expect(() => parseCard(source(legacy))).toThrow('skill');
     expect(parseCard(source(legacy), { skillIds: ['known/skill'] }).skills).toEqual(['known/skill']);
   });
 
-  it('provides distinct presets with a required tester contract and host-only review checks', () => {
-    expect(builtinAgentCards.map(card => card.id)).toEqual(['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer', 'kodo/frontend', 'kodo/backend']);
-    expect(defaultMemberReferences.map(member => member.id)).toEqual(builtinAgentCards.slice(0, 4).map(card => card.id));
-    const tester = builtinAgentCards.find(card => card.id === 'kodo/tester')!;
-    expect(tester.inputs).toContainEqual(expect.objectContaining({ name: 'behavior_contract', kind: 'artifact', required: true }));
-    expect(tester.constraints?.scope?.write).toEqual(['${project.tests}']);
-    const reviewer = builtinAgentCards.find(card => card.id === 'kodo/reviewer')!;
-    expect(reviewer.routing?.mode).toBe('review');
-    expect(reviewer.constraints?.scope?.write).toEqual([]);
-    expect(reviewer.tools).toContain('verify.run');
-    expect(reviewer.tools).not.toContain('process.run');
-    expect(reviewer.tools).not.toContain('process.exec');
-    expect(builtinAgentCards.every(card => !(card.mcp?.length))).toBe(true);
+  it('has no builtin specialist roster; delegation tools are gone from every default card', async () => {
+    const { compactDefaultCard, legacySimpleDefaultCard, simpleDefaultCard, leanDefaultCard } = await import('../src/agents/card.js');
+    for (const card of [defaultCard, compactDefaultCard, legacySimpleDefaultCard, simpleDefaultCard, leanDefaultCard]) {
+      expect(card.tools.filter(name => ['agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain'].includes(name))).toEqual([]);
+      expect(card.members).toBeUndefined();
+    }
   });
 });

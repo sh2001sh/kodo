@@ -3,8 +3,6 @@ import { createInterface } from 'node:readline';
 import type { Application } from '../application/index.js';
 import { errorText, terminal } from '../runtime/types.js';
 import type { Run } from '../runtime/types.js';
-import { agentDraftSummary, applyAgentDraftChoice, editAgentDraft, pendingAgentDrafts, reviewAgentDrafts } from './agent-review.js';
-import type { RetentionDraft } from './agent-review.js';
 
 /** Use the terminal's native line editor, including IME/paste, without taking over the screen. */
 export async function interactive(app: Application, initial: Run, select: (id: string) => void, beforeRun: (id: string) => void = () => {}): Promise<Run> {
@@ -15,22 +13,11 @@ export async function interactive(app: Application, initial: Run, select: (id: s
   let driving: Promise<void> | undefined;
   let quitting = false;
   let inputClosed = false;
-  const offered = new Set<string>();
-  let proposal: RetentionDraft | undefined;
-  let editingProposal = false;
   lines.once('close', () => { inputClosed = true; });
   let revision = 0;
   let handledRevision = -1;
   const choose = (id: string): void => { currentId = id; select(id); };
-  const prompt = (): void => { if (!quitting && !inputClosed) { lines.setPrompt(proposal ? editingProposal ? '元数据 JSON（name、catalog、routing）> ' : '保留 Agent？[y / n / e / 回车跳过] ' : '> '); lines.prompt(true); } };
-  const offerProposal = (): void => {
-    if (!terminalInput || proposal || !terminal(app.store.run(currentId).status)) return;
-    proposal = pendingAgentDrafts(app, initial.sessionId).find(draft => !draft.silent && !offered.has(`${draft.id}:${draft.digest}`));
-    if (proposal) {
-      offered.add(`${proposal.id}:${proposal.digest}`);
-      process.stderr.write(`\n${terminalText(agentDraftSummary(proposal))}\n`);
-    }
-  };
+  const prompt = (): void => { if (!quitting && !inputClosed) { lines.setPrompt('> '); lines.prompt(true); } };
   // Keep the native editor's current input visible after asynchronous runtime output.
   const unsubscribe = app.store.subscribe(event => { if (terminalInput && event.sessionId === initial.sessionId) prompt(); });
   const drive = (): void => {
@@ -49,8 +36,6 @@ export async function interactive(app: Application, initial: Run, select: (id: s
           if (terminal(current.status)) {
             const next = pending.shift();
             if (next) { choose(next); continue; }
-            if (terminalInput) offerProposal();
-            else await reviewAgentDrafts(app, current.sessionId, { interactive: false });
           }
           for (const q of app.coordinator.mailbox.userQuestions(current.sessionId)) process.stderr.write(terminalText(`\n待回答 ${q.id}\n${q.content}\n`));
           prompt();
@@ -74,19 +59,6 @@ export async function interactive(app: Application, initial: Run, select: (id: s
         const text = paste ? paste.join('\n') : line;
         paste = undefined;
         if (!pasted && text === '/quit') { quitting = true; break; }
-        if (proposal) {
-          if (editingProposal) {
-            proposal = editAgentDraft(app, proposal, text);
-            editingProposal = false;
-            process.stderr.write(`已更新草稿，请确认新版本。\n${terminalText(agentDraftSummary(proposal))}\n`);
-          } else if (text.trim().toLowerCase() === 'e') editingProposal = true;
-          else {
-            applyAgentDraftChoice(app, proposal, text.trim().toLowerCase());
-            proposal = undefined;
-            offerProposal();
-          }
-          prompt(); continue;
-        }
         if (!text.trim()) continue;
         if (!pasted && text === '/status') { process.stderr.write(`${JSON.stringify(app.snapshot(currentId), null, 2)}\n`); prompt(); continue; }
         if (!pasted && text === '/cancel') { app.coordinator.cancel(currentId); revision++; drive(); continue; }

@@ -16,7 +16,9 @@ describe('portable standard host tool catalog', () => {
     expect(Object.isFrozen(hostToolNames)).toBe(true);
     expect(new Set(hostToolNames).size).toBe(hostToolNames.length);
     expect(hostToolNames.filter(name => builtinToolNames.includes(name))).toEqual([]);
-    expect(hostToolNames).toEqual(expect.arrayContaining(['agent.search', 'agent.directory', 'agent.route', 'todo.read', 'todo.write', 'web.fetch', 'lsp.hover', 'lsp.definition', 'lsp.references', 'lsp.symbols', 'lsp.diagnostics', 'skill.list', 'skill.load']));
+    expect(hostToolNames).toEqual(expect.arrayContaining(['todo.read', 'todo.write', 'web.fetch', 'lsp.hover', 'lsp.definition', 'lsp.references', 'lsp.symbols', 'lsp.diagnostics', 'skill.list', 'skill.load']));
+    // The deleted roster/routing tools are no longer portable host extensions.
+    expect(hostToolNames.filter(name => name.startsWith('agent.'))).toEqual([]);
   });
 
   it('round-trips cards that request standard host tools without bundling their implementation', async () => {

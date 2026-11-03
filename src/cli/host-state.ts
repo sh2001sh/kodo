@@ -17,30 +17,21 @@ import type { VerificationPolicy } from '../tools/verify.js';
 export interface CliToolPolicy { shellProgram?: string; webFetch?: WebFetchPolicy; lsp?: LspOptions }
 
 export interface CliAgentPolicy {
-  agentRetention?: 'review' | 'off';
   agentFactors?: AgentFactors;
-  projectRoots?: Record<string, string[]>;
 }
 
 export function validateAgentPolicy(policy: CliAgentPolicy | undefined): void {
   if (policy === undefined) return;
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy) || Object.keys(policy).some(key => !['agentRetention', 'agentFactors', 'projectRoots'].includes(key))) throw new KodoError('CLI_HOST_STATE', 'invalid agent policy');
-  if (policy.agentRetention !== undefined && !['review', 'off'].includes(policy.agentRetention)) throw new KodoError('ARGUMENTS', 'agent retention must be review or off');
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy) || Object.keys(policy).some(key => !['agentFactors'].includes(key))) throw new KodoError('CLI_HOST_STATE', 'invalid agent policy');
   if (policy.agentFactors !== undefined && (!policy.agentFactors || typeof policy.agentFactors !== 'object' || Array.isArray(policy.agentFactors) || Object.entries(policy.agentFactors).some(([key, value]) => !['A', 'B', 'C', 'D', 'E'].includes(key) || typeof value !== 'boolean'))) throw new KodoError('ARGUMENTS', 'agent factors must contain boolean A, B, C, D and E values');
-  if (policy.projectRoots !== undefined && (!policy.projectRoots || typeof policy.projectRoots !== 'object' || Array.isArray(policy.projectRoots) || Object.entries(policy.projectRoots).some(([key, roots]) => !/^project\.[a-z][a-z0-9_.-]*$/.test(key) || !Array.isArray(roots) || roots.some(root => typeof root !== 'string' || !root || root.includes('\0') || /[*?]/.test(root) || path.isAbsolute(root) || root.split(/[\\/]/).includes('..'))))) throw new KodoError('ARGUMENTS', 'project roots must map project variables to workspace-relative path roots');
 }
 
 export function cliAgentPolicy(values: Record<string, unknown>): CliAgentPolicy | undefined {
   const policy: CliAgentPolicy = {};
-  if (values['agent-retention'] !== undefined) policy.agentRetention = values['agent-retention'] as CliAgentPolicy['agentRetention'];
   if (values['agent-factors'] !== undefined) {
     const factors = values['agent-factors'];
     if (typeof factors !== 'string' || !/^(?:none|[ABCDE](?:,[ABCDE])*)$/.test(factors)) throw new KodoError('ARGUMENTS', '--agent-factors must be none or comma-separated A,B,C,D,E');
     policy.agentFactors = { A: factors.split(',').includes('A'), B: factors.split(',').includes('B'), C: factors.split(',').includes('C'), D: factors.split(',').includes('D'), E: factors.split(',').includes('E') };
-  }
-  if (values['project-roots'] !== undefined) {
-    if (typeof values['project-roots'] !== 'string') throw new KodoError('ARGUMENTS', '--project-roots requires a JSON file');
-    policy.projectRoots = readCliJson(values['project-roots']) as Record<string, string[]>;
   }
   validateAgentPolicy(policy);
   return Object.keys(policy).length ? policy : undefined;
@@ -84,7 +75,15 @@ export function readHostState(directory: string): CliHostSession[] {
     if (item.inlineMethods !== undefined && typeof item.inlineMethods !== 'boolean' || item.methodUnloading !== undefined && (typeof item.methodUnloading !== 'boolean' || !item.inlineMethods)) throw new KodoError('CLI_HOST_STATE', 'invalid method loading policy');
     if ((item.memory !== undefined && typeof item.memory !== 'boolean') || (item.lazyTools !== undefined && typeof item.lazyTools !== 'boolean')) throw new KodoError('CLI_HOST_STATE', 'memory and lazyTools must be booleans');
     validateVerificationPolicy(item.verification);
-    validateAgentPolicy(item.agents);
+    // Older host-state files may still carry the deleted agentRetention and
+    // projectRoots policy fields. They are read-only history: drop them silently
+    // instead of rejecting an otherwise resumable session.
+    if (item.agents !== undefined) {
+      const { agentRetention: _retention, projectRoots: _roots, ...remaining } = item.agents as CliAgentPolicy & Record<string, unknown>;
+      void _retention; void _roots;
+      validateAgentPolicy(remaining);
+      item.agents = remaining;
+    } else validateAgentPolicy(item.agents);
   }
   return parsed as CliHostSession[];
 }

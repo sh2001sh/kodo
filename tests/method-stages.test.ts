@@ -136,18 +136,18 @@ describe('method stages', () => {
     expect(app.store.readBlob(node.resultRef!)).toMatchObject({ checks: [{ callId: expect.any(String) }], acceptance: { kind: 'model-review' } });
   });
 
-  it('keeps the old method and pending stage when required inputs are missing', async () => {
-    const { app, run, method } = create(scripted(calls(call('skill.load', { id: methodSkillId(card()) })), declare,
-      task('activate', { card: 'test/inputs' }), async () => {
-        expect(activeMethod(app.store, run.id)?.id).toBe(methodSkillId(method));
-        expect(readTaskGraph(app.store, run.id).nodes[0]!.state).toBe('pending');
-        return task('drop', { reason: 'Required business input is unavailable.' });
-      }, answer(), answer('The report stage was dropped because required input is missing.')));
-    const required = card({ id: 'test/inputs', inputs: [{ name: 'budget', kind: 'text', required: true }] });
-    app.updateSessionMethods(run.id, { expectedDigest: methodCatalogDigest(app.store.session(run.sessionId).methodCards), install: [required] });
+  it('rejects named method stage inputs instead of silently dropping requirements', async () => {
+    // 1c: methods carry no named inputs; the failure keeps the stage pending so it can be dropped.
+    const { app, run } = create(scripted(declare,
+      task('activate', { card: 'test/stage', inputs: { budget: '2100' } }),
+      task('drop', { reason: 'Required business input is unsupported by this method.' }),
+      answer(), answer('The report stage was dropped because named inputs are unavailable.')));
     const result = await app.run(run.id);
     expect(result.status, JSON.stringify(app.store.calls(run.id).filter(c => c.status !== 'succeeded').map(c => c.resultRef && app.store.readBlob(c.resultRef)))).toBe('completed');
-    expect(app.store.events(run.id, { types: ['method.loaded'] })).toHaveLength(1);
+    const failed = app.store.calls(run.id).find(item => item.name === 'task' && item.status === 'failed')!;
+    expect(JSON.stringify(app.store.readBlob(failed.resultRef!))).toContain('METHOD_INPUTS');
+    expect(app.store.events(run.id, { types: ['task.node.updated'] }).filter(event => event.data.state === 'running')).toHaveLength(0);
+    expect(activeMethod(app.store, run.id)).toBeUndefined();
   });
 
   it('retains stage inputs and observations when unloading its method', async () => {

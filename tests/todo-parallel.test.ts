@@ -14,7 +14,7 @@ function write(app: Application, runId: string, items: TodoItem[]): TodoSnapshot
 }
 function dispatch(app: Application, runId: string, todoId?: string) {
   const run = app.store.run(runId), mailbox = app.coordinator.mailbox;
-  const args = { objective: 'Isolated synthetic investigation lifecycle; no model executes', agent: 'kodo/explorer', slots: { question: 'Synthetic fixture question' }, ...(todoId ? { todoId } : {}) };
+  const args = { objective: 'Isolated synthetic investigation lifecycle; no model executes', ...(todoId ? { todoId } : {}) };
   return mailbox.execute(run, crypto.randomUUID(), 'spawn_agent', mailbox.validate(run, 'spawn_agent', JSON.stringify(args))) as { id: string; agentId: string };
 }
 const task = (id: string, executor: 'main' | 'agent' = 'agent', dependsOn?: string[]): TodoItem => ({ id, content: `Complete ${id}`, status: 'in_progress', executor, ...(dependsOn ? { dependsOn } : {}) });
@@ -128,7 +128,7 @@ describe('explicit parallel task protocol', () => {
     const first = dispatch(app, runId, 'first');
     app.store.updateRun(first.id, { status: 'completed' });
     const mailbox = app.coordinator.mailbox, run = app.store.run(runId);
-    const args = { target: first.agentId, objective: 'Synthetic followup task', slots: { question: 'Second synthetic question' }, todoId: 'second' };
+    const args = { target: first.agentId, objective: 'Synthetic followup task', todoId: 'second' };
     const second = mailbox.execute(run, 'followup-once', 'followup_task', mailbox.validate(run, 'followup_task', JSON.stringify(args))) as { id: string };
     const replay = mailbox.execute(run, 'followup-once', 'followup_task', args) as { id: string };
     expect(replay.id).toBe(second.id);

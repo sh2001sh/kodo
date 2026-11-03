@@ -29,9 +29,8 @@ describe('reviewer host-approved verification', () => {
         });
         const recorded = app.store.calls(childId).find(item => item.name === 'verify.run')!;
         expect(recorded.status).toBe('succeeded');
-        return calls(call('report.submit', { fields: { findings: [], checks: [recorded.id], open_issues: [] } }, 'review-report'));
+        return answer('The fixed read-only check passed; the recorded call is the evidence.');
       },
-      answer('The fixed read-only check passed; the structured report records its evidence.'),
     ), undefined, {
       exploration: false, lockDirectory: false, lazyTools: false,
       toolProfile: 'compact-v1', taskProtocol: 2,
@@ -43,13 +42,12 @@ describe('reviewer host-approved verification', () => {
     });
     try {
       const parent = app.createRun({ objective: 'Review the fixture.', workspace, binding, permissions: ['read', 'write', 'exec'] });
-      const child = app.spawnAgent(parent.sessionId, { agent: 'kodo/reviewer', objective: 'Run the approved fixture check and report evidence.' });
+      const child = app.spawnAgent(parent.sessionId, { objective: 'Run the approved fixture check and report evidence.' });
       childId = child.id;
-      expect(child.permissions).toEqual(['read', 'exec']);
-      expect(child.scope?.write).toEqual([]);
+      // Children inherit the parent card and the granted permission set.
+      expect(child.card.digest).toBe(parent.card.digest);
+      expect(child.permissions).toEqual(['read', 'write', 'exec']);
       expect(child.card.tools).toContain('verify.run');
-      expect(child.card.tools).not.toContain('process.run');
-      expect(child.card.tools).not.toContain('process.exec');
 
       const completed = await app.coordinator.wake(child.id);
       expect(completed.status, completed.error).toBe('completed');
@@ -58,13 +56,9 @@ describe('reviewer host-approved verification', () => {
       expect(app.store.session(parent.sessionId).permissions).toEqual(['read', 'write', 'exec']);
       expect(readFileSync(fixturePath, 'utf8')).toBe('review fixture\n');
       const recorded = app.store.calls(child.id).find(item => item.name === 'verify.run')!;
-      expect(app.store.readBlob(completed.resultRef!)).toMatchObject({
-        reportCompleteness: { status: 'complete', passed: true },
-        parentJudgment: { status: 'not_checked' },
-      });
-      expect(reportCompleteness(app.store, completed).report?.calls).toEqual([
-        expect.objectContaining({ id: recorded.id, name: 'verify.run', status: 'succeeded', passed: true }),
-      ]);
+      expect(recorded.status).toBe('succeeded');
+      // The inherited card declares no report contract; completeness is not required.
+      expect(reportCompleteness(app.store, completed)).toMatchObject({ status: 'not_required', passed: true });
     } finally { await app.shutdown(); }
   }, 60_000);
 
@@ -75,16 +69,29 @@ describe('reviewer host-approved verification', () => {
       verification: { enabled: true, approved: true, backend: 'native', program: process.execPath, args: ['--version'] },
     });
     try {
-      const parent = app.createRun({ objective: 'Review configuration.', workspace, binding, permissions: ['read', 'write', 'exec'] });
-      const child = app.spawnAgent(parent.sessionId, { agent: 'kodo/reviewer', objective: 'Review the configured verification channel.' });
+      // A review-mode card is the only declarative basis for the read-only rule;
+      // specialist roster cards no longer exist in this build.
+      const reviewCard = app.parseCard(`---
+schema_version: 2
+id: local/reviewer
+version: 1.0.0
+name: Reviewer
+description: Review without writing.
+catalog: {path: engineering/review}
+routing: {mode: review, use_when: [Review a change]}
+capabilities: {tools: [file.read, verify.run]}
+---
+Review the change and report evidence.
+`);
+      const parent = app.createRun({ objective: 'Review configuration.', workspace, binding, permissions: ['read', 'exec'], card: reviewCard });
       const execute = vi.fn<VerificationExecutor>();
       const markEffectStarted = vi.fn();
       const tool = createVerificationTool({ enabled: true, approved: true, backend, program: process.execPath, args: ['--version'] }, execute);
-      await expect(tool.execute({ run: child, session: app.store.session(child.sessionId), signal: new AbortController().signal, markEffectStarted }, {}))
+      await expect(tool.execute({ run: parent, session: app.store.session(parent.sessionId), signal: new AbortController().signal, markEffectStarted }, {}))
         .rejects.toMatchObject({ code: 'VERIFY_READ_ONLY' });
       expect(execute).not.toHaveBeenCalled();
       expect(markEffectStarted).not.toHaveBeenCalled();
-      expect(app.store.run(child.id).scope?.write).toEqual([]);
+      expect(parent.card.routing?.mode).toBe('review');
     } finally { await app.shutdown(); }
   });
 });

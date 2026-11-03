@@ -61,7 +61,7 @@ export class RunCoordinator implements StepHost {
       return { sourceRunId: runId, blocked: [...plan.blocked, ...others.map(call => call.id)], observations: [...plan.observations, ...others.map(call => ({ callId: call.id, evidence: 'This effect belongs to another run; its owner or host must verify it.' }))] };
     } });
     this.mailbox = new Mailbox(store, (id, origin) => this.cancel(id, origin), {
-      modelBindings: options.modelBindings, bindingSnapshot: (allowed, skillIds) => this.tools.bindingSnapshot(allowed, skillIds), toolPermission: name => this.tools.permission(name), toolAvailable: name => this.tools.availableNames().includes(name),
+      modelBindings: options.modelBindings, bindingSnapshot: (allowed, skillIds) => this.tools.bindingSnapshot(allowed, skillIds),
       knowledge: options.knowledge, exploration: Boolean(options.knowledge) && options.structuredExploration === true,
       resolveKnowledge: options.knowledge ? (run, refs) => refs.map(ref => {
         const summary = options.knowledge!.validateFor(run, ref);

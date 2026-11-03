@@ -10,13 +10,13 @@ import type { Budget, FileScope, Message, Run, Session, ToolRequest } from './ty
 import { KodoError } from './types.js';
 import { initialContext } from './context.js';
 import { normalizeAgentFactors } from './agent-factors.js';
-import { rosterSnapshot } from '../agents/roster.js';
-import { instructionMessageTokens, renderRoster } from './roster-context.js';
-import { isLeanProfile } from './tool-view.js';
+import { estimateTextTokens } from './context-tokens.js';
 import type { DiscoveryInput } from './project-instructions.js';
 import { executionSession } from './execution-workspace.js';
 
 export type RunInstructions = NonNullable<Run['instructions']>;
+/** Includes wrapper and message protocol fields, not raw source byte counts. */
+const instructionMessageTokens = (message?: Message): number => message ? estimateTextTokens(JSON.stringify(message)) : 0;
 /** Conservative bytes per estimated token when converting the capacity share. */
 const bytesPerToken = 3;
 /** Native tools whose `path` (and `destination`) argument touches a workspace location. */
@@ -89,15 +89,9 @@ export function prepareInstructionContext(store: Store, run: Run, session: Sessi
     cardRules: run.card.constraints?.rules ?? [], capacityTokens: budgetTokens === undefined ? undefined : Math.max(0, budgetTokens - methodTokens) });
   const block = instructionMessage(loaded.chain, enabled ? 'initial' : undefined);
   const ruleTokens = instructionMessageTokens(block);
-  // Lean main runs query the frozen roster on demand instead of rendering it (plan 4.5).
-  const showAgents = factors.A && !isLeanProfile(session.toolProfile);
-  const snapshot = !run.parentId && (showAgents || session.inlineMethods) ? rosterSnapshot(store, session.id) : undefined;
-  const visibleSnapshot = snapshot && !showAgents ? { ...snapshot, members: snapshot.members.filter(member => member.card.execution?.modes.includes('inline')) } : snapshot;
-  const view = visibleSnapshot ? renderRoster(visibleSnapshot, Math.max(0, (budgetTokens ?? 0) - methodTokens - ruleTokens), session.inlineMethods) : undefined;
-  if (view?.degraded) store.event(run.id, 'context.roster_degraded', { reason: view.degraded, budgetTokens, methodTokens, ruleTokens, hiddenMembers: view.hiddenMembers, hiddenCategories: view.hiddenCategories });
-  const instructions: RunInstructions = { ...loaded.state, ...(budgetTokens === undefined ? {} : { tokenBudget: budgetTokens, reservedTokens: methodTokens + (view?.tokens ?? 0), tokens: ruleTokens }) };
+  const instructions: RunInstructions = { ...loaded.state, ...(budgetTokens === undefined ? {} : { tokenBudget: budgetTokens, reservedTokens: methodTokens, tokens: ruleTokens }) };
   recordInstructions(store, run.id, options.inherited ? 'inherited' : 'initial', loaded.chain);
-  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, roster: view?.message, inlineMethods: session.inlineMethods, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
+  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, inlineMethods: session.inlineMethods, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
 }
 
 export function instructionMessage(chain: InstructionChain, trigger?: string): Message | undefined {

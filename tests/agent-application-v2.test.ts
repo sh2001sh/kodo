@@ -28,65 +28,60 @@ function setup(options: ConstructorParameters<typeof Application>[3] = {}) {
 }
 
 describe('agent card host integration', () => {
-  it('freezes project overrides and resolves project test roots from instructions', () => {
+  it('no longer discovers .kodo/agents project cards or AGENTS.md project variables', () => {
     const { root, app } = setup();
     mkdirSync(path.join(root, '.kodo', 'agents'), { recursive: true });
     writeFileSync(path.join(root, '.kodo', 'agents', 'reader.md'), source(), 'utf8');
     writeFileSync(path.join(root, 'AGENTS.md'), '---\nproject:\n  tests: [tests]\n---\nUse project conventions.\n', 'utf8');
     const run = app.createRun({ objective: 'Read material', workspace: root, binding, permissions: ['read', 'write'] });
-    expect(app.store.session(run.sessionId).projectRoots).toEqual({ 'project.tests': ['tests'] });
-    const frozen = app.store.cards.rosterMember(run.sessionId, 'local/reader')!;
-    expect(frozen).toMatchObject({ source: 'project', availability: 'available' });
-    expect(app.store.cards.rosterMember(run.sessionId, 'kodo/tester')?.resolvedScope?.write).toEqual(['tests']);
-    writeFileSync(path.join(root, '.kodo', 'agents', 'reader.md'), source().replace('Reader\n', 'Changed reader\n'), 'utf8');
-    expect(app.store.cards.rosterMember(run.sessionId, 'local/reader')?.card.digest).toBe(frozen.card.digest);
+    expect(app.store.session(run.sessionId).projectRoots).toEqual({});
+    expect(app.store.registeredCards().map(card => card.id)).not.toContain('local/reader');
+    // The single default card is not a roster-enhanced clone.
+    expect(run.card.id).not.toMatch(/-roster/u);
   });
 
-  it('registers missing dependencies but explains their unavailability in the session roster', () => {
+  it('starts host children that inherit the parent card and only narrow permissions', () => {
     const { root, app } = setup();
-    const card = app.parseCard(source().replace('capabilities: {tools: [file.read]}', 'capabilities: {tools: [file.read], skills: [local/method], mcp: [{server: browser, tools: [screenshot]}]}'));
-    app.registerCard(card);
-    const run = app.createRun({ objective: 'Read material', workspace: root, binding });
-    const member = app.store.cards.rosterMember(run.sessionId, card.id)!;
-    expect(member.availability).toBe('unavailable');
-    expect(member.reasons.join(' ')).toContain('local/method');
-    expect(member.reasons.join(' ')).toContain('browser');
-  });
-
-  it('resolves project-only member references and lets a project override a builtin identity', () => {
-    const { root, app } = setup();
-    mkdirSync(path.join(root, '.kodo', 'agents'), { recursive: true });
-    const project = app.parseCard(source());
-    writeFileSync(path.join(root, '.kodo', 'agents', 'reader.md'), source(), 'utf8');
-    writeFileSync(path.join(root, '.kodo', 'agents', 'explorer.md'), source('kodo/explorer'), 'utf8');
-    const mainCard = app.parseCard(source('local/coordinator', `members: [{id: ${project.id}, version: ${project.version}, digest: ${project.digest}}]`));
-    const main = app.createRun({ objective: 'Read material', workspace: root, binding, card: mainCard });
-    expect(app.store.cards.rosterMember(main.sessionId, project.id)?.card.digest).toBe(project.digest);
-    const ordinary = app.createRun({ objective: 'Coordinate', workspace: root, binding });
-    expect(app.store.cards.rosterMember(ordinary.sessionId, 'kodo/explorer')).toMatchObject({ source: 'project', card: { name: 'Reader' } });
-  });
-
-  it('starts a host child through the same slot contract and records its origin', () => {
-    const { root, app } = setup();
-    app.registerCard(app.parseCard(source()));
-    const main = app.createRun({ objective: 'Read material', workspace: root, binding });
-    expect(() => app.spawnAgent(main.sessionId, { agent: 'local/reader', objective: 'Summarize' })).toThrow('question');
-    expect(app.store.listRuns(main.sessionId)).toHaveLength(1);
-    const child = app.spawnAgent(main.sessionId, { agent: 'local/reader', objective: 'Summarize', slots: { question: 'What does the README explain?' } });
+    const card = app.parseCard(source());
+    const main = app.createRun({ objective: 'Read material', workspace: root, binding, permissions: ['read'], card });
+    const child = app.spawnAgent(main.sessionId, { objective: 'Summarize the task material' });
     expect(child.parentId).toBe(main.id);
+    expect(child.card.digest).toBe(main.card.digest);
     expect(child.permissions).toEqual(['read']);
-    expect(child.scope?.write).toEqual([]);
     expect(app.store.events(child.id).some(event => event.data.origin === 'host')).toBe(true);
+  });
+
+  it('rejects permission escalation and removed card-selection arguments', () => {
+    const { root, app } = setup();
+    const main = app.createRun({ objective: 'Read material', workspace: root, binding, permissions: ['read', 'write'] });
+    expect(() => app.spawnAgent(main.sessionId, { objective: 'Escalate', permissions: ['exec'] })).toThrow(/PERMISSION_ESCALATION|subset/u);
+    // The deleted roster selectors are rejected by the tool schema, not silently ignored.
+    expect(() => app.spawnAgent(main.sessionId, { objective: 'Pick a card', agent: 'local/reader' } as never)).toThrow(/schema/u);
+    expect(() => app.spawnAgent(main.sessionId, { objective: 'Pick a card', card_id: 'local/reader', card_version: '1.0.0' } as never)).toThrow(/schema/u);
+    expect(() => app.spawnAgent(main.sessionId, { objective: 'Fill slots', slots: { question: 'x' } } as never)).toThrow(/schema/u);
+    expect(app.store.listRuns(main.sessionId)).toHaveLength(1);
+  });
+
+  it('requires a full child card by inheritance even when a run names a registered member card', () => {
+    const { root, app } = setup();
+    const member = app.parseCard(source());
+    app.registerCard(member);
+    const main = app.createRun({ objective: 'Read material', workspace: root, binding, permissions: ['read'] });
+    const child = app.spawnAgent(main.sessionId, { objective: 'Read the contract' });
+    // Members stay a parse-level field for 1e, but they no longer select a child card.
+    expect(child.card.digest).toBe(main.card.digest);
+    expect(child.card.id).not.toBe(member.id);
   });
 
   it('creates a fixed team atomically and rejects incomplete teams before publishing a session', () => {
     const { root, app } = setup();
-    app.registerCard(app.parseCard(source()));
     const sessionsBefore = app.sessions().items.length;
-    expect(() => app.createRun({ objective: 'Read', workspace: root, binding, team: [{ agent: 'local/reader', objective: 'Read' }] })).toThrow('question');
+    expect(() => app.createRun({ objective: 'Read', workspace: root, binding, team: [{ objective: '' }] })).toThrow();
     expect(app.sessions().items).toHaveLength(sessionsBefore);
-    const main = app.createRun({ objective: 'Read', workspace: root, binding, team: [{ agent: 'local/reader', objective: 'Read', slots: { question: 'Summarize the entry point.' } }] });
-    expect(app.store.listRuns(main.sessionId).filter(run => run.parentId === main.id)).toHaveLength(1);
+    const main = app.createRun({ objective: 'Read', workspace: root, binding, team: [{ objective: 'Summarize the entry point.' }] });
+    const children = app.store.listRuns(main.sessionId).filter(run => run.parentId === main.id);
+    expect(children).toHaveLength(1);
+    expect(children[0]!.card.digest).toBe(main.card.digest);
   });
 
   it('stores contract revisions as distinct immutable artifacts', () => {
@@ -102,11 +97,10 @@ describe('agent card host integration', () => {
 
   it('initializes contract artifacts in the same transaction as a fixed team', () => {
     const { root, app } = setup();
-    app.registerCard(app.parseCard(source('local/contract-reader').replace('name: question, kind: text', 'name: contract, kind: artifact')));
     let contract = '';
     const main = app.createRun({ objective: 'Review a fixed contract', workspace: root, binding, team: run => {
       contract = app.store.artifact(run.id, app.store.blob({ kind: 'contract', name: 'Behavior', content: 'Absent inputs produce an explicit error.' }));
-      return [{ agent: 'local/contract-reader', objective: 'Read this contract', slots: { contract } }];
+      return [{ objective: 'Read this contract' }];
     } });
     const child = app.store.listRuns(main.sessionId).find(run => run.parentId === main.id)!;
     expect(app.store.readArtifact(child.id, contract)).toMatchObject({ kind: 'contract', content: 'Absent inputs produce an explicit error.' });

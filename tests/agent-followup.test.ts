@@ -264,13 +264,13 @@ describe('reusable agents and active task capacity', () => {
     expect(app.store.listRuns(app.store.run(runId).sessionId).filter(run => run.parentId)).toHaveLength(7);
   });
 
-  it('requires fresh input slots and preserves the previous report contract without partial creation', () => {
+  it('requires fresh task input and preserves the previous card contract without partial creation', () => {
     const { app, runId } = fixture();
-    const child = operation(app, runId, 'spawn_agent', { objective: 'Locate a symbol', agent: 'kodo/explorer', slots: { question: 'Where is the parser?' } });
+    const child = operation(app, runId, 'spawn_agent', { objective: 'Locate a symbol' });
     finish(app, child.id);
-    expect(() => operation(app, runId, 'followup_task', { target: child.id, objective: 'Find its caller' })).toThrow();
+    expect(() => operation(app, runId, 'followup_task', { target: child.id, objective: 'Find its caller', agent: 'kodo/explorer' })).toThrow();
     expect(app.store.listRuns(app.store.run(runId).sessionId)).toHaveLength(2);
-    const next = operation(app, runId, 'followup_task', { target: child.id, objective: 'Find its caller', slots: { question: 'Which function invokes the parser?' } });
+    const next = operation(app, runId, 'followup_task', { target: child.id, objective: 'Find its caller' });
     expect(app.store.run(next.id).card.digest).toBe(app.store.run(child.id).card.digest);
     expect(app.store.latestEvent(next.id, { types: ['report.submitted'] })).toBeUndefined();
   });

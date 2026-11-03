@@ -192,9 +192,8 @@ export class TuiController implements TuiActions {
       case 'settings': this.settings(args); return;
       case 'permissions': this.permissions(args); return;
       case 'agents': {
-        if (this.current() && ['run', 'launch'].includes(args[0] ?? '')) await this.ensureRestored(this.requireRun());
         const control = new AbortController();
-        const pending = agentCommand({ ...this.options, ...createAgentOperations(this.options, { binding: this.binding, executeRun: (request, signal, purpose, onCreated) => this.executeOperation(request, signal, purpose, onCreated), signal: control.signal }), runId: this.currentId, startTask: (objective, member) => this.startTask(objective, member), wake: id => this.wake(id) }, args);
+        const pending = agentCommand({ ...this.options, ...createAgentOperations(this.options, { binding: this.binding, executeRun: (request, signal, purpose, onCreated) => this.executeOperation(request, signal, purpose, onCreated), signal: control.signal }), runId: this.currentId, startTask: objective => this.startTask(objective), wake: id => this.wake(id) }, args);
         this.agentPending.set(control, pending);
         try { this.panel = await pending; } finally { this.agentPending.delete(control); }
         return;
@@ -247,13 +246,12 @@ export class TuiController implements TuiActions {
     this.currentId = next.id; this.historyIds.add(next.id); this.restored.add(next.sessionId);
     this.panel = undefined; this.revision++; this.wake(next.id);
   }
-  private async startTask(objective: string, member?: { agent: string; slots?: Record<string, unknown>; scope?: { read?: string[]; write?: string[] } }): Promise<void> {
+  private async startTask(objective: string): Promise<void> {
     if (this.hasActive(true)) throw new KodoError('TUI_ACTIVE', 'The current session still has an active main task.');
-    this.starting = Promise.resolve().then(() => (this.options.createRun ?? (options => this.options.app.createRun(options)))({ objective, workspace: this.options.workspace, binding: this.binding, permissions: this.options.permissions, budget: this.options.budget, card: this.options.card, ...(member ? { team: [{ ...member, objective }] } : {}) }));
+    this.starting = Promise.resolve().then(() => (this.options.createRun ?? (options => this.options.app.createRun(options)))({ objective, workspace: this.options.workspace, binding: this.binding, permissions: this.options.permissions, budget: this.options.budget, card: this.options.card }));
     try {
       const run = await this.starting;
       this.select(run); this.restored.add(run.sessionId);
-      if (member) for (const child of this.ownedRuns().filter(peer => peer.parentId === run.id)) this.wake(child.id);
       this.panel = undefined; this.wake(run.id);
     } finally { this.starting = undefined; }
   }

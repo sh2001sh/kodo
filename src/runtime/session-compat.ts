@@ -5,6 +5,8 @@ import { KodoError } from './types.js';
 const LEGACY_PROFILE = 'lean-team';
 /** Events only the deleted isolated-checkout subsystem could produce. */
 const LEGACY_EXECUTION_EVENTS = ['execution.snapshot.captured', 'execution.prepared', 'execution.integrated', 'execution.committed'] as const;
+/** Roster-era default cards carried a `-roster-<digest>` identity suffix. */
+const LEGACY_ROSTER_CARD = /-roster(?:-[a-f0-9]{12})?$/u;
 
 /**
  * A lean-team session predates this build: its tool profile and task-graph size
@@ -44,18 +46,52 @@ export function isLegacyExecutionSession(store: Store, sessionId: string): boole
 }
 
 /**
- * Old isolated-checkout and lean-team sessions stay visible through read-only APIs
- * but must not execute or create children: silently degrading them to the legacy
- * behavior would change the task's accepted semantics without the author's
- * knowledge. The product is not yet released, so the explicit incompatibility
- * error is the compatibility policy.
+ * Sessions written before the roster/draft/derived-agent subsystems were deleted.
+ * The tables are not created by this build, so their rows and the old roster-card
+ * identities are read as raw persisted JSON instead of typed records.
+ */
+const rosterScans = new WeakMap<Store, Map<string, boolean>>();
+
+function scanLegacyRoster(store: Store, sessionId: string): boolean {
+  if (store.legacyAgentSession(sessionId)) return true;
+  for (const run of store.listRuns(sessionId)) {
+    const card = (run as unknown as Record<string, unknown>).card;
+    if (!card || typeof card !== 'object' || Array.isArray(card)) continue;
+    const record = card as Record<string, unknown>;
+    // The roster default was the base card with a `-roster` identity suffix and
+    // frozen member references; neither field can be produced by this build.
+    if (typeof record.id === 'string' && LEGACY_ROSTER_CARD.test(record.id)) return true;
+    if (Array.isArray(record.members) && record.members.length > 0) return true;
+  }
+  return false;
+}
+
+export function isLegacyRosterSession(store: Store, sessionId: string): boolean {
+  let scans = rosterScans.get(store);
+  if (!scans) { scans = new Map(); rosterScans.set(store, scans); }
+  const cached = scans.get(sessionId);
+  if (cached !== undefined) return cached;
+  const legacy = scanLegacyRoster(store, sessionId);
+  scans.set(sessionId, legacy);
+  return legacy;
+}
+
+/**
+ * Old isolated-checkout, lean-team and roster sessions stay visible through
+ * read-only APIs but must not execute or create children: silently degrading them
+ * to the legacy behavior would change the task's accepted semantics without the
+ * author's knowledge. The product is not yet released, so the explicit
+ * incompatibility error is the compatibility policy.
  */
 export function assertSessionCompatible(store: Store, session: Session): void {
   const execution = isLegacyExecutionSession(store, session.id);
   const lean = isLegacyLeanSession(session);
-  if (!execution && !lean) return;
+  const roster = isLegacyRosterSession(store, session.id);
+  if (!execution && !lean && !roster) return;
   const reason = execution
     ? 'This session uses the deleted isolated-checkout execution subsystem and is not compatible with this version.'
-    : 'This session was created by the deleted lean-team task graph and is not compatible with this version.';
+    : lean
+      ? 'This session was created by the deleted lean-team task graph and is not compatible with this version.'
+      : 'This session was created by the deleted agent-roster subsystem (roster snapshots, derived agents or retention drafts) and is not compatible with this version.';
   throw new KodoError('SESSION_INCOMPATIBLE', `${reason} The product has not shipped; start a new task (use \`kodo inspect\` if the old evidence must be kept).`);
 }

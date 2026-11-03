@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Application } from '../src/application/index.js';
 import type { ApplicationOptions } from '../src/application/index.js';
 import { Mailbox } from '../src/messaging/index.js';
-import type { Card, CardModelRole, Message, ModelBinding, Provider, Run } from '../src/runtime/types.js';
+import type { Message, ModelBinding, Provider, Run } from '../src/runtime/types.js';
 import { answer, binding, scripted, temp } from './helpers.js';
 
 const apps: Application[] = [];
@@ -17,27 +17,6 @@ const aliases = (): Record<string, ModelBinding> => ({
   cheap: { ...binding, model: 'fast-model', provider: 'fast-provider', limits: { context: 16_000, output: 1000 } },
   careful: { ...binding, model: 'strong-model', provider: 'strong-provider', limits: { context: 512_000, output: 16_000 } },
 });
-function roleCard(app: Application, role: CardModelRole): Card {
-  const card = app.parseCard(`---
-schema_version: 2
-id: test/policy-${role}
-version: 1.0.0
-name: Policy ${role}
-description: Read a bounded module with the configured model policy.
-catalog:
-  path: testing/model-policy
-routing:
-  use_when: [Read one independent module]
-  mode: read
-capabilities:
-  tools: [file.read]
-model:
-  role: ${role}
----
-Read the assigned task and report its evidence.
-`);
-  app.registerCard(card); return card;
-}
 function operate(mailbox: Mailbox, parent: Run, name: string, args: Record<string, unknown>): { id: string } {
   const result = mailbox.execute(parent, crypto.randomUUID(), name, mailbox.validate(parent, name, JSON.stringify(args))) as { id: string };
   return result;
@@ -103,35 +82,33 @@ describe('session-frozen child model policy', () => {
     expect(reopened.store.session(parent.sessionId).modelRoles).toEqual({ fast: 'cheap' });
   });
 
-  it('selects new children by explicit alias, then card role, then inheritance and never changes the main model', () => {
+  it('selects new children by explicit alias or inheritance and never changes the main model', () => {
     const complete = vi.fn<Provider['complete']>();
     const { app, root } = setup({ modelBindings: aliases(), modelBindingDescriptions: { cheap: 'Fast for bounded reads' }, modelRoles: { fast: 'cheap' } }, { complete });
-    const card = roleCard(app, 'fast');
     const parent = app.createRun({ objective: 'Use specialized child models', workspace: root, binding });
-    const explicit = child(app, parent, { card_id: card.id, card_version: card.version, model_binding: 'careful' });
-    const role = child(app, parent, { card_id: card.id, card_version: card.version });
+    const explicit = child(app, parent, { model_binding: 'careful' });
     const inherited = child(app, parent);
     expect(explicit).toMatchObject({ modelBindingId: 'careful', binding: { model: 'strong-model' }, modelLimits: { context: 512_000, output: 16_000 } });
-    expect(role).toMatchObject({ modelBindingId: 'cheap', binding: { model: 'fast-model' }, modelLimits: { context: 16_000, output: 1000 } });
     expect(inherited.binding).toEqual(binding);
+    expect(inherited.modelBindingId).toBeUndefined();
     expect(selected(app, explicit)).toEqual([{ alias: 'careful', model: 'strong-model', provider: 'strong-provider', reason: 'explicit' }]);
-    expect(selected(app, role)).toEqual([{ alias: 'cheap', model: 'fast-model', provider: 'fast-provider', reason: 'role' }]);
     expect(selected(app, inherited)).toEqual([{ model: binding.model, reason: 'inherit' }]);
     expect(app.store.run(parent.id).binding).toEqual(binding); expect(complete).not.toHaveBeenCalled();
   });
 
-  it('inherits the main binding when a card role has no configured default', () => {
-    const { app, root } = setup({ modelBindings: aliases() }); const card = roleCard(app, 'standard');
+  it('keeps role mappings session-frozen while children inherit the main binding', () => {
+    const { app, root } = setup({ modelBindings: aliases(), modelRoles: { fast: 'cheap' } });
     const parent = app.createRun({ objective: 'Coordinate a role without a mapping', workspace: root, binding });
-    const spawned = child(app, parent, { card_id: card.id, card_version: card.version });
+    expect(app.store.session(parent.sessionId).modelRoles).toEqual({ fast: 'cheap' });
+    const spawned = child(app, parent);
     expect(spawned.binding).toEqual(binding); expect(spawned.modelBindingId).toBeUndefined();
     expect(selected(app, spawned)).toEqual([{ model: binding.model, reason: 'inherit' }]);
   });
 
-  it.each(['continuation', 'followup'])('keeps the model and complete context on %s without reapplying the card role default', async mode => {
+  it.each(['continuation', 'followup'])('keeps the model and complete context on %s without reapplying a card role default', async mode => {
     const { app, root } = setup({ modelBindings: aliases(), modelRoles: { fast: 'cheap' } }, scripted(answer('ORIGINAL_CONTEXT_MARKER')));
-    const card = roleCard(app, 'fast'); const parent = app.createRun({ objective: 'Coordinate specialist reuse', workspace: root, binding });
-    const first = child(app, parent, { card_id: card.id, card_version: card.version, model_binding: 'careful' });
+    const parent = app.createRun({ objective: 'Coordinate specialist reuse', workspace: root, binding });
+    const first = child(app, parent, { model_binding: 'careful' });
     const firstResult = await app.coordinator.wake(first.id);
     expect(firstResult.status, firstResult.error).toBe('completed');
     const original = app.store.run(first.id); const before = app.store.listRuns().length;

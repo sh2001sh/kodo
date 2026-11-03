@@ -3,7 +3,6 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Application } from '../src/application/index.js';
 import { compactDefaultCard, defaultCard, simpleDefaultCard } from '../src/agents/card.js';
-import { compactBuiltinAgentCards, simpleBuiltinAgentCards } from '../src/agents/presets.js';
 import { parallelMainGuidance } from '../src/runtime/agent-factors.js';
 import { roleAllows } from '../src/runtime/role-view.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
@@ -73,12 +72,13 @@ describe('complete coding loop with a simple tool profile', () => {
     expect(names).toEqual(toolSpecs(app.coordinator, run, session).map(tool => tool.name));
   });
 
-  it('narrows a child with no exec without losing its native file operations', () => {
+  it('narrows a child with no exec without losing its inherited native file operations', () => {
     const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], simple);
     const parent = app.store.run(runId);
-    const child = app.spawnAgent(parent.sessionId, { agent: 'kodo/implementer', objective: 'Update the assigned file.', permissions: ['read', 'write'], scope: { read: ['.'], write: ['result.txt'] } });
-    expect(child.card.version).toBe('1.4.0');
+    const child = app.spawnAgent(parent.sessionId, { objective: 'Update the assigned file.', permissions: ['read', 'write'], scope: { read: ['.'], write: ['result.txt'] } });
+    expect(child.card.digest).toBe(parent.card.digest);
     expect(child.card.report).toBeUndefined();
+    expect(child.permissions).toEqual(['read', 'write']);
     const names = toolSpecs(app.coordinator, child, app.store.session(child.sessionId)).map(tool => tool.name);
     expect(names).toEqual(expect.arrayContaining(['file.mkdir', 'file.rename', 'file.delete']));
     expect(names).not.toContain('shell.exec');
@@ -91,22 +91,16 @@ describe('complete coding loop with a simple tool profile', () => {
     for (const name of ['shell.exec', 'file.list', 'artifact.write', 'history.search', 'web.fetch', 'lsp.references', 'agent.route']) {
       expect(roleAllows({ ...custom, permissions: [...custom.permissions] }, { ...session, permissions: [...session.permissions] }, name)).toBe(true);
     }
-    const configured = { card: { ...simpleDefaultCard, id: 'builtin/general-simple-web-lsp-roster-0123456789ab' } };
+    const configured = { card: { ...simpleDefaultCard, id: 'builtin/general-simple-web-lsp' } };
     expect(roleAllows(configured, { ...session, permissions: [...session.permissions] }, 'web.fetch')).toBe(true);
     expect(roleAllows(configured, { ...session, permissions: [...session.permissions] }, 'lsp.hover')).toBe(true);
-    expect(roleAllows(configured, { ...session, permissions: [...session.permissions] }, 'agent.route')).toBe(false);
+    expect(roleAllows(configured, { ...session, permissions: [...session.permissions] }, 'update_progress')).toBe(false);
   });
 
-  it('keeps old cards and role behavior while issuing new preset identities', () => {
+  it('keeps the compact and simple identities distinct', () => {
     expect(simpleDefaultCard.id).not.toBe(compactDefaultCard.id);
-    for (const card of simpleBuiltinAgentCards) {
-      const prior = compactBuiltinAgentCards.find(item => item.id === card.id)!;
-      expect(card.version).toBe('1.4.0');
-      expect(card.report).toBeUndefined();
-      expect(prior.version).toBe('1.3.0');
-      expect(prior.report?.length).toBeGreaterThan(0);
-      expect(card.digest).not.toBe(prior.digest);
-    }
+    expect(compactDefaultCard.version).toBe('1.2.0');
+    expect(simpleDefaultCard.version).toBe('1.3.0');
     expect(roleAllows({ card: compactDefaultCard }, { toolProfile: 'compact-v1', agentFactors: factors }, 'shell.exec')).toBe(false);
     for (const taskProtocol of [1, 2, 3] as const) {
       const guidance = parallelMainGuidance(factors, taskProtocol, 'compact-v2');

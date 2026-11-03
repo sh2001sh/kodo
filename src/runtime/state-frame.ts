@@ -1,4 +1,4 @@
-import { activeMethod, effectiveMethodRun } from '../extensions/methods.js';
+import { activeMethod, effectiveMethodRun, methodCatalogDigest } from '../extensions/methods.js';
 import { attachment, attachmentKind, attachmentKinds, escapeMarkers } from './attachments.js';
 import { deliverableStatus } from './deliverables.js';
 import { effectiveSession } from './step-host.js';
@@ -108,7 +108,7 @@ export function stateFrame(host: StepHost, run: Run, session: Session, pressure?
   const dispatch = todoDispatchState(store, run.id);
   const state = {
     objective: excerpt(run.objective, 600), step: run.step, decisionVersion: session.decisionVersion ?? 0,
-    ...(session.inlineMethods && !run.parentId ? { method: activeMethod(store, run.id) ?? null, methodCatalog: store.cards.rosterSnapshot(session.id)?.digest, stages: readTaskGraph(store, run.id).nodes.slice(0, 8).map(node => ({ id: node.id, state: node.state, generation: node.generation, ...(node.runId ? { runId: node.runId } : {}), staleDecision: node.resultDecisionVersion !== undefined && node.resultDecisionVersion !== (session.decisionVersion ?? 0) })) } : {}),
+    ...(session.inlineMethods && !run.parentId ? { method: activeMethod(store, run.id) ?? null, methodCatalog: methodCatalogDigest(session.methodCards), stages: readTaskGraph(store, run.id).nodes.slice(0, 8).map(node => ({ id: node.id, state: node.state, generation: node.generation, ...(node.runId ? { runId: node.runId } : {}), staleDecision: node.resultDecisionVersion !== undefined && node.resultDecisionVersion !== (session.decisionVersion ?? 0) })) } : {}),
     toolTimeoutMs: session.budget.toolTimeoutMs,
     ...(dispatch.length ? { todoDispatch: dispatch.slice(0, 12).map(item => ({ ...item, runIds: item.runIds.slice(-8), omittedRuns: Math.max(0, item.runIds.length - 8) })), todoDispatchOmitted: Math.max(0, dispatch.length - 12), todoDispatchReadMore: 'todo.read' } : {}),
     remainingTokens: session.budget.maxTokens === null ? null : Math.max(0, session.budget.maxTokens - session.tokens),

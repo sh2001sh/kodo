@@ -53,7 +53,7 @@ export function toolFingerprint(definition: ToolBindingDefinition): string {
   return createHash('sha256').update(JSON.stringify(canonical(jsonSnapshot(value)))).digest('hex');
 }
 
-const coordinationNames = ['spawn_agent', 'followup_task', 'list_agents', 'inspect_run', 'send_message', 'wait_for_events', 'ask_user', 'cancel_agent', 'interrupt_agent', 'update_progress', 'exploration.plan', 'agent.derive', 'report.submit'];
+const coordinationNames = ['spawn_agent', 'followup_task', 'list_agents', 'inspect_run', 'send_message', 'wait_for_events', 'ask_user', 'cancel_agent', 'interrupt_agent', 'update_progress', 'exploration.plan', 'report.submit'];
 const wireName = (name: string): string => name.replaceAll('.', '_');
 
 /** Registrations are append-only: a persisted tool name must keep its host-approved meaning. */

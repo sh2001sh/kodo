@@ -7,7 +7,7 @@ import path from 'node:path';
 import type { Application, CreateRunOptions } from '../application/index.js';
 import { PackageRegistry } from '../packages/registry.js';
 import { normalizeFileScope } from '../runtime/scope.js';
-import { KodoError, terminal } from '../runtime/types.js';
+import { KodoError } from '../runtime/types.js';
 import type { Run, RuntimeEvent } from '../runtime/types.js';
 import { methodCatalogDigest } from '../extensions/methods.js';
 import { collaborationView } from './collaboration.js';
@@ -192,8 +192,6 @@ export async function createLocalServer(app: Application, options: LocalServerOp
         if (collaborationRoute) { const value = run(collaborationRoute[1]!); json(res, 200, collaborationView(app, value.id)); return; }
         const methodsRoute = /^\/api\/runs\/([^/]+)\/methods$/.exec(route);
         if (methodsRoute) { const value = run(methodsRoute[1]!, true); const session = app.store.session(value.sessionId); json(res, 200, { methods: session.methodCards ?? [], digest: methodCatalogDigest(session.methodCards) }); return; }
-        const draftsRoute = /^\/api\/runs\/([^/]+)\/agent-drafts$/.exec(route);
-        if (draftsRoute) { const value = run(draftsRoute[1]!); json(res, 200, { drafts: app.retention.list(value.sessionId) }); return; }
         const contextRoute = /^\/api\/runs\/([^/]+)\/context$/.exec(route);
         if (contextRoute) { const value = run(contextRoute[1]!, true); json(res, 200, app.context(value.id)); return; }
         const knowledgeRoute = /^\/api\/runs\/([^/]+)\/knowledge(?:\/(search|read|versions))?$/.exec(route);
@@ -300,13 +298,11 @@ export async function createLocalServer(app: Application, options: LocalServerOp
         let action = 'run'; let target: Run; let agent: Run | undefined; let agentRunId: string | undefined;
         const command = /^\/api\/runs\/([^/]+)\/(input|answer|cancel|resume)$/.exec(route);
         const agentCommand = /^\/api\/runs\/([^/]+)\/agents\/([^/]+)\/(input|cancel)$/.exec(route);
-        const draftCommand = /^\/api\/runs\/([^/]+)\/agent-drafts\/([^/]+)\/(approve|discard|edit|skip)$/.exec(route);
         const spawnCommand = /^\/api\/runs\/([^/]+)\/agents\/spawn$/.exec(route);
         const methodsCommand = /^\/api\/runs\/([^/]+)\/methods$/.exec(route);
         const knowledgeCommand = /^\/api\/runs\/([^/]+)\/knowledge\/(folder|organize|remove-folder)$/.exec(route);
         const response = app.store.transaction(() => {
           let node;
-          let draft;
           let methodRevision;
           if (route === '/api/runs') {
             fields(body, ['objective']);
@@ -317,21 +313,10 @@ export async function createLocalServer(app: Application, options: LocalServerOp
             fields(body, ['expectedDigest', 'card', 'disable']);
             if (body.disable !== undefined && (!Array.isArray(body.disable) || body.disable.length > 32 || body.disable.some(value => typeof value !== 'string'))) throw new HttpError(400, 'ARGUMENTS', 'disable must be a list of method IDs');
             methodRevision = app.updateSessionMethods(target.id, { expectedDigest: textField(body, 'expectedDigest', 64), ...(body.card !== undefined ? { install: [app.parseCard(textField(body, 'card', 128000))] } : {}), disable: body.disable as string[] | undefined });
-          } else if (draftCommand) {
-            target = run(draftCommand[1]!, true); onSession?.(target.sessionId); action = 'agent_proposal';
-            if (target.parentId || !terminal(target.status)) throw new HttpError(409, 'TASK_ACTIVE', 'Finish the main task before reviewing agent proposals');
-            fields(body, draftCommand[3] === 'edit' ? ['digest', 'metadata'] : ['digest']);
-            const draftId = decodeURIComponent(draftCommand[2]!);
-            if (!app.retention.list(target.sessionId).some(value => value.id === draftId)) throw new HttpError(404, 'NOT_FOUND', 'Draft not found in this session');
-            const digest = textField(body, 'digest', 64);
-            const userAction = { source: 'workbench' as const, userEventId: requestId };
-            if (draftCommand[3] === 'approve') draft = app.retention.approve(draftId, digest, userAction);
-            else if (draftCommand[3] === 'edit') draft = app.retention.edit(draftId, digest, body.metadata as Parameters<typeof app.retention.edit>[2]);
-            else draft = app.retention.decide(draftId, digest, draftCommand[3] === 'skip' ? 'skip' : 'reject', userAction);
           } else if (spawnCommand) {
             target = run(spawnCommand[1]!, true); onSession?.(target.sessionId); action = 'agent_input';
-            fields(body, ['agent', 'objective', 'slots', 'inputs', 'acceptance', 'scope']);
-            textField(body, 'agent', 200); textField(body, 'objective', 32_000);
+            fields(body, ['objective', 'context', 'inputs', 'acceptance', 'permissions', 'model_binding', 'scope', 'continuation_of', 'todoId']);
+            textField(body, 'objective', 32_000);
             agent = app.spawnAgent(target.sessionId, body as unknown as Parameters<typeof app.spawnAgent>[1]);
             agentRunId = agent.id;
           } else if (knowledgeCommand) {
@@ -367,7 +352,7 @@ export async function createLocalServer(app: Application, options: LocalServerOp
             else { fields(body, []); agent = app.cancelAgent(target.id, childId); }
             agentRunId = agent.id;
           } else throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found');
-          const receipt = { requestId, runId: target.id, sessionId: target.sessionId, status: action === 'resume' || action === 'agent_input' ? 'accepted' : action === 'agent_cancel' ? agent?.status ?? target.status : target.status, ...(agent ? { agentRunId: agent.id } : {}), ...(node ? { node } : {}), ...(draft ? { draft } : {}), ...(methodRevision ? { methodRevision } : {}) };
+          const receipt = { requestId, runId: target.id, sessionId: target.sessionId, status: action === 'resume' || action === 'agent_input' ? 'accepted' : action === 'agent_cancel' ? agent?.status ?? target.status : target.status, ...(agent ? { agentRunId: agent.id } : {}), ...(node ? { node } : {}), ...(methodRevision ? { methodRevision } : {}) };
           app.store.webRequests.insert({ request_id: requestId, fingerprint: signature, response: JSON.stringify(receipt), action, run_id: target.id });
           return receipt;
         });

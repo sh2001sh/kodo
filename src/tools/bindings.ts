@@ -14,7 +14,7 @@ export function assertRunCapabilities(run: Run, tools: ToolBindings): void {
   if (run.toolBindings === undefined) {
     // Pre-extension databases contained only builtin tools. Never silently approve
     // an unpinned extension when opening a historical run.
-    const legacy = new Set([...builtinToolNames.filter(name => name !== 'shell.exec' && name !== 'image.read'), 'agent.search']);
+    const legacy = new Set(builtinToolNames.filter(name => name !== 'shell.exec' && name !== 'image.read'));
     for (const name of Object.keys(current)) if (!legacy.has(name)) throw new KodoError('CAPABILITY_CHANGED', `historical tool ${name} has no pinned host contract; start a new run`);
     return;
   }

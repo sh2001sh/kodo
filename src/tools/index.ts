@@ -5,8 +5,6 @@ import { lstat, readdir, realpath, rename, stat, writeFile, unlink, mkdir, link 
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
-import { legacyDiscoverySpecs } from '../agents/discovery.js';
-import { legacyRoutingSpec } from '../agents/routing.js';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import { prepareSandboxCommand } from '../sandbox/index.js';
@@ -322,7 +320,6 @@ export class Tools {
           if (dynamic) return dynamic;
         }
         const legacy = !session.agentFactors?.A && !session.agentFactors?.C;
-        if (legacy && (legacyDiscoverySpecs[name] || name === 'agent.route')) return legacyDiscoverySpecs[name] ?? legacyRoutingSpec;
         if (name === 'artifact.write' && legacy) {
           const properties = { ...(parameters.properties as Record<string, unknown>) };
           delete properties.kind;
