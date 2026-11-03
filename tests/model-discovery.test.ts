@@ -54,13 +54,23 @@ describe('endpoint model capability discovery', () => {
     expect(await discoverModelLimits(custom(baseURL, 'glm-5.3'))).toEqual({ context: 32000, output: 4096, source: 'api' });
   });
 
+  it('allows a full large relay window when the endpoint explicitly advertises both limits', async () => {
+    const baseURL = await mockServer((_body, response) => { response.end(JSON.stringify({ data: [{ id: 'glm-5.3', context_length: 1_000_000, max_output_tokens: 131_072 }] })); });
+    expect(await discoverModelLimits(custom(baseURL, 'glm-5.3'))).toEqual({ context: 1_000_000, output: 131_072, source: 'api' });
+  });
+
+  it('retains same-name catalog context when relay metadata only advertises output', async () => {
+    const baseURL = await mockServer((_body, response) => { response.end(JSON.stringify({ data: [{ id: 'glm-5.3', max_output_tokens: 32_000 }] })); });
+    expect(await discoverModelLimits(custom(baseURL, 'glm-5.3'))).toMatchObject({ context: 1_000_000, output: 32_000, source: 'api', warning: expect.stringContaining('context limits') });
+  });
+
   it('persists discovered capabilities and uses them for the actual request', async () => {
     const root = temp();
     const baseURL = await mockServer((_body, response) => { response.end(JSON.stringify({ data: [{ id: 'private-alias', context_window: 24000, max_output_tokens: 6000 }] })); });
     const app = new Application(path.join(root, 'data'), { async complete(request) {
       expect(request.maxOutputTokens).toBe(6000);
       return answer();
-    } });
+    } }, undefined, { agentFactors: { D: false, E: false, B: false } });
     try {
       const run = await app.createRunWithDiscovery({ objective: 'test', workspace: root, binding: custom(baseURL) });
       expect(app.store.session(run.sessionId).modelLimits).toEqual({ context: 24000, output: 6000, source: 'api' });
@@ -123,11 +133,23 @@ describe('endpoint model capability discovery', () => {
   });
 
   it('limits the entire metadata phase to three seconds, including a stalled body', async () => {
-    let reads = 0;
-    const baseURL = await mockServer((_body, response) => { reads++; response.writeHead(200, { 'content-type': 'application/json' }); response.write('{'); });
-    expect(await discoverModelLimits(custom(baseURL))).toMatchObject({ source: 'fallback', warning: expect.stringContaining('timed out') });
-    expect(reads).toBe(1);
-  }, 10000);
+    const deadline = new AbortController();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => { expect(ms).toBe(3000); return deadline.signal; });
+    let reading!: () => void;
+    const started = new Promise<void>(resolve => { reading = resolve; });
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{')); },
+      pull() { reading(); return new Promise<void>(() => {}); },
+      cancel,
+    })));
+    const outcome = discoverModelLimits(custom('http://127.0.0.1/v1'));
+    await started;
+    deadline.abort(new DOMException('deadline', 'TimeoutError'));
+    expect(await outcome).toMatchObject({ source: 'fallback', warning: expect.stringContaining('timed out') });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+  }, 1000);
 
   it('skips discovery for declared capabilities, explicit windows and exact native catalog entries', async () => {
     const request = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('must not fetch'));

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { AnthropicProvider } from '../src/providers/anthropic.js';
+import { todoTools } from '../src/tools/todo.js';
 import type { ModelResponse, Provider } from '../src/runtime/types.js';
 import { mockServer } from './http-server.js';
 import { temp } from './helpers.js';
@@ -35,7 +36,7 @@ describe('Anthropic Messages adapter', () => {
   it('executes a tool only after message_stop, then round-trips system, tool identity and actual result', async () => {
     process.env.KODO_ANTHROPIC_TEST_KEY = 'local-fixture';
     let rounds = 0;
-    const baseURL = await mockServer((body, response, incoming) => {
+    const versionedURL = await mockServer((body, response, incoming) => {
       expect(incoming.url).toBe('/v1/messages');
       expect(incoming.headers['x-api-key']).toBe('local-fixture');
       expect(incoming.headers['anthropic-version']).toBe('2023-06-01');
@@ -46,15 +47,19 @@ describe('Anthropic Messages adapter', () => {
       else {
         const messages = body.messages as { role: string; content: Event[] }[];
         expect(messages.at(-2)?.content).toContainEqual({ type: 'tool_use', id: 'toolu-fixture', name: 'file_apply_patch', input: { path: 'out.txt', expectedHash: null, content: 'checked' } });
-        expect(messages.at(-1)).toMatchObject({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu-fixture' }] });
+        expect(messages.at(-1)).toMatchObject({ role: 'user', content: expect.arrayContaining([{ type: 'tool_result', tool_use_id: 'toolu-fixture', content: expect.any(String) }]) });
         expect(String(messages.at(-1)?.content[0]?.content)).toContain('out.txt');
         send(response, [start(), ...text('verified'), ...done()]);
       }
     });
+    const baseURL = versionedURL.slice(0, -3);
     const root = temp();
     const app = new Application(path.join(root, 'state'), new AnthropicProvider());
     try {
       const run = app.createRun({ objective: 'test', workspace: root, binding: binding(baseURL), permissions: ['read', 'write'] });
+      await todoTools(app.store).find(tool => tool.name === 'todo.write')!.execute({
+        run, session: app.store.session(run.sessionId), signal: new AbortController().signal, markEffectStarted() {},
+      }, { expectedRevision: 0, items: [{ id: 'write-fixture', content: 'Write the fixture output and verify the actual tool result.', status: 'in_progress', executor: 'main' }] });
       const result = await app.run(run.id);
       expect(result.status).toBe('completed');
       expect(rounds).toBe(2);
@@ -215,6 +220,17 @@ describe('Anthropic Messages adapter', () => {
 
   it('rejects missing credentials before any request', async () => {
     await expect(new AnthropicProvider().complete(request('http://127.0.0.1:1/v1'), new AbortController().signal, () => {})).rejects.toMatchObject({ code: 'MODEL_CREDENTIAL' });
+  });
+
+  it('keeps only leading system messages in the cached prefix and marks later ones in place', async () => {
+    process.env.KODO_ANTHROPIC_TEST_KEY = 'local-fixture';
+    let seen: Event | undefined;
+    const baseURL = await mockServer((body, response) => { seen = body; send(response, [start(), ...text('done'), ...done()]); });
+    await new AnthropicProvider().complete({ ...request(baseURL), messages: [{ role: 'system', content: 'kernel rules' }, { role: 'system', content: 'card method' }, { role: 'user', content: 'objective' }, { role: 'system', content: 'late runtime state' }] }, new AbortController().signal, () => {});
+    expect(seen?.system).toBe('kernel rules\n\ncard method');
+    const messages = seen?.messages as { role: string; content: { type: string; text: string }[] }[];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]!.content.map(block => block.text)).toEqual(['objective', '<kodo-runtime kind="system">\nlate runtime state\n</kodo-runtime>']);
   });
 
   it('does not lose signed thinking when the response is used as persisted assistant history', async () => {

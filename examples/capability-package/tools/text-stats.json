@@ -1,0 +1,14 @@
+{
+  "format": "kodo-tool/v1",
+  "name": "text.stats",
+  "version": "1.0.0",
+  "description": "Count Unicode code points, UTF-8 bytes, whitespace-delimited fragments and lines in unchanged text; empty text has zero lines.",
+  "parameters": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["text"],
+    "properties": { "text": { "type": "string", "maxLength": 65536 } }
+  },
+  "permission": "read",
+  "effect": "read"
+}

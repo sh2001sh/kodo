@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.0",
   "private": true,
   "description": "Kodo local agent harness — development preview",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24 <25"
@@ -23,7 +23,8 @@
     "tsconfig.build.json",
     "vitest.config.mjs",
     "eslint.config.mjs",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "npm run build && node dist/cli/index.js",
@@ -37,21 +38,34 @@
     "demo:kernel": "npm run build && node scripts/demo-kernel.mjs --scripted",
     "demo:kernel:local": "npm run build && node scripts/demo-kernel.mjs",
     "demo:kernel:recovery": "npm run build && node scripts/demo-kernel-recovery.mjs",
-    "build": "tsc -p tsconfig.build.json",
+    "demo:package": "npm run build && node scripts/demo-capability-package.mjs",
+    "build": "tsc -p tsconfig.build.json && node scripts/build-windows-pipes.mjs && node scripts/write-build-manifest.mjs",
     "prepack": "npm run build",
-    "test:assessment": "node --test scripts/comparison/*.test.mjs"
+    "test:assessment": "node --test scripts/comparison/*.test.mjs",
+    "verify:installation": "node scripts/verify-installation.mjs",
+    "verify:platform": "npm run build && node scripts/verify-platform.mjs"
   },
   "dependencies": {
     "ajv": "8.20.0",
     "better-sqlite3": "13.0.3",
+    "ink": "8.0.0",
     "openai": "7.39.0",
-    "yaml": "2.9.1"
+    "react": "19.3.1",
+    "string-width": "8.3.0",
+    "yaml": "2.9.1",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/yauzl": "3.4.0",
+    "@types/yazl": "3.3.1",
     "eslint": "10.13.0",
+    "ink-testing-library": "4.0.0",
+    "node-gyp": "^11.5.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2",
     "vitest": "5.0.5"

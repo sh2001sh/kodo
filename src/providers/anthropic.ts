@@ -1,11 +1,16 @@
 import type { Message, ModelResponse, Provider, ToolRequest } from '../runtime/types.js';
 import { KodoError } from '../runtime/types.js';
 import { object, providerError, providerFetch, streamError } from './errors.js';
+import { modelApiBaseURL } from './model-limits.js';
+import { validateImageInput } from '../tools/image.js';
+import type { ImageInput, ImageMimeType } from '../tools/image.js';
+import { providerProgress } from './transport.js';
 
 type ObjectValue = Record<string, unknown>;
 type Thinking = { type: 'thinking'; thinking: string; signature: string } | { type: 'redacted_thinking'; data: string };
+type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: ImageMimeType; data: string } };
 type Block = { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: ObjectValue }
-  | { type: 'tool_result'; tool_use_id: string; content: string } | Thinking;
+  | { type: 'tool_result'; tool_use_id: string; content: string | ({ type: 'text'; text: string } | ImageBlock)[] } | Thinking | ImageBlock;
 type WireMessage = { role: 'user' | 'assistant'; content: Block[] };
 type StreamBlock = { type: 'text'; text: string; raw: ObjectValue; closed: boolean }
   | { type: 'tool_use'; id: string; name: string; input: ObjectValue; json: string; raw: ObjectValue; closed: boolean }
@@ -26,9 +31,15 @@ function history(messages: Message[]): { system: string; messages: WireMessage[]
     else wire.push({ role, content });
   };
   for (const message of messages) {
-    if (message.role === 'system') system.push(message.content);
-    else if (message.role === 'user') append('user', [{ type: 'text', text: message.content }]);
-    else if (message.role === 'tool') append('user', [{ type: 'tool_result', tool_use_id: message.tool_call_id, content: message.content }]);
+    const images = (message as { images?: ImageInput[] }).images;
+    if (images !== undefined && (!Array.isArray(images) || images.length > 8 || !['user', 'tool'].includes(message.role))) return protocol('images require a user or tool message and at most 8 attachments');
+    const parts: ImageBlock[] = images?.map(image => { validateImageInput(image); return { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } }; }) ?? [];
+    // Only the leading system messages form the cached prefix. A later system message
+    // stays in place as a marked user block so it never rewrites that prefix.
+    if (message.role === 'system' && !wire.length) system.push(message.content);
+    else if (message.role === 'system') append('user', [{ type: 'text', text: `<kodo-runtime kind="system">\n${message.content}\n</kodo-runtime>` }]);
+    else if (message.role === 'user') append('user', [{ type: 'text', text: message.content }, ...parts]);
+    else if (message.role === 'tool') append('user', [{ type: 'tool_result', tool_use_id: message.tool_call_id, content: parts.length ? [{ type: 'text', text: message.content }, ...parts] : message.content }]);
     else if (message.role === 'assistant') {
       const blocks: Block[] = [];
       if (message.providerData) {
@@ -60,7 +71,7 @@ function history(messages: Message[]): { system: string; messages: WireMessage[]
 export class AnthropicProvider implements Provider {
   async complete(request: Parameters<Provider['complete']>[0], signal: AbortSignal, onText: (text: string) => void): Promise<ModelResponse> {
     const key = process.env[request.binding.apiKeyEnv];
-    if (!key) throw new KodoError('MODEL_CREDENTIAL', `set ${request.binding.apiKeyEnv} in the local environment`);
+    if (!key) throw new KodoError('MODEL_CREDENTIAL', `set ${request.binding.apiKeyEnv} in the local environment`, { usageKnownZero: true });
     const logicalNames = new Map(request.tools.map(tool => [wireName(tool.name), tool.name]));
     if (logicalNames.size !== request.tools.length) return protocol('tool names collide after provider encoding');
     const converted = history(request.messages);
@@ -76,6 +87,7 @@ export class AnthropicProvider implements Provider {
     let uncachedInput = 0;
     let responseHeaders: Headers | undefined;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const progress = providerProgress(signal);
     const accept = (data: string, event: string): void => {
       let value: unknown;
       try { value = JSON.parse(data); } catch { return protocol('provider sent invalid event JSON'); }
@@ -111,14 +123,17 @@ export class AnthropicProvider implements Provider {
           if (!object(block)) return protocol('invalid content block');
           if (block.type === 'text' && typeof block.text === 'string') {
             blocks.set(index, { type: 'text', text: block.text, raw: { ...block }, closed: false });
-            if (block.text) { content += block.text; onText(block.text); }
+            if (block.text) { content += block.text; onText(block.text); progress.advance(); }
           } else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string' && object(block.input)) {
             if ([...blocks.values()].filter(item => item.type === 'tool_use').length >= 32) return protocol('too many tool calls');
             blocks.set(index, { type: 'tool_use', id: block.id, name: block.name, input: block.input, json: '', raw: { ...block }, closed: false });
+            if (block.name || Object.keys(block.input).length) progress.advance();
           } else if (block.type === 'thinking' && typeof block.thinking === 'string' && (block.signature === undefined || typeof block.signature === 'string')) {
             blocks.set(index, { type: 'thinking', raw: { ...block, signature: block.signature ?? '' }, closed: false });
+            if (block.thinking) progress.advance();
           } else if (block.type === 'redacted_thinking' && typeof block.data === 'string') {
             blocks.set(index, { type: 'redacted_thinking', raw: { ...block }, closed: false });
+            if (block.data) progress.advance();
           } else return protocol('unsupported content block');
         } else {
           if (!previous || previous.closed || stopReason !== undefined) return protocol('content event has no open block');
@@ -135,6 +150,7 @@ export class AnthropicProvider implements Provider {
             else if (previous.type === 'thinking' && delta.type === 'thinking_delta' && typeof delta.thinking === 'string') previous.raw.thinking = String(previous.raw.thinking) + delta.thinking;
             else if (previous.type === 'thinking' && delta.type === 'signature_delta' && typeof delta.signature === 'string') previous.raw.signature = String(previous.raw.signature) + delta.signature;
             else return protocol('content delta does not match its block');
+            if (delta.text || delta.partial_json || delta.thinking || delta.signature) progress.advance();
           }
         }
       } else if (type === 'message_delta') {
@@ -163,11 +179,12 @@ export class AnthropicProvider implements Provider {
     };
     try {
       signal.throwIfAborted();
-      const response = await providerFetch(`${request.binding.baseURL.replace(/\/+$/, '')}/messages`, {
-        method: 'POST', signal, redirect: 'error',
+      const response = await providerFetch(`${modelApiBaseURL(request.binding)}/messages`, {
+        method: 'POST', signal: progress.signal, redirect: 'error',
         headers: { 'content-type': 'application/json', accept: 'text/event-stream', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
         body: JSON.stringify({ model: request.binding.model, ...converted, system, max_tokens: request.maxOutputTokens, stream: true,
-          ...(request.tools.length ? { tools: request.tools.map(tool => ({ name: wireName(tool.name), description: tool.description, input_schema: tool.parameters })) } : {}) }),
+          ...(request.toolChoice === 'none' ? { tool_choice: { type: 'none' } } : {}),
+        ...(request.tools.length ? { tools: request.tools.map(tool => ({ name: wireName(tool.name), description: tool.description, input_schema: tool.parameters })) } : {}) }),
       });
       responseHeaders = response.headers;
       if (!response.ok) {
@@ -207,7 +224,8 @@ export class AnthropicProvider implements Provider {
         }
       }
       signal.throwIfAborted();
-      if (!stopped || !['end_turn', 'stop_sequence', 'tool_use'].includes(String(stopReason))) throw new KodoError('MODEL_INCOMPLETE', 'response did not end normally; no tools from this response were executed');
+      if (stopped && stopReason === 'max_tokens') throw new KodoError('MODEL_INCOMPLETE', 'response stopped at the output token limit; no tools from this response were executed', { outputLimit: true, ...(usage ? { usage } : {}) });
+      if (!stopped || !['end_turn', 'stop_sequence', 'tool_use'].includes(String(stopReason))) throw new KodoError('MODEL_INCOMPLETE', 'response did not end normally; no tools from this response were executed', stopped && usage ? { usage } : undefined);
       const calls: ToolRequest[] = [];
       const completedBlocks: ObjectValue[] = [];
       for (const block of blocks.values()) {
@@ -227,9 +245,13 @@ export class AnthropicProvider implements Provider {
       return { message: { role: 'assistant', content: content || null, ...(calls.length ? { tool_calls: calls } : {}), ...(completedBlocks.length ? { providerData: { protocol: 'anthropic' as const, blocks: completedBlocks } } : {}) }, finishReason: calls.length ? 'tool_calls' : 'stop', usage };
     } catch (error) {
       if (signal.aborted) throw signal.reason;
-      if (error instanceof KodoError) throw error;
-      throw providerError(error, undefined, responseHeaders);
+      const cause: unknown = progress.signal.aborted ? progress.signal.reason : error;
+      const failure = cause instanceof KodoError ? cause : providerError(cause, undefined, responseHeaders);
+      throw started || usage ? new KodoError(failure.code, failure.message, {
+        ...failure.metadata, ...(usage ? { usage } : {}), ...(started ? { partialResponse: true, usageKnownZero: false } : {}),
+      }) : failure;
     } finally {
+      progress.close();
       if (reader) { try { await reader.cancel(); } catch { /* Cancellation after a stream transport failure is best effort. */ } reader.releaseLock(); }
     }
   }

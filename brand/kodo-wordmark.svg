@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 320 76" fill="none" stroke="currentColor" stroke-width="5.5" stroke-linejoin="round" role="img" aria-labelledby="title">
+  <title id="title">Kodo</title>
+  <path d="M3 2V66M4 41L66 2M26 27L68 66"/>
+  <path d="M117 20C94 20 85 27 85 43C85 60 94 66 117 66C140 66 149 60 149 43C149 27 140 20 117 20Z"/>
+  <path d="M228 2V66M228 43C228 27 219 20 196 20C173 20 164 27 164 43C164 60 173 66 196 66C219 66 228 60 228 43Z"/>
+  <path d="M278 20C255 20 246 27 246 43C246 60 255 66 278 66C301 66 310 60 310 43C310 27 301 20 278 20Z"/>
+</svg>

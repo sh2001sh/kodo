@@ -55,16 +55,16 @@ describe('Chat Completions SDK adapter', () => {
         ]);
       } else {
         const messages = body.messages as { role: string; reasoning_content?: string; tool_calls?: { function: { name: string }; id: string }[]; tool_call_id?: string }[];
-        expect(messages.at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'call-real-id' });
-        expect(messages.at(-2)?.tool_calls?.[0]).toMatchObject({ id: 'call-real-id', function: { name: 'artifact_write' } });
-        expect(messages.at(-2)?.reasoning_content).toBe(privateReasoning);
-        expect(messages.at(-2)).not.toHaveProperty('providerData');
+        expect(messages.findLast(message => message.role === 'tool')).toMatchObject({ role: 'tool', tool_call_id: 'call-real-id' });
+        expect(messages.findLast(message => message.role === 'assistant')?.tool_calls?.[0]).toMatchObject({ id: 'call-real-id', function: { name: 'artifact_write' } });
+        expect(messages.findLast(message => message.role === 'assistant')?.reasoning_content).toBe(privateReasoning);
+        expect(messages.findLast(message => message.role === 'assistant')).not.toHaveProperty('providerData');
         sendStream(response, [delta({ reasoning_content: 'second-round-private-reasoning' }), delta({ content: 'validated' }), delta({}, 'stop'), { choices: [], usage: { prompt_tokens: 40, completion_tokens: 10, total_tokens: 50 } }]);
       }
     });
     const root = temp();
     let visibleText = '';
-    const app = new Application(path.join(root, 'state'), new ChatCompletionsProvider(), (_id, text) => { visibleText += text; });
+    const app = new Application(path.join(root, 'state'), new ChatCompletionsProvider(), (_id, text) => { visibleText += text; }, { toolProfile: 'full', taskProtocol: 2 });
     try {
       const run = app.createRun({ objective: 'test', workspace: root, binding: binding(url), permissions: ['read', 'write'] });
       const result = await app.coordinator.wake(run.id);

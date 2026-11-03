@@ -69,4 +69,4 @@ CodeGo / deepseek-v4.1-flash / Chat Completions，声明合并窗口1,000,000 to
 
 本机证据：[冻结条件](../.kodo/delivery-closure-1792552380159/conditions.json)、[逐次摘要](../.kodo/delivery-closure-1792552380159/summary.json)、[只读补充核验](../.kodo/delivery-closure-1792552380159/supplemental-audit.json)。每条目录保留实际请求、SSE、SQLite、blob、工具及公开验收证据、最终源码；原评分未覆盖或改写。补充核验增加输入不变及冻结数组检查，两条均通过，未重新调用模型。实际源码与运行时快照在 snapshot；其后对已核验恢复记录的兼容修复用确定性回归覆盖，未重复收费验证。上述成绩不与旧六次收益实验合并。
 
-本轮证明了这些收尾与拒绝路径，不能保证任意任务完整正确，也没有证明长期可靠性改善的幅度。专用Agent检索、技能和MCP仍未实现，保持独立后续验收。
+本轮证明了这些收尾与拒绝路径，不能保证任意任务完整正确，也没有证明长期可靠性改善的幅度。本轮历史验收时专用 Agent 检索、技能和 MCP 尚未实现；2026-10-21 已补齐宿主工具／Skill／MCP 接入与卡片元数据检索，当前边界见 [README](../README.md#宿主扩展-api)。这不回写本轮历史成绩。

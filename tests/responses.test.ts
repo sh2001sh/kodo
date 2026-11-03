@@ -46,7 +46,7 @@ describe('Responses SDK adapter', () => {
     });
     const root = temp();
     const seen: string[] = [];
-    const app = new Application(path.join(root, 'state'), new ResponsesProvider(), (_id, text) => seen.push(text));
+    const app = new Application(path.join(root, 'state'), new ResponsesProvider(), (_id, text) => seen.push(text), { toolProfile: 'full', taskProtocol: 2 });
     try {
       const run = app.createRun({ objective: 'create an artifact', workspace: root, binding: binding(url), permissions: ['read', 'write'] });
       const result = await app.run(run.id);
@@ -59,7 +59,9 @@ describe('Responses SDK adapter', () => {
       const secondInput = requests[1]!.input as Record<string, unknown>[];
       expect(secondInput).toContainEqual(reasoning);
       expect(secondInput).toContainEqual({ type: 'function_call', id: 'fc-different-from-call-id', call_id: 'call-preserved', name: 'artifact_write', arguments: args, status: 'completed' });
-      expect(secondInput.at(-1)).toMatchObject({ type: 'function_call_output', call_id: 'call-preserved' });
+      const callIndex = secondInput.findIndex(item => item.type === 'function_call' && item.call_id === 'call-preserved');
+      expect(secondInput[callIndex + 1]).toMatchObject({ type: 'function_call_output', call_id: 'call-preserved' });
+      expect(secondInput.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('<kodo-runtime kind="state">') });
       expect(secondInput.some(item => item.call_id === 'fc-different-from-call-id')).toBe(false);
       expect(app.store.calls(run.id).filter(call => call.kind === 'tool')).toMatchObject([{ name: 'artifact.write', status: 'succeeded' }]);
       expect(app.store.session(run.sessionId)).toMatchObject({ tokens: 60, usageEstimated: false });

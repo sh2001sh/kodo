@@ -222,3 +222,23 @@ describe('bounded Retry-After interpretation', () => {
     expect(retryDelay(new Headers(headers), now)).toBe(expected);
   });
 });
+
+describe('chat-completions partial usage chunks', () => {
+  it('ignores per-chunk usage without counters and keeps the final counters', async () => {
+    process.env.KODO_HARDENING_TEST_KEY = fixtureSecret;
+    const partial = { prompt_tokens_details: { cached_tokens: 1389 } };
+    const baseURL = await mockServer((_body, response) => sendStream(response, [
+      { ...delta({ reasoning_content: 'plan' }), usage: partial }, { ...delta({ content: 'done' }), usage: partial },
+      { ...delta({}, 'stop'), usage: { prompt_tokens: 14_148, completion_tokens: 313, prompt_tokens_details: { cached_tokens: 13_184 } } },
+    ]));
+    const result = await provider('chat-completions').complete(request('chat-completions', baseURL), new AbortController().signal, () => {});
+    expect(result.message.content).toBe('done');
+    expect(result.usage).toEqual({ input: 14_148, output: 313, cacheRead: 13_184 });
+  });
+
+  it('still rejects counters that are present but invalid', async () => {
+    process.env.KODO_HARDENING_TEST_KEY = fixtureSecret;
+    const baseURL = await mockServer((_body, response) => sendStream(response, [delta({ content: 'done' }), { ...delta({}, 'stop'), usage: { prompt_tokens: -1, completion_tokens: 4 } }]));
+    await expect(provider('chat-completions').complete(request('chat-completions', baseURL), new AbortController().signal, () => {})).rejects.toMatchObject({ code: 'MODEL_PROTOCOL' });
+  });
+});

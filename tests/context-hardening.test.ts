@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/storage/index.js';
 import { buildContext } from '../src/runtime/context.js';
-import { estimateInputTokens, estimateTextTokens } from '../src/runtime/context-tokens.js';
+import { attachment } from '../src/runtime/attachments.js';
+import { createInputTokenEstimator, estimateInputTokens, estimateTextTokens } from '../src/runtime/context-tokens.js';
 import { readHistory } from '../src/runtime/history.js';
 import type { Message, ModelResponse, Run, ToolSpec } from '../src/runtime/types.js';
 import { answer, fixture } from './helpers.js';
@@ -17,6 +18,37 @@ function measured(f: ReturnType<typeof fixture>, messages: Message[], tools: Too
 }
 
 describe('token window and durable compaction hardening', () => {
+  it('composes cached message estimates and character lengths exactly like full JSON serialization', () => {
+    const f = fixture();
+    const run = f.app.store.run(f.runId);
+    const tools = [{ name: 'proof', description: '中文😀', parameters: { type: 'object' } }];
+    const estimator = createInputTokenEstimator(f.app.store, run, tools);
+    const messages: Message[] = [{ role: 'system', content: 'rules\\"\n中文😀' }, { role: 'assistant', content: null, tool_calls: [{ id: 'a', name: 'proof', arguments: '{}' }] }, { role: 'tool', tool_call_id: 'a', content: 'かな한글𠀀\ud800'.repeat(100) }];
+    for (const candidate of [[], messages, messages.slice(0, 1), messages.slice(1), [...messages, { role: 'user', content: 'new evidence' } satisfies Message]]) {
+      expect(estimator.size(candidate)).toBe(JSON.stringify({ messages: candidate, tools }).length);
+      expect(estimator.estimate(candidate)).toBe(estimateTextTokens(JSON.stringify({ messages: candidate, tools })) + 256 + candidate.length * 16 + tools.length * 64);
+    }
+  });
+
+  it('does not reuse stale message estimates or measured prefix identity between builds', () => {
+    const f = fixture();
+    const run = f.app.store.run(f.runId);
+    const messages = f.app.store.readBlob<Message[]>(run.contextRef);
+    measured(f, messages, [], 1);
+    const before = estimateInputTokens(f.app.store, run, messages, []);
+    messages[0]!.content += 'Changed authority '.repeat(1000);
+    expect(estimateInputTokens(f.app.store, run, messages, [])).toBeGreaterThan(before + 1000);
+  });
+
+  it('classifies common and rare Unicode codepoints consistently at fast-path boundaries', () => {
+    const points = [0x9, 0xd, 0x20, 0x2f, 0x30, 0x39, 0x3a, 0x40, 0x41, 0x5a, 0x5b, 0x60, 0x61, 0x7a, 0x7b, 0x7f, 0x80, 0x7ff, 0x800, 0x3040, 0x3041, 0x3096, 0x3097, 0x30a0, 0x30a1, 0x30fa, 0x30fb, 0x30fc, 0x30fd, 0x33ff, 0x3400, 0x4dbf, 0x4dc0, 0x4dff, 0x4e00, 0x9fff, 0xa000, 0x10ff, 0x1100, 0x11ff, 0x1200, 0xabff, 0xac00, 0xd7a3, 0xd7a4, 0xd800, 0xffff, 0x10000, 0x20000, 0x1f600];
+    for (const point of points) {
+      const character = String.fromCodePoint(point);
+      const expected = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(character) ? 1.25 : /\p{Script=Hangul}/u.test(character) ? 1.5 : point < 128 ? /[a-z0-9\s]/i.test(character) ? 1 / 3 : 0.5 : Buffer.byteLength(character, 'utf8') / 2;
+      expect(estimateTextTokens(character.repeat(120)), `U+${point.toString(16)}`).toBe(Math.ceil(expected * 120 * 11 / 10));
+    }
+  });
+
   it('estimates unseen Chinese and emoji by character class with framing headroom', () => {
     const f = fixture();
     const run = append(f, [{ role: 'assistant', content: '中文😀'.repeat(800) }]);
@@ -95,21 +127,55 @@ describe('token window and durable compaction hardening', () => {
     expect(estimateInputTokens(f.app.store, continuation, messages, [])).toBe(freshEstimate);
   });
 
+  it('reuses a measured prefix across the replaced trailing state frame without undercounting new text', () => {
+    const f = fixture();
+    const run = f.app.store.run(f.runId);
+    const initial = f.app.store.readBlob<Message[]>(run.contextRef);
+    const state = (step: number): Message => attachment('state', JSON.stringify({ step, remainingTokens: 1000 - step }));
+    measured(f, [...initial, state(0)], [], 500);
+    const added: Message[] = [{ role: 'assistant', content: 'Reading src/pager.mjs.' }, { role: 'tool', tool_call_id: 'read', content: 'export const page = 1;\n'.repeat(20) }, state(1)];
+    const next = [...initial, ...added];
+    const unmeasured = estimateInputTokens(f.app.store, { ...run, binding: { ...run.binding, model: 'unmeasured' } }, next, []);
+    const estimate = estimateInputTokens(f.app.store, run, next, []);
+    expect(estimate).toBeLessThan(unmeasured);
+    // The dropped state message stays inside the measured 500, and every added message is estimated in full.
+    expect(estimate).toBeGreaterThanOrEqual(500 + estimateTextTokens(JSON.stringify(added)));
+  });
+
+  it('drops only a trailing state frame when matching measured prefixes', () => {
+    const f = fixture();
+    const run = f.app.store.run(f.runId);
+    const initial = f.app.store.readBlob<Message[]>(run.contextRef);
+    const fresh: Message = { role: 'assistant', content: 'next step' };
+    const unmeasured = (messages: Message[]) => estimateInputTokens(f.app.store, { ...run, binding: { ...run.binding, model: 'unmeasured' } }, messages, []);
+    // A user message that merely resembles the frame (no closing tag) is task data, not runtime state.
+    const spoofed: Message = { role: 'user', content: '<kodo-runtime kind="state">\n{"step":0}' };
+    measured(f, [...initial, spoofed], [], 500);
+    expect(estimateInputTokens(f.app.store, run, [...initial, fresh], [])).toBe(unmeasured([...initial, fresh]));
+    // A state message that is not last must still match exactly.
+    const middle: Message = attachment('state', '{"step":0}');
+    measured(f, [...initial, middle, fresh], [], 500);
+    const replaced = [...initial, attachment('state', '{"step":1}'), fresh, { role: 'user', content: 'more' } satisfies Message];
+    expect(estimateInputTokens(f.app.store, run, replaced, [])).toBe(unmeasured(replaced));
+  });
+
   it('keeps a bounded latest tool preview and smaller earlier evidence without altering signed provider data', () => {
     const f = fixture();
     const old: Message = { role: 'assistant', content: 'Earlier verified result: SMALL_EVIDENCE' };
+    const initial = f.app.store.readBlob<Message[]>(f.app.store.run(f.runId).contextRef);
+    const maxChars = JSON.stringify({ messages: initial, tools: [] }).length + 9_000;
     const assistant: Message = { role: 'assistant', content: null, tool_calls: [{ id: 'long-call', name: 'process.exec', arguments: '{"program":"test"}' }], providerData: { protocol: 'anthropic', blocks: [{ type: 'thinking', thinking: 'reasoning', signature: 'immutable-signature' }, { type: 'tool_use', id: 'long-call', name: 'process.exec', input: { program: 'test' } }] } };
     const tool: Message = { role: 'tool', tool_call_id: 'long-call', content: `HEAD_EVIDENCE ${'long output '.repeat(10_000)} TAIL_RESULT: tests passed` };
     const run = append(f, [old, assistant, tool]);
-    const result = buildContext(f.app.store, run, 9_000, []);
+    const result = buildContext(f.app.store, run, maxChars, []);
     expect(result.messages).toContainEqual(old);
     expect(result.messages).toContainEqual(assistant);
     const preview = result.messages.find(message => message.role === 'tool' && message.tool_call_id === 'long-call')!;
     const body = JSON.parse(preview.content!);
-    expect(body).toMatchObject({ preview: true, history: { ref: result.archivedRef, offset: 5, limit: 1 } });
+    expect(body).toMatchObject({ preview: true, history: { ref: result.archivedRef, offset: initial.length + 2, limit: 1 } });
     expect(body.text).toContain('HEAD_EVIDENCE');
     expect(body.text).toContain('TAIL_RESULT: tests passed');
-    expect(result.compactedChars).toBeLessThanOrEqual(9_000);
+    expect(result.compactedChars).toBeLessThanOrEqual(maxChars);
     expect(result.omittedMessages).toBe(1);
     f.app.store.event(run.id, 'context.compacted', { archivedRef: result.archivedRef });
     const page = readHistory(f.app.store, run.id, { ref: result.archivedRef!, offset: body.history.offset, limit: 1, maxChars: 32_000 });
@@ -119,10 +185,12 @@ describe('token window and durable compaction hardening', () => {
 
   it('skips an unshrinkable recent provider block while retaining smaller preceding results', () => {
     const f = fixture();
+    const initial = f.app.store.readBlob<Message[]>(f.app.store.run(f.runId).contextRef);
+    const maxChars = JSON.stringify({ messages: initial, tools: [] }).length + 8_000;
     const recent: Message = { role: 'assistant', content: null, providerData: { protocol: 'responses', output: [{ type: 'reasoning', encrypted_content: 'x'.repeat(50_000) }] } };
     const small: Message = { role: 'assistant', content: 'SMALL_PRECEDING_RESULT' };
     const run = append(f, [small, recent]);
-    const built = buildContext(f.app.store, run, 8_000, []);
+    const built = buildContext(f.app.store, run, maxChars, []);
     expect(built.messages).toContainEqual(small);
     expect(built.messages).not.toContainEqual(recent);
     expect(f.app.store.readBlob<{ messages: Message[] }>(built.archivedRef!).messages).toContainEqual(recent);

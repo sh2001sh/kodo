@@ -4,7 +4,13 @@ import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { KodoError } from '../src/runtime/types.js';
 import type { Message, Provider } from '../src/runtime/types.js';
+import { resolveBashProgram } from '../src/tools/shell.js';
 import { answer, binding, call, calls, fixture, scripted, temp } from './helpers.js';
+
+const installedBash = await resolveBashProgram().catch((error: unknown) => {
+  if (error instanceof KodoError && error.code === 'SHELL_UNAVAILABLE') return undefined;
+  throw error;
+});
 
 describe('execution quality and accounting', () => {
   it('releases known-zero 429 reservations while counting every attempt', async () => {
@@ -48,26 +54,33 @@ describe('execution quality and accounting', () => {
     expect(app.store.calls(runId).filter(item => item.kind === 'model')).toHaveLength(1);
   });
 
-  it('warns after three identical reads and blocks an unchanged fourth call', async () => {
+  it('advises at three, five and eight identical reads and stops with a handoff report at twelve', async () => {
     const request = calls(call('file.read', { path: 'proof.txt' }));
-    const { app, root, runId } = fixture(scripted(request, request, request, async input => {
-      expect(input.messages.some(item => item.content?.startsWith('Runtime progress check:'))).toBe(true);
-      return request;
-    }));
+    const { app, root, runId } = fixture(scripted(...Array.from({ length: 12 }, () => request)));
     writeFileSync(path.join(root, 'proof.txt'), 'unchanged');
-    expect((await app.run(runId)).error).toContain('TOOL_STALLED');
-    expect(app.store.session(app.store.run(runId).sessionId).toolCalls).toBe(3);
-    expect(app.store.events(runId).filter(event => event.type === 'tool.repetition_warning')).toHaveLength(1);
+    const run = await app.run(runId);
+    expect(run.error).toContain('NO_PROGRESS');
+    expect(run.error).toContain('handoff report');
+    expect(app.store.session(run.sessionId).toolCalls).toBe(12);
+    expect(app.store.events(runId).filter(event => event.type === 'tool.repetition_warning').map(event => event.data.consecutive)).toEqual([3, 5, 8]);
+    expect(app.store.events(runId).find(event => event.type === 'run.handoff')?.data.code).toBe('NO_PROGRESS');
   });
 
-  it('still detects unchanged repeats after a user decision advances the version', async () => {
+  it('keeps counting unchanged repeats after a user decision advances the version', async () => {
     const request = calls(call('file.read', { path: 'proof.txt' }));
-    const { app, root, runId } = fixture(scripted(request, request, request, request, answer()));
+    const { app, root, runId } = fixture(scripted(...Array.from({ length: 12 }, () => request)));
     writeFileSync(path.join(root, 'proof.txt'), 'unchanged under version one');
     app.submitInput(runId, 'Use read-only evidence for this decision', { decision: true });
-    expect((await app.run(runId)).error).toContain('TOOL_STALLED');
-    expect(app.store.session(app.store.run(runId).sessionId).toolCalls).toBe(3);
+    expect((await app.run(runId)).error).toContain('NO_PROGRESS');
     expect(app.store.calls(runId).filter(item => item.kind === 'tool').every(item => item.decisionVersion === 1)).toBe(true);
+  });
+
+  it('lets the model recover after a repeat notice without stopping', async () => {
+    const request = calls(call('file.read', { path: 'proof.txt' }));
+    const { app, root, runId } = fixture(scripted(request, request, request, request, answer('changed approach')));
+    writeFileSync(path.join(root, 'proof.txt'), 'unchanged');
+    expect((await app.run(runId)).status).toBe('completed');
+    expect(app.store.events(runId).filter(event => event.type === 'tool.repetition_warning')).toHaveLength(1);
   });
 
   it('allows repeated reads when the observed file content changes', async () => {
@@ -91,9 +104,9 @@ describe('execution quality and accounting', () => {
 
   it('counts repeated nonzero process exits despite differing runner text', async () => {
     const result = calls(call('process.exec', { program: process.execPath, args: ['-e', 'console.error(Date.now());process.exit(2)'] }));
-    const { app, runId } = fixture(scripted(result, result, result, result), ['read', 'exec']);
-    expect((await app.run(runId)).error).toContain('TOOL_STALLED');
-    expect(app.store.session(app.store.run(runId).sessionId).toolCalls).toBe(3);
+    const { app, runId } = fixture(scripted(...Array.from({ length: 12 }, () => result)), ['read', 'exec']);
+    expect((await app.run(runId)).error).toContain('NO_PROGRESS');
+    expect(app.store.session(app.store.run(runId).sessionId).toolCalls).toBe(12);
   });
 
   it('allows successful silent processes to make four distinct writes with identical output', async () => {
@@ -105,11 +118,27 @@ describe('execution quality and accounting', () => {
     expect(app.store.events(runId).some(event => event.type === 'tool.stalled')).toBe(false);
   });
 
-  it('uses the parent measured input when preserving its response reserve for a child', async () => {
+  it.skipIf(!installedBash)('allows four successful silent Bash writes with the same command and output', async () => {
+    const request = calls(call('shell.exec', { command: "printf x >> bash-counter.txt" }));
+    const { app, root, runId } = fixture(scripted(request, request, request, request, answer('four Bash writes completed')), ['read', 'write', 'exec']);
+    const source = app.store.run(runId);
+    const card = { ...source.card, tools: [...new Set([...source.card.tools, 'shell.exec'])] };
+    app.store.updateRun(runId, { card, toolBindings: app.coordinator.tools.bindingSnapshot(card.tools) });
+    expect((await app.run(runId)).status).toBe('completed');
+    expect(readFileSync(path.join(root, 'bash-counter.txt'), 'utf8')).toBe('xxxx');
+    const executions = app.store.calls(runId).filter(entry => entry.name === 'shell.exec');
+    expect(executions).toHaveLength(4);
+    expect(executions.every(entry => entry.status === 'succeeded')).toBe(true);
+    for (const execution of executions) expect(app.store.readBlob(execution.resultRef!)).toMatchObject({ exitCode: 0, stdout: '', stderr: '', timedOut: false });
+    expect(app.store.session(source.sessionId).toolCalls).toBe(4);
+    expect(app.store.events(runId).some(event => ['tool.repetition_warning', 'tool.stalled'].includes(event.type))).toBe(false);
+  });
+
+  it('admits a child against the shared token cap without reserving parent delivery turns', async () => {
     const { app, runId } = fixture(scripted(answer('child completed within the shared budget')));
     const initial = app.store.run(runId);
     const session = app.store.session(initial.sessionId);
-    session.budget = { ...session.budget, maxTokens: 32_000, maxOutputTokens: 2048 };
+    session.budget = { ...session.budget, maxTokens: 200_000, maxOutputTokens: 2048 };
     const messages: Message[] = [...app.store.readBlob<Message[]>(initial.contextRef), { role: 'assistant', content: 'previously measured context '.repeat(2_000) }];
     const parent = app.store.updateRun(runId, { contextRef: app.store.blob(messages), step: 1 });
     const tools = [...app.coordinator.tools.specs(parent.card.tools, session), ...app.coordinator.mailbox.specs(parent)];
@@ -117,7 +146,8 @@ describe('execution quality and accounting', () => {
     app.store.putCall({ id: 'measured-parent-context', runId, step: 0, kind: 'model', name: parent.binding.model, status: 'succeeded', effect: 'read', requestRef: app.store.blob({ binding: parent.binding, messages, tools, maxOutputTokens: session.budget.maxOutputTokens }), resultRef: app.store.blob(answer('previous measured answer')), reservedTokens: 0, decisionVersion: 0 });
     app.store.putSession({ ...session, tokens: 80, modelCalls: 1 });
     const child = app.store.transaction(() => app.coordinator.mailbox.execute(parent, 'spawn-for-budget', 'spawn_agent', { objective: 'Complete the delegated check' }) as { id: string });
-    expect((await app.coordinator.wake(child.id)).status).toBe('completed');
+    const childResult = await app.coordinator.wake(child.id);
+    expect(childResult.status, childResult.error).toBe('completed');
     expect(app.store.run(runId).status).toBe('queued');
     expect(app.store.session(session.id).modelCalls).toBe(2);
   });
@@ -188,7 +218,8 @@ describe('execution quality and accounting', () => {
     const running = app.run(runId);
     await started;
     app.coordinator.cancel(runId);
-    const cancelled = app.store.run(runId);
+    const cancelled = await app.coordinator.waitForStop(runId);
+    expect(cancelled.status).toBe('cancelled');
     release();
     expect((await running).status).toBe('cancelled');
     expect(app.store.run(runId).contextRef).toBe(cancelled.contextRef);
@@ -201,11 +232,12 @@ describe('execution quality and accounting', () => {
     let cancelledContext = '';
     let cancelledStep = -1;
     app.store.subscribe(event => {
-      if (event.type !== 'completion.checked') return;
-      app.coordinator.cancel(runId);
-      const cancelled = app.store.run(runId);
-      cancelledContext = cancelled.contextRef;
-      cancelledStep = cancelled.step;
+      if (event.type === 'completion.checked') app.coordinator.cancel(runId);
+      if (event.type === 'run.cancelled') {
+        const cancelled = app.store.run(runId);
+        cancelledContext = cancelled.contextRef;
+        cancelledStep = cancelled.step;
+      }
     });
     expect((await app.run(runId)).status).toBe('cancelled');
     expect(app.store.run(runId)).toMatchObject({ contextRef: cancelledContext, step: cancelledStep });

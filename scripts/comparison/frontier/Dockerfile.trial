@@ -1,0 +1,10 @@
+ARG TASK_IMAGE
+FROM ${TASK_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap && rm -rf /var/lib/apt/lists/*
+COPY --from=kodo-frontier-tools:20261028 /opt/fh /opt/fh
+COPY launch.mjs /opt/fh/launch.mjs
+COPY --from=kodo-frontier-tools:20261028 /usr/bin/rg /usr/local/bin/rg
+RUN (test -e /usr/local/bin/node || ln -s /opt/fh/bin/node /usr/local/bin/node) \
+ && (test -e /usr/local/bin/npm || ln -s /opt/fh/bin/npm /usr/local/bin/npm) \
+ && (test -e /usr/local/bin/npx || ln -s /opt/fh/bin/npx /usr/local/bin/npx)
+ENV PATH="/opt/fh/bin:${PATH}"

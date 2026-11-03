@@ -1,0 +1,7 @@
+{
+  "name": "pager-kit-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Seeded workspace for the Kodo continuation fixtures."
+}

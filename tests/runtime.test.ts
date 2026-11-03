@@ -12,12 +12,12 @@ describe('unified runtime', () => {
     const provider = scripted(
       calls(call('file.read', { path: 'source.txt' }, 'read-1')),
       async request => {
-        expect(request.messages.at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'read-1' });
-        expect(request.messages.at(-1)?.content).toContain('证据');
+        expect(request.messages.findLast(message => message.role === 'tool')).toMatchObject({ role: 'tool', tool_call_id: 'read-1' });
+        expect(request.messages.findLast(message => message.role === 'tool')?.content).toContain('证据');
         return calls(call('artifact.write', { name: 'report', content: '证据已保存' }, 'write-2'));
       },
       async request => {
-        artifactId = (JSON.parse(request.messages.at(-1)!.content!) as { id: string }).id;
+        artifactId = (JSON.parse(request.messages.findLast(message => message.role === 'tool')!.content!) as { id: string }).id;
         return calls(call('artifact.read', { id: artifactId }, 'read-3'));
       },
       answer('done with evidence'),
@@ -78,9 +78,11 @@ describe('unified runtime', () => {
     const { app, runId } = fixture({ complete });
     const running = app.coordinator.wake(runId);
     await started;
+    const repeated = app.coordinator.wake(runId);
     app.coordinator.cancel(runId);
+    const whileStopping = app.coordinator.wake(runId);
     returned!();
-    expect((await running).status).toBe('cancelled');
+    expect((await Promise.all([running, repeated, whileStopping])).map(run => run.status)).toEqual(['cancelled', 'cancelled', 'cancelled']);
     expect(app.store.events(runId).some(x => x.type === 'tool.started')).toBe(false);
     expect(app.store.calls(runId)[0]?.status).toBe('cancelled');
   });
@@ -94,7 +96,7 @@ describe('unified runtime', () => {
   });
   it('rejects malformed tool JSON and allows the model to correct it', async () => {
     const { app, runId } = fixture(scripted(calls({ id: 'broken', name: 'file.read', arguments: '{' }), async request => {
-      expect(request.messages.at(-1)?.content).toContain('TOOL_ARGUMENTS');
+      expect(request.messages.findLast(message => message.role === 'tool')?.content).toContain('TOOL_ARGUMENTS');
       return answer('unable to read until corrected');
     }));
     expect((await app.coordinator.wake(runId)).status).toBe('completed');
@@ -127,14 +129,18 @@ describe('unified runtime', () => {
     expect(result.error).toContain('TOOL_BUDGET');
     expect(app.store.events(runId).filter(x => x.type === 'tool.started')).toHaveLength(1);
   });
-  it('treats a timed-out process write as uncertain and stops subsequent actions', async () => {
-    const { app, runId } = fixture(scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] }))), ['exec']);
+  it('moves a process past the tool timeout to the background, then stops it and settles its effects from a post-stop scan', async () => {
+    const { app, runId } = fixture(scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] })), answer('process still running'), answer('process stopped without changes')), ['exec']);
     const session = app.store.session(app.store.run(runId).sessionId);
     app.store.putSession({ ...session, budget: { ...session.budget, toolTimeoutMs: 100 } });
     const result = await app.coordinator.wake(runId);
-    expect(result.status).toBe('failed');
-    expect(result.error).toContain('UNKNOWN_WRITE');
-    expect(app.store.calls(runId).find(x => x.kind === 'tool')?.status).toBe('unknown');
+    expect(result.status, result.error).toBe('completed');
+    const tool = app.store.calls(runId).find(x => x.kind === 'tool')!;
+    // A just-created fixture workspace falls inside the timestamp slack, so the outcome may conservatively read applied.
+    expect(tool).toMatchObject({ status: 'cancelled', effectState: 'started' });
+    expect(app.store.readBlob(tool.resultRef!)).toMatchObject({ cancelled: true, effects: { verified: true, basis: 'workspace-change-time', unobserved: 'outside-roots' }, background: { state: 'stopped' } });
+    expect(app.store.unresolvedWrites()).toEqual([]);
+    expect(app.store.events(runId).some(event => event.type === 'completion.deferred')).toBe(true);
   });
   it('rejects insecure remote endpoints and invalid budgets', () => {
     const { app, root } = fixture();
@@ -148,7 +154,7 @@ describe('conservative recovery', () => {
   it('marks abandoned runs interrupted and never replays unknown writes', async () => {
     const { app, root, runId } = fixture();
     app.store.updateRun(runId, { status: 'running' });
-    app.store.putCall({ id: 'external-write', runId, step: 0, kind: 'tool', name: 'process.exec', status: 'running', effect: 'write', requestRef: app.store.blob({ program: 'external' }), reservedTokens: 0 });
+    app.store.putCall({ id: 'external-write', runId, step: 0, kind: 'tool', name: 'process.exec', status: 'running', effect: 'write', effectRoots: [path.join(root, 'external-effect.txt')], requestRef: app.store.blob({ program: 'external' }), reservedTokens: 0 });
     writeFileSync(path.join(root, 'external-effect.txt'), 'already happened');
     const directory = app.store.directory;
     app.close();
@@ -156,11 +162,14 @@ describe('conservative recovery', () => {
     const reopened = new Application(directory, { complete });
     try {
       expect(reopened.store.run(runId).status).toBe('interrupted');
-      expect(() => reopened.coordinator.resume(runId)).toThrow('automatic resume is blocked');
+      expect(await reopened.coordinator.resume(runId)).toMatchObject({ status: 'failed', error: expect.stringMatching(/^UNKNOWN_WRITE:/) });
       expect(reopened.store.call('external-write').status).toBe('unknown');
-      expect(complete).not.toHaveBeenCalled();
+      expect(complete).toHaveBeenCalledTimes(1);
+      expect(reopened.store.events(runId).filter(event => event.type === 'tool.started')).toHaveLength(0);
+      expect(() => reopened.coordinator.tools.assertWriteScope(runId, [path.join(root, 'external-effect.txt')])).toThrow('unresolved effect');
+      expect(() => reopened.coordinator.tools.assertWriteScope(runId, [path.join(root, 'unrelated.txt')])).not.toThrow();
       expect(readFileSync(path.join(root, 'external-effect.txt'), 'utf8')).toBe('already happened');
-    } finally { reopened.close(); }
+    } finally { await reopened.shutdown(); }
   });
   it('resumes from persisted tool results without redoing a successful write', async () => {
     const { app, root, runId } = fixture();
@@ -173,7 +182,7 @@ describe('conservative recovery', () => {
     const directory = app.store.directory;
     app.close();
     const reopened = new Application(directory, scripted(async request => {
-      expect(request.messages.at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'write' });
+      expect(request.messages.findLast(message => message.role === 'tool')).toMatchObject({ role: 'tool', tool_call_id: 'write' });
       return answer('recovered');
     }));
     try {

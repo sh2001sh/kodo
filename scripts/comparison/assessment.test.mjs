@@ -7,6 +7,7 @@ import { URL } from 'node:url';
 import { assessReportContent, assessReportFacts, latestReportArtifacts, reportCompletionCheck, hasCompleteTestSummary, restoreProcessOutput } from './assessment.mjs';
 import { createFixtures } from './fixtures.mjs';
 import path from 'node:path';
+import { settleHarnessExecution } from './runner-lifecycle.mjs';
 
 const scripts = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).scripts;
 const reads = ['README.md', 'package.json', 'src/runtime/history.ts', 'src/runtime/context.ts'];
@@ -15,6 +16,16 @@ const reads = ['README.md', 'package.json', 'src/runtime/history.ts', 'src/runti
 const expected = {
   A: [], B: ['recoveryIdentity'], C: ['historyOffsetBound', 'fileSearchFailures'], D: [], E: [],
 };
+
+test('cleanup failure does not replace an observed harness outcome', () => {
+  const execution = { outcome: { status: 'failed', error: 'UNKNOWN_WRITE', runId: 'run-1', calls: [{ id: 'call-1' }] }, tools: { total: 1 } };
+  assert.deepEqual(settleHarnessExecution(execution, undefined, new Error('write callback still running')), {
+    ...execution,
+    cleanupError: 'write callback still running',
+  });
+  assert.throws(() => settleHarnessExecution(undefined, new Error('construction failed'), new Error('cleanup failed')), /construction failed/);
+  assert.throws(() => settleHarnessExecution(undefined, undefined, new Error('cleanup failed')), /cleanup failed/);
+});
 for (const [label, failures] of Object.entries(expected)) test(`real report ${label}: structure and operational facts remain separate`, async () => {
   const text = await readFile(new URL(`./testdata/reports/${label}.md`, import.meta.url), 'utf8');
   const result = assessReportContent({ text, reads, scripts });

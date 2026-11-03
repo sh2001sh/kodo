@@ -5,11 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { Application } from '../src/application/index.js';
 import { delta, mockServer, sendStream } from './http-server.js';
-import { call, calls, scripted, temp } from './helpers.js';
+import { answer, call, calls, scripted, temp } from './helpers.js';
 
 const entry = fileURLToPath(new URL('../dist/cli/index.js', import.meta.url));
 function fixtureLimits(args: string[]): string[] {
-  return [...(args.includes('--max-context-tokens') ? [] : ['--max-context-tokens', '256000']), ...(args.includes('--max-output-tokens') ? [] : ['--max-output-tokens', '8192'])];
+  // Scripted tool sequences use the explicit pre-handoff baseline; default-policy tests opt out.
+  return [...(args.includes('--max-context-tokens') ? [] : ['--max-context-tokens', '256000']), ...(args.includes('--max-output-tokens') ? [] : ['--max-output-tokens', '8192']), ...(args.includes('--agent-factors') ? [] : ['--agent-factors', 'A,B,C']), ...(args.includes('--tool-profile') ? [] : ['--tool-profile', 'full']), ...(args.includes('--task-protocol') ? [] : ['--task-protocol', '1'])];
 }
 function chat(args: string[], env: Record<string, string> = {}) {
   args = [...args, ...fixtureLimits(args)];
@@ -44,6 +45,22 @@ async function cli(args: string[], env: Record<string, string> = {}, declareFixt
   });
 }
 describe('built CLI end to end', () => {
+  it.each([undefined, 'A,B,C'])('persists default or explicitly selected role factors (%s)', async factors => {
+    const root = temp();
+    const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'Configuration recorded.' }), delta({}, 'stop')]));
+    const data = path.join(root, 'state');
+    const result = await cli(['run', 'Record the selected configuration.', '--json', '--workspace', root, '--data-dir', data,
+      '--model', 'test', '--base-url', url, '--max-context-tokens', '256000', '--max-output-tokens', '8192',
+      ...(factors === undefined ? [] : ['--agent-factors', factors])], { KODO_API_KEY: 'fixture' }, false);
+    expect(result.code, result.err).toBe(0);
+    const app = new Application(data);
+    try {
+      const run = app.store.listRuns()[0]!;
+      expect(app.store.session(run.sessionId).agentFactors).toEqual({ A: true, B: true, C: true, D: factors === undefined, E: factors === undefined });
+      expect(app.store.session(run.sessionId)).toMatchObject({ taskProtocol: 3, toolProfile: 'compact-v2' });
+    } finally { await app.shutdown(); }
+  });
+
   it('uses catalog capabilities for a known model on a relay without budget options', async () => {
     const root = temp();
     let requests = 0;
@@ -83,6 +100,71 @@ describe('built CLI end to end', () => {
     expect(preset.code).toBe(1);
     expect(preset.err).toContain('ARGUMENTS');
   }, 15_000);
+
+  it.each(['success', 'timeout', 'changed arguments'])('enforces CLI read-only declarations without exec permission (%s)', async variant => {
+    const root = temp();
+    const args = variant === 'timeout' ? ['-e', 'process.stdout.write("started");setTimeout(()=>{},10000)'] : ['-e', 'process.stdout.write("read-only proof")'];
+    const command = { program: process.execPath, args };
+    const actual = variant === 'changed arguments' ? { ...command, args: ['-e', 'process.stdout.write("undeclared")'] } : command;
+    let requests = 0;
+    let advertised: unknown;
+    const url = await mockServer((body, response) => {
+      if (++requests === 1) {
+        advertised = body.tools;
+        sendStream(response, [delta({ tool_calls: [
+          { index: 0, id: 'read-only-plan', function: { name: 'todo_write', arguments: JSON.stringify({ expectedRevision: 0, items: [{ id: 'verify', content: 'Run the declared read-only verification command', status: 'in_progress', executor: 'main' }] }) } },
+          { index: 1, id: 'read-only', function: { name: 'process_run', arguments: JSON.stringify(actual) } },
+        ] }), delta({}, 'tool_calls')]);
+      } else sendStream(response, [delta({ content: 'Checked the actual command result.' }), delta({}, 'stop')]);
+    });
+    const data = path.join(root, 'state');
+    const result = await cli(['run', 'read-only check', '--json', '--data-dir', data, '--workspace', root, '--model', 'test', '--base-url', url,
+      '--read-only-commands', JSON.stringify([[command.program, ...command.args]]), '--tool-timeout-ms', variant === 'timeout' ? '1000' : '5000'], { KODO_API_KEY: 'fixture' });
+    expect(result.code, result.err).toBe(0);
+    expect(JSON.stringify(advertised)).toContain('process_run');
+    expect(JSON.stringify(advertised)).not.toContain('process_exec');
+    const events = result.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
+    const runId = events.at(-1)!.runId as string;
+    const app = new Application(data);
+    try {
+      const run = app.store.run(runId);
+      expect(app.store.session(run.sessionId).permissions).toEqual(['read']);
+      expect(app.store.unresolvedWrites()).toEqual([]);
+      expect(app.store.calls(runId).find(call => call.name === 'todo.write')).toMatchObject({ status: 'succeeded', effect: 'read' });
+      const operation = app.store.calls(runId).find(call => call.name === 'process.run');
+      if (variant === 'changed arguments') {
+        expect(operation).toMatchObject({ effect: 'read', status: 'failed', effectState: 'not_started' });
+        expect(app.store.readBlob(operation!.resultRef!)).toMatchObject({ error: expect.stringContaining('TOOL_DENIED') });
+      } else {
+        expect(operation).toMatchObject({ effect: 'read', status: variant === 'timeout' ? 'failed' : 'succeeded' });
+        if (variant === 'success') expect(app.store.readBlob(operation!.resultRef!)).toMatchObject({ stdout: 'read-only proof', exitCode: 0 });
+        else expect(app.store.readBlob(operation!.resultRef!)).toMatchObject({ stdout: 'started', timedOut: true, cancelled: true });
+      }
+    } finally { await app.shutdown(); }
+    expect(requests).toBe(2);
+  });
+
+  it('rejects malformed or misplaced read-only command declarations', async () => {
+    for (const value of ['invalid json', '{}', '[[]]', '[["node",3]]', '[["", "--version"]]']) {
+      const result = await cli(['run', 'task', '--model', 'test', '--data-dir', temp(), '--read-only-commands', value], { KODO_API_KEY: 'fixture' });
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('ARGUMENTS');
+    }
+    expect((await cli(['inspect', 'id', '--read-only-commands', '[]', '--data-dir', temp()])).err).toContain('ARGUMENTS');
+  });
+
+  it('prints unverified relay limits in terminal startup as well as JSON mode', async () => {
+    const root = temp();
+    const url = await mockServer((_body, response, request) => {
+      if (request.method === 'GET') response.writeHead(404).end();
+      else sendStream(response, [delta({ content: 'done' }), delta({}, 'stop')]);
+    });
+    const result = await cli(['run', 'task', '--workspace', root, '--data-dir', path.join(root, 'state'), '--model', 'glm-5.3', '--base-url', url], { KODO_API_KEY: 'fixture' }, false);
+    expect(result.code, result.err).toBe(0);
+    expect(result.err).toContain('1000000');
+    expect(result.err).toContain('A relay may impose smaller limits');
+    expect(result.err).toContain('费用随实际用量增长');
+  });
 
   it('discovers and persists an unknown relay model window without manual limits', async () => {
     const root = temp();
@@ -129,12 +211,19 @@ describe('built CLI end to end', () => {
     const root = temp();
     const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'candidate' }), delta({}, 'stop')]));
     const argv = JSON.stringify([process.execPath, '-e', `console.log('verification evidence'); process.exit(${exitCode})`]);
-    const result = await cli(['run', 'task', '--json', '--data-dir', root, '--workspace', root, '--model', 'test', '--base-url', url, '--verify-command', argv], { KODO_API_KEY: 'fixture' });
+    const result = await cli(['run', 'task', '--json', '--data-dir', root, '--workspace', root, '--model', 'test', '--base-url', url,
+      '--max-context-tokens', '256000', '--max-output-tokens', '8192', '--verify-command', argv], { KODO_API_KEY: 'fixture' }, false);
     const events = result.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
     expect(events.some(event => event.type === 'completion.checked' && event.data.passed === (exitCode === 0))).toBe(true);
     expect(result.code).toBe(exitCode);
-    if (exitCode === 0) expect(events.at(-1)).toMatchObject({ type: 'run.completed', data: { result: { quality: { status: 'passed' } } } });
-    else expect(events.at(-1)).toMatchObject({ type: 'run.failed' });
+    if (exitCode === 0) expect(events.findLast(event => event.type === 'run.completed')).toMatchObject({ data: { result: { quality: { status: 'passed' } } } });
+    else expect(events.findLast(event => event.type === 'run.failed')).toBeDefined();
+    expect(events.at(-1)).toMatchObject({ type: 'session.ended', data: { status: exitCode === 0 ? 'completed' : 'failed' } });
+    const app = new Application(root);
+    try {
+      const run = app.store.listRuns()[0]!;
+      expect(app.store.session(run.sessionId).agentFactors).toMatchObject({ D: true, E: true });
+    } finally { await app.shutdown(); }
   });
 
   it('combines successful command verification with required final text', async () => {
@@ -148,7 +237,8 @@ describe('built CLI end to end', () => {
     expect(readFileSync(path.join(root, 'checks.txt'), 'utf8')).toBe('check\ncheck\n');
     const events = result.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
     expect(events.find(e => e.type === 'completion.checked')).toMatchObject({ data: { passed: false, deliveryPassed: false, qualityPassed: true } });
-    expect(events.at(-1)).toMatchObject({ type: 'run.completed', data: { result: { text: 'Implemented and checked.', quality: { status: 'passed' } } } });
+    expect(events.findLast(event => event.type === 'run.completed')).toMatchObject({ data: { result: { text: 'Implemented and checked.', quality: { status: 'passed' } } } });
+    expect(events.at(-1)).toMatchObject({ type: 'session.ended', data: { status: 'completed' } });
   });
 
   it('accepts explicitly silent CLI delivery without claiming quality acceptance', async () => {
@@ -157,7 +247,8 @@ describe('built CLI end to end', () => {
     const result = await cli(['run', 'silent task', '--allow-empty-response', '--json', '--data-dir', root, '--workspace', root, '--model', 'test', '--base-url', url], { KODO_API_KEY: 'fixture' });
     expect(result.code, result.err).toBe(0);
     const events = result.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
-    expect(events.at(-1)).toMatchObject({ type: 'run.completed', data: { result: { text: '', delivery: { status: 'not_required' }, quality: { status: 'not_checked' } } } });
+    expect(events.findLast(event => event.type === 'run.completed')).toMatchObject({ data: { result: { text: '', delivery: { status: 'not_required' }, quality: { status: 'not_checked' } } } });
+    expect(events.at(-1)).toMatchObject({ type: 'session.ended', data: { status: 'completed' } });
   });
 
   it('filters model terminal controls and clearly labels unchecked completions', async () => {
@@ -168,6 +259,7 @@ describe('built CLI end to end', () => {
     expect(result.out + result.err).not.toContain('\u001b');
     expect(result.out).toContain('verified');
     expect(result.err).toContain('未被验收');
+    expect(result.err).toContain('费用随实际用量增长');
   });
 
   it('shows version and storage diagnostics from the built entry', async () => {
@@ -196,10 +288,30 @@ describe('built CLI end to end', () => {
     expect(result.code).toBe(1);
     expect(result.err).toContain('BUDGET');
   }, 15_000);
+  it('accepts active and cumulative child limits as separate CLI budgets', async () => {
+    const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'done' }), delta({}, 'stop')]));
+    for (const cumulative of ['none', '3']) {
+      const root = temp();
+      const result = await cli(['run', 'task', '--json', '--model', 'test', '--base-url', url, '--workspace', root, '--data-dir', root,
+        '--max-active-children', '2', '--max-children', cumulative, '--max-concurrent-models', '1'], { KODO_API_KEY: 'fixture' });
+      expect(result.code, result.err).toBe(0);
+      const info = JSON.parse(result.out.trim().split(/\r?\n/)[0]!);
+      expect(info).toMatchObject({ type: 'budget.info', data: { limits: { maxActiveChildren: 2, maxChildren: cumulative === 'none' ? null : 3, maxConcurrentModels: 1 } } });
+    }
+    for (const value of ['0', '1.5', 'none']) {
+      const result = await cli(['run', 'task', '--model', 'test', '--max-active-children', value, '--data-dir', temp()], { KODO_API_KEY: 'fixture' });
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('BUDGET');
+    }
+    const misplaced = await cli(['inspect', 'missing', '--max-active-children', '2', '--data-dir', temp()]);
+    expect(misplaced.code).toBe(1);
+    expect(misplaced.err).toContain('ARGUMENTS');
+  }, 20_000);
   it('validates the token window and opt-in cache policy before making requests', async () => {
     const invalid = [
       { args: ['--max-context-tokens', '4096', '--max-output-tokens', '4096'], error: 'BUDGET' },
       { args: ['--max-context-tokens', '0'], error: 'BUDGET' },
+      { args: ['--max-context-tokens', '1'], error: 'BUDGET' },
       { args: ['--prompt-cache', 'automatic'], error: 'MODEL_CACHE' },
     ];
     for (const item of invalid) {
@@ -234,7 +346,7 @@ describe('built CLI end to end', () => {
     const root = temp();
     const data = path.join(root, 'state');
     const first = await cli(['run', '报告', '--json', '--data-dir', data, '--workspace', root, '--model', 'test', '--base-url', url, '--max-tokens', '200000'], { KODO_API_KEY: 'fixture' });
-    expect(first.code).toBe(2);
+    expect(first.code, first.err || first.out).toBe(2);
     const required = JSON.parse(first.out.trim().split(/\r?\n/).at(-1)!) as { type: string; runId: string; questions: { id: string; content: string }[] };
     expect(required.type).toBe('input.required');
     expect(required.questions[0]!.content).toBe('请选择报告语言');
@@ -243,7 +355,9 @@ describe('built CLI end to end', () => {
     expect(JSON.parse(queued.out.trim().split(/\r?\n/).at(-1)!)).toMatchObject({ type: 'input.required', questions: [{ id: required.questions[0]!.id }] });
     const resumed = await cli(['answer', required.questions[0]!.id, '--text', '中文', '--json', '--data-dir', data], { KODO_API_KEY: 'fixture' });
     expect(resumed.code).toBe(0);
-    expect(JSON.parse(resumed.out.trim().split(/\r?\n/).at(-1)!)).toMatchObject({ type: 'run.completed', runId: required.runId, data: { result: { text: '中文报告已完成' } } });
+    const resumedEvents = resumed.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
+    expect(resumedEvents.findLast(event => event.type === 'run.completed')).toMatchObject({ runId: required.runId, data: { result: { text: '中文报告已完成' } } });
+    expect(resumedEvents.at(-1)).toMatchObject({ type: 'session.ended', runId: required.runId, data: { status: 'completed' } });
     expect(requests).toBe(2);
   });
   it('accepts Chinese multiline paste and answers a live question', async () => {
@@ -341,7 +455,8 @@ describe('built CLI end to end', () => {
     expect(result.code).toBe(0);
     const events = result.out.trim().split(/\r?\n/).map(line => JSON.parse(line) as { type: string; runId: string; seq?: number });
     expect(events.map(x => x.type)).toContain('text.delta');
-    expect(events.at(-1)?.type).toBe('run.completed');
+    expect(events.findLast(event => event.type === 'run.completed')).toBeDefined();
+    expect(events.at(-1)?.type).toBe('session.ended');
     const durable = events.filter(x => x.seq !== undefined);
     expect(durable.map(x => x.seq)).toEqual([...durable.map(x => x.seq)].sort((a, b) => a! - b!));
     expect(result.out + result.err).not.toContain('local-fixture-key');
@@ -355,9 +470,11 @@ describe('built CLI end to end', () => {
     const root = temp();
     const result = await cli(['run', 'task', '--json', '--data-dir', path.join(root, 'state'), '--workspace', root, '--model', 'local-test', '--base-url', url], { KODO_API_KEY: 'local-fixture-key' });
     expect(result.code).toBe(1);
-    const final = JSON.parse(result.out.trim().split(/\r?\n/).at(-1)!) as { type: string; data: { error: string } };
-    expect(final.type).toBe('run.failed');
+    const events = result.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
+    const final = events.findLast(event => event.type === 'run.failed')!;
+    expect(final).toBeDefined();
     expect(final.data.error).toContain('MODEL_INCOMPLETE');
+    expect(events.at(-1)).toMatchObject({ type: 'session.ended', data: { status: 'failed' } });
   });
   it('blocks replay after a real process crash between file write and result commit', async () => {
     const root = temp();
@@ -390,7 +507,7 @@ describe('built CLI end to end', () => {
     const inspected = await cli(['inspect', runId, '--json', '--data-dir', path.join(root, 'state')]);
     expect(JSON.parse(inspected.out).calls.some((call: { status: string; kind: string }) => call.kind === 'tool' && call.status === 'unknown')).toBe(true);
     expect(readFileSync(path.join(root, 'external-effect.txt'), 'utf8')).toBe('written once');
-  });
+  }, 15_000);
   it('requires verified evidence to resume an uncertain external write and preserves its failed record', async () => {
     const url = await mockServer((body, response) => {
       expect(JSON.stringify(body.messages)).toContain('operator verified');
@@ -398,8 +515,9 @@ describe('built CLI end to end', () => {
     });
     const root = temp();
     const data = path.join(root, 'state');
-    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('effect.txt','once\\n')"] }))));
+    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('effect.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
     const run = app.createRun({ objective: 'append exactly once and report evidence', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 } });
+    await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Append the controlled effect once and verify its result', status: 'in_progress', executor: 'main' }] }, new AbortController().signal);
     const session = app.store.session(run.sessionId);
     app.store.putSession({ ...session, verificationCommand: { program: process.execPath, args: ['-e', 'console.log("recovery verification")'] } });
     app.setCompletionValidator(run.id, () => ({ passed: true }));
@@ -407,7 +525,13 @@ describe('built CLI end to end', () => {
     let uncertainCall: string;
     try {
       const execute = app.coordinator.tools.execute.bind(app.coordinator.tools);
-      app.coordinator.tools.execute = async (...args) => { await execute(...args); throw new Error('test: result persistence lost after external effect'); };
+      app.coordinator.tools.execute = async (id, name, args, signal, onEffectStart, options) => {
+        // Lose the result before the under-lock settlement commits success.
+        const uncommitted = { ...options };
+        delete uncommitted.settle;
+        await execute(id, name, args, signal, onEffectStart, uncommitted);
+        throw new Error('test: result persistence lost after external effect');
+      };
       const failed = await app.run(run.id);
       expect(failed.status).toBe('failed');
       expect(failed.error).toContain('UNKNOWN_WRITE');
@@ -426,11 +550,13 @@ describe('built CLI end to end', () => {
     expect(resolved.out).toContain(uncertainCall);
     const resumed = await cli(['resume', run.id, '--json', '--data-dir', data], { KODO_API_KEY: 'fixture' });
     expect(resumed.code, resumed.err).toBe(0);
-    const completed = JSON.parse(resumed.out.trim().split(/\r?\n/).at(-1)!) as { type: string; runId: string; data: { result: { text: string } } };
+    const resumedEvents = resumed.out.trim().split(/\r?\n/).map(line => JSON.parse(line));
+    const completed = resumedEvents.findLast(event => event.type === 'run.completed')!;
     expect(completed.type).toBe('run.completed');
     expect(completed.runId).not.toBe(run.id);
     expect(completed.data.result.text).toBe('recovered without replay');
     expect(completed).toMatchObject({ data: { result: { quality: { status: 'passed' } } } });
+    expect(resumedEvents.at(-1)).toMatchObject({ type: 'session.ended', runId: completed.runId, data: { status: 'completed' } });
     const inspected = JSON.parse((await cli(['inspect', run.id, '--json', '--data-dir', data])).out) as { run: unknown; calls: { id: string; status: string }[] };
     expect(JSON.stringify(inspected.run)).toBe(original);
     expect(inspected.calls.find(item => item.id === uncertainCall)?.status).toBe('unknown');
@@ -440,8 +566,9 @@ describe('built CLI end to end', () => {
     const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'controlled retry completed' }), delta({}, 'stop')]));
     const root = temp();
     const data = path.join(root, 'state');
-    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('retry.txt','once\\n')"] }))));
+    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('retry.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
     const run = app.createRun({ objective: 'apply controlled effect', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 } });
+    await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Apply the controlled effect only after verification or explicit retry authorization', status: 'in_progress', executor: 'main' }] }, new AbortController().signal);
     let uncertainCall: string;
     try {
       app.coordinator.tools.execute = async (_id, _name, _args, _signal, onEffectStart) => { onEffectStart?.(); throw new Error('test uncertainty after external execution begins'); };

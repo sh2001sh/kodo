@@ -7,9 +7,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Buffer } from 'node:buffer';
 import { createBudgetRelay } from './relay.mjs';
+import { estimateTextTokens } from '../../dist/runtime/context-tokens.js';
 
 const request = { model: 'fixture', stream: true, messages: [{ role: 'user', content: 'check' }], tools: [], max_tokens: 16 };
-const reserve = Buffer.byteLength(JSON.stringify({ messages: request.messages, tools: request.tools })) + 16;
+const relayFramingTokens = 256;
+const context = JSON.stringify({ messages: request.messages, tools: request.tools });
+const reserve = estimateTextTokens(context) + relayFramingTokens + 16;
 async function fixture(handler, budget = reserve + 1, options = {}) {
   const upstream = createServer(handler);
   upstream.listen(0, '127.0.0.1');
@@ -70,6 +73,43 @@ test('complex-task output allowance is actually forwarded, with the legacy defau
   }
 });
 
+test('token budget reserves estimated tokens instead of UTF-8 bytes', async () => {
+  const content = '\u4e0a\u4e0b\u6587'.repeat(2000);
+  const body = { ...request, messages: [{ role: 'user', content }] };
+  const serialized = JSON.stringify({ messages: body.messages, tools: body.tools });
+  const tokenReserve = estimateTextTokens(serialized) + relayFramingTokens + body.max_tokens;
+  assert.ok(Buffer.byteLength(serialized) + body.max_tokens > tokenReserve * 2);
+  const f = await fixture((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.end('data: {"usage":{"prompt_tokens":9000,"completion_tokens":2}}\n\ndata: [DONE]\n\n');
+  }, tokenReserve);
+  try {
+    const response = await f.send(body);
+    assert.equal(response.status, 200);
+    await response.text();
+    assert.equal(f.relay.stats.calls[0].estimatedInputTokens, tokenReserve - body.max_tokens);
+    assert.equal(f.relay.stats.calls[0].reserve, tokenReserve);
+    assert.deepEqual(f.relay.stats.rejected, []);
+  } finally { await f.close(); }
+});
+
+test('cache-read input settles at the registered percent and defaults to full charge', async () => {
+  const usage = 'data: {"usage":{"prompt_tokens":1000,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":800}}}\n\ndata: [DONE]\n\n';
+  for (const [options, expected] of [[{}, 1050], [{ cacheReadCostPercent: 10 }, 330]]) {
+    const f = await fixture((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.end(usage);
+    }, 100_000, options);
+    try {
+      const response = await f.send();
+      assert.equal(response.status, 200);
+      await response.text();
+      assert.equal(f.relay.stats.tokens, expected);
+      assert.equal(f.relay.stats.estimated, false);
+    } finally { await f.close(); }
+  }
+});
+
 test('model-maximum mode forwards the real output ceiling and accepts large requests/streams without artificial call/token caps', async () => {
   let forwarded;
   const f = await fixture(async (request, response) => {
@@ -122,4 +162,30 @@ test('unbounded provider error bodies are rejected and 429 still remains known z
     assert.equal(f.relay.stats.requests, 1);
     assert.equal(f.relay.stats.estimated, false);
   } finally { await f.close(); }
+});
+
+test('a client abort before usage is recorded as unknown and attributed to the client', async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const f = await fixture(async (_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/event-stream' });
+    response.write('data: {"choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}]}\n\n');
+    await held;
+    response.end();
+  });
+  try {
+    const controller = new globalThis.AbortController();
+    const reply = await globalThis.fetch(`${f.relay.baseURL}/chat/completions`, { method: 'POST', body: JSON.stringify(request), signal: controller.signal });
+    const reader = reply.body.getReader();
+    await reader.read();
+    controller.abort();
+    await reader.cancel().catch(() => {});
+    release();
+    await f.relay.close();
+    assert.equal(f.relay.stats.estimated, true);
+    assert.equal(f.relay.stats.unmeasured, 1);
+    assert.equal(f.relay.stats.clientAborted, 1);
+    assert.equal(f.relay.stats.calls[0].metering, 'unknown');
+    assert.equal(f.relay.stats.calls[0].error, 'CLIENT_ABORTED');
+  } finally { release(); await f.close(); }
 });

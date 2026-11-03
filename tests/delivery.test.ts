@@ -10,7 +10,7 @@ describe('delivery completion', () => {
     const blank = answer(' \n\t');
     blank.message.providerData = { protocol: 'chat-completions', reasoningContent: 'private reasoning is not a final answer' };
     const { app, runId } = fixture(scripted(blank, async request => {
-      expect(request.messages.at(-1)?.content).toContain('nonblank final response');
+      expect(request.messages.some(message => message.content?.includes('nonblank final response'))).toBe(true);
       return answer('Implemented and verified.');
     }));
     const run = await app.run(runId);
@@ -79,15 +79,16 @@ describe('delivery completion', () => {
     let childSteps = 0;
     const { app, root, runId } = fixture({ async complete(request) {
       if (request.messages.some(m => m.role === 'user' && m.content === 'Child writer')) {
-        return childSteps++ === 0 ? calls(call('file.apply_patch', { path: 'source.cjs', expectedHash: null, content: 'module.exports = ;' })) : calls(call('wait_for_events', { run_ids: [runId], timeout_ms: 300000 }));
+        return childSteps++ === 0 ? calls(call('file.apply_patch', { path: 'source.cjs', expectedHash: null, content: 'module.exports = ;' })) : answer('Child writer completed.');
       }
       return answer('candidate');
     } });
-    const child = app.store.transaction(() => app.coordinator.mailbox.execute(app.store.run(runId), 'child-writer', 'spawn_agent', { objective: 'Child writer' })) as { id: string };
     let checks = 0;
     app.setCompletionValidator(runId, async ({ signal }) => {
       if (++checks === 1) {
-        // The verifier saw the previous valid directory; the child writes before its verdict returns.
+        // A new writer appears during validation. Existing children must settle
+        // before validation starts, but concurrent host dispatch can still race.
+        const child = app.store.transaction(() => app.coordinator.mailbox.execute(app.store.run(runId), 'child-writer', 'spawn_agent', { objective: 'Child writer' })) as { id: string };
         await app.coordinator.wake(child.id);
         return { passed: true };
       }

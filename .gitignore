@@ -6,3 +6,21 @@ coverage/
 .env.*
 !.env.example
 .kodo/
+src/sandbox/windows/build/
+
+# external reference source, not part of this repository
+claude-code-main/
+
+# local agent/tool runtime state
+.helloagents/
+.playwright-cli/
+
+# local design previews and generated brand binaries
+design/
+brand/png/
+brand/*.png
+brand/*.zip
+
+# local credentials and API probe payloads
+test_api.json
+生图api.txt

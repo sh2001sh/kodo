@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { KodoError } from '../runtime/types.js';
+import { timedProviderFetch } from './transport.js';
 
 type ObjectValue = Record<string, unknown>;
 export const object = (value: unknown): value is ObjectValue => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -7,6 +8,8 @@ export const object = (value: unknown): value is ObjectValue => typeof value ===
 /** Provider bodies are used only for classification, never retained in errors or events. */
 export function providerError(value: unknown, status?: number, headers?: Headers, message?: string): KodoError {
   if (value instanceof KodoError) return value;
+  // The OpenAI SDK wraps custom-fetch connection errors; retain our safe timeout metadata.
+  if (value instanceof OpenAI.APIConnectionError && value.cause instanceof KodoError) return value.cause;
   const payload = value instanceof OpenAI.APIError ? value.error : value;
   if (value instanceof OpenAI.APIError) { status ??= value.status; headers ??= value.headers; }
   const outer = object(payload) ? payload : {};
@@ -56,12 +59,29 @@ export function usageCounter(value: unknown): number {
 
 /** Some gateways append bare JSON after SSE heartbeats; SDK parsers silently ignore those lines. */
 export const providerFetch: typeof fetch = async (input, init) => {
-  const response = await fetch(input, { ...init, redirect: 'error' });
+  const response = await timedProviderFetch(input, init);
   if (!response.ok || !response.body || !response.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) return response;
   const decoder = new TextDecoder('utf-8', { fatal: true });
   let pending = '';
+  let partialResponse = false;
+  let framedData: string[] = [];
+  const markPartial = (): void => {
+    if (!framedData.length) return;
+    try {
+      const value: unknown = JSON.parse(framedData.join('\n'));
+      if (object(value) && value.type !== 'ping' && !streamError(value, response.headers)) partialResponse = true;
+    } catch { /* The protocol parser validates framed JSON; this guard only tracks received response content. */ }
+    framedData = [];
+  };
+  const guardError = (error: unknown): unknown => {
+    if (!partialResponse) return error;
+    const failure = error instanceof KodoError ? error : providerError(error, undefined, response.headers);
+    return new KodoError(failure.code, failure.message, { ...failure.metadata, partialResponse: true, usageKnownZero: false });
+  };
   const inspect = (line: string): void => {
     const text = line.trim();
+    if (!text) { markPartial(); return; }
+    if (text.startsWith('data:')) { framedData.push(text.slice(5).trimStart()); return; }
     if (!text.startsWith('{')) return;
     let value: unknown;
     try { value = JSON.parse(text); } catch { throw new KodoError('MODEL_PROTOCOL', 'provider sent unframed invalid event JSON'); }
@@ -71,15 +91,17 @@ export const providerFetch: typeof fetch = async (input, init) => {
   };
   const guarded = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
-      pending += decoder.decode(chunk, { stream: true });
-      let newline: number;
-      while ((newline = pending.indexOf('\n')) >= 0) {
-        inspect(pending.slice(0, newline));
-        pending = pending.slice(newline + 1);
-      }
-      controller.enqueue(chunk);
+      try {
+        pending += decoder.decode(chunk, { stream: true });
+        let newline: number;
+        while ((newline = pending.indexOf('\n')) >= 0) {
+          inspect(pending.slice(0, newline));
+          pending = pending.slice(newline + 1);
+        }
+        controller.enqueue(chunk);
+      } catch (error) { throw guardError(error); }
     },
-    flush() { inspect(pending + decoder.decode()); },
+    flush() { try { inspect(pending + decoder.decode()); markPartial(); } catch (error) { throw guardError(error); } },
   }));
   return new globalThis.Response(guarded, { status: response.status, statusText: response.statusText, headers: response.headers });
 };

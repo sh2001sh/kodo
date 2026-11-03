@@ -13,6 +13,8 @@ describe('tool execution boundary', () => {
     const { app, root, runId } = fixture();
     writeFileSync(path.join(root, 'file.txt'), 'old');
     const execute = (args: Record<string, unknown>) => app.coordinator.tools.execute(runId, 'file.apply_patch', args, new AbortController().signal);
+    await expect(execute({ path: 'file.txt', expectedHash: digest('old'), content: 'unread' })).rejects.toMatchObject({ code: 'FILE_UNREAD' });
+    expect(await app.coordinator.tools.execute(runId, 'file.read', { path: 'file.txt' }, new AbortController().signal)).toMatchObject({ content: 'old', hash: digest('old') });
     await expect(execute({ path: 'file.txt', expectedHash: null, content: 'wrong' })).rejects.toThrow('changed');
     expect(readFileSync(path.join(root, 'file.txt'), 'utf8')).toBe('old');
     await execute({ path: 'file.txt', expectedHash: digest('old'), content: '新的文本' });

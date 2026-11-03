@@ -1,0 +1,15 @@
+FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git ca-certificates curl ripgrep && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/fh/bin /opt/fh/kodo /opt/fh/pi /opt/fh/opencode /opt/fh/dsh \
+ && cp /usr/local/bin/node /opt/fh/bin/node \
+ && cp -a /usr/local/lib /opt/fh/lib \
+ && ln -s ../lib/node_modules/npm/bin/npm-cli.js /opt/fh/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /opt/fh/bin/npx
+COPY package.json package-lock.json /opt/fh/kodo/
+RUN cd /opt/fh/kodo && npm ci --omit=dev --no-audit --no-fund
+COPY dist /opt/fh/kodo/dist
+RUN npm install --prefix /opt/fh/pi --no-audit --no-fund @earendil-works/pi-coding-agent@1.3.0 \
+ && npm install --prefix /opt/fh/opencode --no-audit --no-fund opencode-ai@1.19.3 \
+ && npm install --prefix /opt/fh/dsh --no-audit --no-fund @deepseek-ai/dsh@0.2.1-rc.2
+ENV PATH="/opt/fh/bin:${PATH}"
+WORKDIR /opt/fh

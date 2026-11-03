@@ -118,11 +118,16 @@ describe('input, decisions and durable lifecycle', () => {
     app.store.updateRun(runId, { status: 'running', stepCallId: modelId });
     const directory = app.store.directory;
     app.close();
-    const reopened = new Application(directory, scripted(answer('recovered')));
+    const reopened = new Application(directory, scripted(answer('Recovered dispatch; waiting for the child.'), answer('Recovered child finished.'), answer('Recovered task completed.')));
     try {
-      expect((await reopened.coordinator.resume(runId)).status).toBe('completed');
-      expect(reopened.store.listRuns().filter(x => x.parentId === runId)).toHaveLength(1);
+      expect((await reopened.coordinator.resume(runId)).status).toBe('waiting');
+      const children = reopened.store.listRuns().filter(x => x.parentId === runId);
+      expect(children).toHaveLength(1);
       expect(reopened.store.call(`${modelId}:spawn`).status).toBe('succeeded');
+      expect((await reopened.coordinator.wake(children[0]!.id)).status).toBe('completed');
+      expect((await reopened.run(runId)).status).toBe('completed');
+      expect(reopened.store.listRuns().filter(x => x.parentId === runId)).toHaveLength(1);
+      expect(reopened.store.calls(runId).filter(record => record.name === 'spawn_agent')).toHaveLength(1);
     } finally { await reopened.shutdown(); }
   });
 
@@ -147,7 +152,7 @@ describe('input, decisions and durable lifecycle', () => {
     expect(JSON.stringify(app.store.readBlob(app.store.run(child.id).contextRef))).not.toContain('PRIVATE_MAIN_ONLY_TASK_PACKET');
   });
 
-  it('keeps main response capacity when children exhaust their available call budget', async () => {
+  it('lets a child spend an explicit shared call cap; the cap is a hard host stop', async () => {
     let count = 0;
     const complete: Provider['complete'] = async request => {
       count++;
@@ -160,9 +165,8 @@ describe('input, decisions and durable lifecycle', () => {
     app.store.putSession({ ...session, budget: { ...session.budget, maxModelCalls: 3, maxTokens: 200_000 } });
     const child = internal(app, main, 'spawn_agent', { objective: 'bounded child' }) as { id: string };
     const childResult = await app.coordinator.wake(child.id);
-    expect(childResult.error).toContain('CHILD_BUDGET');
-    expect(app.store.session(main.sessionId).modelCalls).toBe(2);
-    expect((await app.run(runId)).status).toBe('completed');
+    expect(childResult.error).toContain('MODEL_BUDGET');
+    expect(app.store.session(main.sessionId).modelCalls).toBe(3);
     expect(count).toBe(3);
   });
 
@@ -176,10 +180,11 @@ describe('input, decisions and durable lifecycle', () => {
     const pending = app.coordinator.wake(child.id);
     await entered;
     app.coordinator.cancel(runId);
-    const cancelled = app.store.run(runId);
+    expect(app.store.run(runId).cancelRequested).toBe(true);
     release();
     await pending;
-    expect(app.store.run(runId)).toEqual(cancelled);
+    await app.coordinator.waitForStop(runId);
+    expect(app.store.run(runId).status).toBe('cancelled');
     expect(app.store.run(child.id).status).toBe('cancelled');
   });
   it('stops a driver holding a durable wait before closing the database', async () => {

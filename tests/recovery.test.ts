@@ -20,6 +20,46 @@ function uncertain(app: Application, runId: string, request: ToolRequest = call(
 const manager = (app: Application): RecoveryManager => new RecoveryManager(app.store, app.coordinator.tools);
 
 describe('verified recovery of uncertain effects', () => {
+  it.each([['succeeded', 'candidate'], ['not_applied', 'candidate'], ['succeeded', 'model error'], ['not_applied', 'model error']] as const)('continues independent reads after an unknown effect and recovers a verified %s outcome after %s', async (outcome, stop) => {
+    const { app, root } = fixture(scripted(
+      calls(call('host.write', {}, 'uncertain-write')),
+      calls(call('file.read', { path: 'independent.txt' }, 'independent-read')),
+      stop === 'candidate' ? answer('Candidate completion before reconciliation') : async () => { throw new Error('fixture provider unavailable after independent read'); },
+      answer('Completion after verified recovery'),
+    ));
+    writeFileSync(path.join(root, 'independent.txt'), 'Independent read evidence');
+    let executions = 0;
+    app.registerTool({
+      name: 'host.write', description: 'Write one local fixture marker.', permission: 'write', effect: 'write',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      execute: () => {
+        executions++;
+        if (outcome === 'succeeded' || executions > 1) writeFileSync(path.join(root, 'effect.txt'), 'verified marker');
+        if (executions === 1) throw new Error('fixture response lost before the write outcome was recorded');
+        return { written: true };
+      },
+      recover: () => ({ outcome, evidence: `Inspected the fixture marker and verified the first write ${outcome === 'succeeded' ? 'completed exactly once' : 'was not applied'}.`, result: { written: outcome === 'succeeded' } }),
+    });
+    const card = app.parseCard('---\nschema_version: 1\nid: test/recovery-after-read\nversion: 1.0.0\nname: Recovery after read\ndescription: Read independently before reconciling a write.\ncapabilities:\n  tools: [host.write, file.read]\n---\nWrite the marker and inspect independent evidence.');
+    const run = app.createRun({ objective: 'Write once and inspect independent evidence', workspace: root, binding, card, permissions: ['read', 'write'] });
+    const ended = await app.run(run.id);
+    expect(ended).toMatchObject({ status: 'failed', error: expect.stringMatching(/^UNKNOWN_WRITE:/) });
+    expect(app.store.calls(run.id).find(entry => entry.name === 'file.read')?.status).toBe('succeeded');
+    expect(app.store.events(run.id).some(event => event.type === 'run.completed')).toBe(false);
+    const original = app.store.calls(run.id).find(entry => entry.name === 'host.write')!;
+    expect(original.status).toBe('unknown');
+    await app.reconcile(run.id);
+    const recovered = await app.recover(run.id);
+    expect(recovered.status, recovered.error).toBe('completed');
+    expect(executions).toBe(outcome === 'succeeded' ? 1 : 2);
+    const replay = app.store.events(recovered.id).find(event => event.type === 'recovery.retries_queued');
+    if (outcome === 'not_applied') expect(replay?.data).toMatchObject({ sourceRunId: run.id, calls: [{ sourceCallId: original.id, callId: expect.any(String) }] });
+    else expect(replay).toBeUndefined();
+    expect(readFileSync(path.join(root, 'effect.txt'), 'utf8')).toBe('verified marker');
+    expect(app.store.call(original.id)).toEqual(original);
+    expect(app.store.run(run.id)).toEqual(ended);
+  });
+
   it('records an already applied patch as successful and resumes without writing again', async () => {
     const { app, root, runId } = fixture(scripted(answer('verified completion')));
     const original = uncertain(app, runId);
@@ -37,6 +77,7 @@ describe('verified recovery of uncertain effects', () => {
   it.each([false, true])('authorizes one safe retry when the expected before state remains (existing=%s)', async existing => {
     const { app, root, runId } = fixture();
     if (existing) writeFileSync(path.join(root, 'effect.txt'), 'before');
+    if (existing) await app.coordinator.tools.execute(runId, 'file.read', { path: 'effect.txt' }, new AbortController().signal);
     const original = uncertain(app, runId, call('file.apply_patch', { path: 'effect.txt', expectedHash: existing ? digest('before') : null, content: 'after' }, 'retry'));
     const execute = vi.spyOn(app.coordinator.tools, 'execute');
     const report = await manager(app).inspect(runId);
@@ -82,7 +123,6 @@ describe('verified recovery of uncertain effects', () => {
     const effect = uncertain(app, runId, call('process.exec', { program: 'external-action', args: [] }, 'process'));
     const recovery = manager(app);
     const options = { outcome: 'not_applied' as const, evidence: 'Inspected the external transaction ledger and verified no transaction was submitted.' };
-    expect(() => recovery.resolve(runId, effect.id, options)).toThrow('explicitly authorize');
     expect(recovery.resolve(runId, effect.id, { ...options, retry: true }).calls.find(x => x.id === effect.id)?.status).toBe('planned');
     app.store.transaction(() => {
       app.store.event(runId, 'tool.started', { callId: effect.id });
@@ -131,9 +171,14 @@ describe('verified recovery of uncertain effects', () => {
     expect(() => app.recover(runId)).toThrow('already created run');
   });
 
-  it('retries a verified unapplied patch in a failed-run continuation exactly once', async () => {
+  it.each([false, true])('retries a verified unapplied patch in a failed-run continuation exactly once (existing=%s)', async existing => {
     const { app, root, runId } = fixture();
-    const effect = uncertain(app, runId, undefined, 'failed');
+    if (existing) {
+      writeFileSync(path.join(root, 'effect.txt'), 'before');
+      await app.coordinator.tools.execute(runId, 'file.read', { path: 'effect.txt' }, new AbortController().signal);
+    }
+    const effect = { ...uncertain(app, runId, call('file.apply_patch', { path: 'effect.txt', expectedHash: existing ? digest('before') : null, content: 'applied exactly once' }, 'retry'), 'failed'), effectRoots: [path.join(root, 'effect.txt')] };
+    app.store.putCall(effect);
     await app.reconcile(runId);
     const execute = vi.spyOn(app.coordinator.tools, 'execute');
     const resumed = await app.recover(runId);

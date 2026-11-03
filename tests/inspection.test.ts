@@ -1,16 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { Call, Message, Run } from '../src/runtime/types.js';
 import { buildContext } from '../src/runtime/context.js';
-import { fixture } from './helpers.js';
+import { binding, fixture } from './helpers.js';
+import { Tools } from '../src/tools/index.js';
 
 describe('managed run inspection', () => {
-  function setup() {
-    const { app, runId } = fixture();
+  function setup(toolNames?: string[]) {
+    const f = fixture();
+    const { app } = f;
+    const runId = toolNames ? app.createRun({ objective: 'Inspect process evidence.', workspace: f.root, binding, card: app.parseCard(`---
+schema_version: 1
+id: test/process-inspection
+version: 1.0.0
+name: Process inspection
+description: Inspect approved process output.
+capabilities:
+  tools: ${JSON.stringify(toolNames)}
+---
+Report the captured output.
+`) }).id : f.runId;
     const invoke = (who: string, name: string, args: Record<string, unknown>) => {
       const run = app.store.run(who);
       return app.store.transaction(() => app.coordinator.mailbox.execute(run, name, name, app.coordinator.mailbox.validate(run, name, JSON.stringify(args)))) as Record<string, unknown>;
     };
-    const spawn = (args: Record<string, unknown> = {}) => invoke(runId, 'spawn_agent', { objective: 'independent evidence', ...args }).id as string;
+    const spawn = (args: Record<string, unknown> = {}) => invoke(runId, 'spawn_agent', { objective: 'independent evidence', scope: { write: [] }, ...args }).id as string;
     const evidence = (owner: string, name: string, value: unknown, extra: Partial<Call> = {}) => {
       const id = `evidence-${app.store.calls(owner).length}`;
       app.store.putCall({ id, runId: owner, step: 0, kind: 'tool', name, effect: 'read', status: 'succeeded', requestRef: app.store.blob({ arguments: 'PRIVATE INPUT' }), resultRef: app.store.blob(value), reservedTokens: 0, ...extra });
@@ -54,18 +67,22 @@ describe('managed run inspection', () => {
 
   it('inherits registered cards and explains how to correct an invalid card without creating a child', () => {
     const { app, runId, invoke, spawn } = setup();
-    expect(() => spawn({ card_id: 'invented', card_version: '1' })).toThrow(/omit both card_id and card_version/);
+    expect(() => spawn({ card_id: 'missing/agent', card_version: '1.0.0' })).toThrow(/omit both card_id and card_version/);
     expect(() => spawn({ card_id: 'invented' })).toThrow(/omit both/);
     expect(app.store.listRuns()).toHaveLength(1);
-    expect(app.store.run(spawn()).card).toEqual(app.store.run(runId).card);
+    const inherited = app.store.run(spawn()).card;
+    const parentCard = app.store.run(runId).card;
+    // Children keep the card identity and execution tools but not delegation routing.
+    expect(inherited).toMatchObject({ id: parentCard.id, version: parentCard.version, digest: parentCard.digest });
+    expect(inherited.tools).toEqual(parentCard.tools.filter(name => !name.startsWith('agent.')));
     const main = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(runId).contextRef));
     const sub = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(spawn()).contextRef));
-    expect(main).toContain('coordination cost');
-    expect(sub).not.toContain('coordination cost');
+    expect(main).toContain('Use explore for read-only investigation');
+    expect(sub).not.toContain('Use explore for read-only investigation');
     expect(invoke(runId, 'list_agents', {})).toHaveProperty('agents');
   });
 
-  it('pages complete process capture without splitting Unicode and separates execution, exit and acceptance', () => {
+  it.each(['process.exec', 'process.run'])('pages complete %s capture without splitting Unicode and separates execution, exit and acceptance', name => {
     const { app, runId, invoke, spawn, evidence } = setup();
     const session = app.store.session(app.store.run(runId).sessionId);
     app.store.putSession({ ...session, permissions: ['read', 'write', 'exec'] });
@@ -73,7 +90,7 @@ describe('managed run inspection', () => {
     const peer = spawn();
     const output = { stdout: 'x'.repeat(244) + '😀'.repeat(300), stderr: 'test failed', exitCode: 1, truncated: false, cancelled: false, outputLimitExceeded: false };
     const artifact = app.store.artifact(peer, app.store.blob({ name: 'process-output', content: JSON.stringify(output) }));
-    const proof = evidence(peer, 'process.exec', { ...output, stdout: 'preview', truncated: true, outputArtifact: { id: artifact } });
+    const proof = evidence(peer, name, { ...output, stdout: 'preview', truncated: true, outputArtifact: { id: artifact } });
     let cursor: Record<string, unknown> | null = { run_id: peer, call_id: proof, max_chars: 256 };
     let restored = '';
     while (cursor) {
@@ -87,8 +104,28 @@ describe('managed run inspection', () => {
     const split = JSON.stringify(output).indexOf('😀') + 1;
     expect(() => invoke(runId, 'inspect_run', { run_id: peer, call_id: proof, content_offset: split })).toThrowError(expect.objectContaining({ code: 'INSPECT_CURSOR' }));
     expect(() => invoke(runId, 'inspect_run', { run_id: peer, call_id: proof, content_offset: restored.length + 1 })).toThrowError(expect.objectContaining({ code: 'INSPECT_CURSOR' }));
-    app.store.updateRun(runId, { permissions: ['read'] });
+    app.store.updateRun(runId, { permissions: name === 'process.exec' ? ['read'] : [] });
     expect(() => invoke(runId, 'inspect_run', { run_id: peer, call_id: proof })).toThrowError(expect.objectContaining({ code: 'INSPECT_DENIED' }));
+  });
+
+  it('restores actual long process.run output through paginated inspection with only read permission', async () => {
+    const { app, runId, invoke, spawn, evidence } = setup(['process.run']);
+    const peer = spawn();
+    const stdout = '中文😀'.repeat(3000);
+    const command = { program: process.execPath, args: ['-e', 'process.stdout.write("中文😀".repeat(3000))'] };
+    const tools = new Tools(app.store, [command]);
+    const value = await tools.execute(peer, 'process.run', command, new AbortController().signal);
+    expect(value).toMatchObject({ truncated: true, outputArtifact: { id: expect.any(String) } });
+    const proof = evidence(peer, 'process.run', value);
+    let cursor: Record<string, unknown> | null = { run_id: peer, call_id: proof, max_chars: 1024 };
+    let restored = '';
+    while (cursor) {
+      const page = invoke(runId, 'inspect_run', cursor) as { evidence: { text: string; next: Record<string, unknown> | null } };
+      expect(page).toMatchObject({ exitCode: 0, outputComplete: true });
+      restored += page.evidence.text;
+      cursor = page.evidence.next;
+    }
+    expect(JSON.parse(restored)).toMatchObject({ stdout, stderr: '', truncated: false });
   });
 
   it('pages call indexes, redacts the bound credential, and grants recovery history only with its durable audit', () => {
@@ -112,15 +149,16 @@ describe('managed run inspection', () => {
     expect(invoke(successor.id, 'inspect_run', { run_id: peer })).toMatchObject({ runId: peer });
   });
 
-  it('keeps child evidence readable after the main context is compacted and rejects an unrelated process artifact', () => {
+  it.each(['process.exec', 'process.run'])('keeps child evidence readable after compaction and rejects an unrelated %s artifact', name => {
     const { app, runId, invoke, spawn, evidence } = setup();
     const peer = spawn();
     const proof = evidence(peer, 'file.read', { content: 'durable child proof' });
     const run = app.store.run(runId);
     const messages = app.store.readBlob<Message[]>(run.contextRef);
+    const maxChars = JSON.stringify({ messages, tools: [] }).length + 8_000;
     messages.push({ role: 'assistant', content: null, tool_calls: [{ id: 'large', name: 'file.read', arguments: '{}' }] }, { role: 'tool', tool_call_id: 'large', content: 'large historic output '.repeat(2000) });
     app.store.updateRun(runId, { contextRef: app.store.blob(messages) });
-    const built = buildContext(app.store, app.store.run(runId), 8000, []);
+    const built = buildContext(app.store, app.store.run(runId), maxChars, []);
     expect(built.archivedRef).toBeDefined();
     app.store.updateRun(runId, { contextRef: app.store.blob(built.messages) });
     app.store.event(runId, 'context.compacted', { archivedRef: built.archivedRef });
@@ -130,7 +168,7 @@ describe('managed run inspection', () => {
     app.store.updateRun(runId, { permissions: ['read', 'exec'] });
     const sibling = spawn();
     const foreignArtifact = app.store.artifact(sibling, app.store.blob({ name: 'process-output', content: '{"stdout":"unrelated"}' }));
-    const forged = evidence(peer, 'process.exec', { outputArtifact: { id: foreignArtifact } });
+    const forged = evidence(peer, name, { outputArtifact: { id: foreignArtifact } });
     expect(() => invoke(runId, 'inspect_run', { run_id: peer, call_id: forged })).toThrowError(expect.objectContaining({ code: 'INSPECT_DENIED' }));
   });
 

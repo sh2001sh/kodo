@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
+import { attachmentBody, attachmentKind } from '../src/runtime/attachments.js';
 import type { Envelope, Message, ModelResponse, Provider, Run, Wait } from '../src/runtime/types.js';
 import { answer, binding, call, calls, fixture, scripted } from './helpers.js';
 
@@ -12,7 +13,7 @@ function operation(app: Application, runId: string, name: string, args: Record<s
   });
 }
 function child(app: Application, mainId: string, objective = 'child task'): string {
-  return operation(app, mainId, 'spawn_agent', { objective }).id as string;
+  return operation(app, mainId, 'spawn_agent', { objective, permissions: ['read'] }).id as string;
 }
 function question(app: Application, from: string, to: string, id = 'question'): string {
   return operation(app, from, 'send_message', { to, kind: 'question', content: `Question ${id}`, message_id: id }).id as string;
@@ -37,7 +38,10 @@ function requestRun(app: Application, request: Parameters<Provider['complete']>[
   return app.store.run(runId);
 }
 function delivered(request: Parameters<Provider['complete']>[0]): Envelope[] {
-  return request.messages.flatMap(x => x.role === 'user' && (x.content.startsWith('Runtime-delivered message;') || x.content.startsWith('User input: ')) ? [JSON.parse(x.content.slice(x.content.indexOf(': ') + 2)) as Envelope] : []);
+  return request.messages.flatMap(message => {
+    if (['mailbox', 'task-notification'].includes(attachmentKind(message) ?? '')) return [JSON.parse(attachmentBody(message)) as Envelope];
+    return message.role === 'user' && (message.content.startsWith('Runtime-delivered message;') || message.content.startsWith('User input: ')) ? [JSON.parse(message.content.slice(message.content.indexOf(': ') + 2)) as Envelope] : [];
+  });
 }
 
 describe('collaboration through the unified loop', () => {
@@ -46,11 +50,11 @@ describe('collaboration through the unified loop', () => {
     let writerId = '';
     let reviewerId = '';
     const seenContexts: { id: string; messages: Message[] }[] = [];
-    const provider: Provider = { async complete(request) {
+    const provider: Provider = { async complete(request, signal) {
       const run = requestRun(app, request);
       seenContexts.push({ id: run.id, messages: request.messages });
       if (run.id === mainId) {
-        if (run.step === 0) return calls(call('spawn_agent', { objective: 'writer', context: 'Write with review evidence' }, 'spawn-writer'), call('spawn_agent', { objective: 'reviewer', context: 'Answer writer directly' }, 'spawn-reviewer'));
+        if (run.step === 0) return calls(call('spawn_agent', { objective: 'writer', context: 'Write with review evidence', permissions: ['read'] }, 'spawn-writer'), call('spawn_agent', { objective: 'reviewer', context: 'Answer writer directly', permissions: ['read'] }, 'spawn-reviewer'));
         if (run.step === 1) {
           const peers = app.store.listRuns().filter(x => x.parentId === mainId);
           writerId = peers.find(x => x.objective === 'writer')!.id;
@@ -63,15 +67,22 @@ describe('collaboration through the unified loop', () => {
       }
       expect(JSON.stringify(request.messages)).not.toContain('MAIN_PRIVATE_HISTORY');
       if (run.objective === 'writer') {
-        reviewerId = app.store.listRuns().find(x => x.parentId === mainId && x.objective === 'reviewer')!.id;
+        const reviewer = (): Run | undefined => app.store.listRuns().find(x => x.parentId === mainId && x.objective === 'reviewer');
+        reviewerId = (reviewer() ?? await new Promise<Run>((resolve, reject) => {
+          const off = app.store.subscribe(() => { const found = reviewer(); if (found) { off(); signal.removeEventListener('abort', abort); resolve(found); } });
+          const abort = (): void => { off(); reject(signal.reason); };
+          signal.addEventListener('abort', abort, { once: true });
+        })).id;
         if (run.step === 0) return calls(call('send_message', { to: reviewerId, kind: 'question', content: 'What is the acceptance marker?', message_id: 'acceptance' }, 'ask-reviewer'), call('wait_for_events', { question_ids: [`${run.id}:acceptance`], mode: 'all' }, 'wait-review'));
         expect(delivered(request).some(x => x.kind === 'answer' && x.content === 'VERIFIED_MARKER')).toBe(true);
         return answer('Writer used VERIFIED_MARKER');
       }
       if (run.step === 0) {
         const query = (): Envelope | undefined => app.store.messages(run.sessionId).find(x => x.to === run.id && x.kind === 'question');
-        const incoming = query() ?? await new Promise<Envelope>(resolve => {
-          const off = app.store.subscribe(() => { const found = query(); if (found) { off(); resolve(found); } });
+        const incoming = query() ?? await new Promise<Envelope>((resolve, reject) => {
+          const off = app.store.subscribe(() => { const found = query(); if (found) { off(); signal.removeEventListener('abort', abort); resolve(found); } });
+          const abort = (): void => { off(); reject(signal.reason); };
+          signal.addEventListener('abort', abort, { once: true });
         });
         return calls(call('send_message', { to: incoming.from, kind: 'answer', reply_to: incoming.id, content: 'VERIFIED_MARKER' }, 'answer-writer'));
       }
@@ -84,7 +95,7 @@ describe('collaboration through the unified loop', () => {
     const main = app.store.run(mainId);
     app.store.updateRun(mainId, { contextRef: app.store.blob([...app.store.readBlob<Message[]>(main.contextRef), { role: 'user', content: 'MAIN_PRIVATE_HISTORY' }]) });
     const result = await app.run(mainId);
-    expect(result.status).toBe('completed');
+    expect(result.status, result.error).toBe('completed');
     const messages = app.store.messages(main.sessionId);
     const directAnswer = messages.find(x => x.kind === 'answer')!;
     expect(directAnswer).toMatchObject({ from: reviewerId, to: writerId, replyTo: `${writerId}:acceptance`, content: 'VERIFIED_MARKER' });
@@ -107,8 +118,8 @@ describe('collaboration through the unified loop', () => {
     let questionId = '';
     const { app, runId } = fixture(scripted(async () => calls(call('wait_for_events', { question_ids: [questionId] }, 'wait-answer')), async request => {
       expect(delivered(request).some(x => x.kind === 'answer' && x.replyTo === questionId)).toBe(true);
-      return answer('answer received');
-    }));
+      return calls(call('cancel_agent', { run_id: peer }, 'finish-answering-peer'));
+    }, answer('answer received; the finished answering task was cancelled')));
     generous(app, runId);
     const peer = child(app, runId);
     questionId = question(app, runId, peer);
@@ -129,8 +140,8 @@ describe('collaboration through the unified loop', () => {
     let questionId = '';
     const { app, runId } = fixture(scripted(async () => calls(call('wait_for_events', { question_ids: [questionId] }, 'await-reply')), async request => {
       expect(delivered(request).some(x => x.kind === 'answer' && x.content === 'in the gap')).toBe(true);
-      return answer('race handled');
-    }));
+      return calls(call('cancel_agent', { run_id: peer }, 'finish-race-peer'));
+    }, answer('race handled; the answering task was cancelled')));
     generous(app, runId);
     const peer = child(app, runId);
     questionId = question(app, runId, peer);
@@ -213,6 +224,7 @@ describe('durable mailbox boundaries', () => {
     const second = child(app, runId);
     expect(() => operation(app, runId, 'cancel_agent', { run_id: runId })).toThrow('managed');
     expect(operation(app, runId, 'cancel_agent', { run_id: first })).toMatchObject({ id: first, status: 'cancelled' });
+    expect(app.store.events(first).find(event => event.type === 'run.cancelled')?.data).toMatchObject({ initiator: 'agent', by: runId, callId: 'cancel_agent' });
     expect(operation(app, second, 'send_message', { to: first, kind: 'notice', content: 'late data' })).toEqual({ target_status: 'cancelled', delivered: false });
   });
 
@@ -347,8 +359,8 @@ describe('wait resolution and shared execution limits', () => {
     let original = '';
     const { app, runId } = fixture(scripted(async () => calls(call('wait_for_events', { question_ids: [original], mode: 'all' }, 'await-original')), async request => {
       expect(delivered(request).some(x => x.kind === 'question' && x.content.includes('urgent'))).toBe(true);
-      return answer('Handled the new question separately');
-    }));
+      return calls(call('cancel_agent', { run_id: peer }, 'stop-unneeded-peer'));
+    }, answer('Handled the new question separately; the remaining peer task was cancelled')));
     generous(app, runId);
     const peer = child(app, runId);
     original = question(app, runId, peer, 'original');
@@ -365,8 +377,8 @@ describe('wait resolution and shared execution limits', () => {
     let peer = '';
     const { app, runId } = fixture(scripted(async () => calls(call('wait_for_events', { run_ids: [peer], timeout_ms: 50 }, 'deadline')), async request => {
       expect(delivered(request).some(x => x.kind === 'event' && x.content.includes('timeout'))).toBe(true);
-      return answer('Deadline reported');
-    }));
+      return calls(call('cancel_agent', { run_id: peer }, 'cancel-expired-peer'));
+    }, answer('Deadline reported; the timed-out task was cancelled')));
     generous(app, runId);
     peer = child(app, runId);
     expect((await app.coordinator.wake(runId)).status).toBe('waiting');
@@ -388,7 +400,8 @@ describe('wait resolution and shared execution limits', () => {
       });
       if (!run.step) return calls(call('wait_for_events', { run_ids: [peer], timeout_ms: 80 }, 'real-deadline'));
       expect(delivered(request).some(x => x.kind === 'event' && x.content.includes('timeout'))).toBe(true);
-      return answer('Main reported a deadline while peer was busy');
+      if (run.step === 1) return calls(call('cancel_agent', { run_id: peer }, 'cancel-busy-peer'));
+      return answer('Main reported the deadline and explicitly cancelled the unfinished peer');
     } });
     generous(app, runId);
     peer = child(app, runId);
@@ -396,6 +409,7 @@ describe('wait resolution and shared execution limits', () => {
     expect(app.store.waits().find(x => x.runId === runId)).toMatchObject({ reason: 'timeout', status: 'settled' });
     expect(app.store.run(peer).status).toBe('cancelled');
     expect(app.store.calls(peer).filter(x => x.kind === 'model')).toHaveLength(1);
+    expect(app.store.events(peer).find(event => event.type === 'run.cancel_requested')?.data).toMatchObject({ initiator: 'agent', by: runId });
   });
 
   it('reports an ended peer explicitly instead of waiting for an impossible answer', () => {
@@ -418,7 +432,7 @@ describe('wait resolution and shared execution limits', () => {
     expect(app.store.listRuns()).toHaveLength(2);
   });
 
-  it('limits concurrent model slots and shares model-call accounting across peers', async () => {
+  it('shares an explicit call cap first-come without a hidden main delivery reserve', async () => {
     let active = 0;
     let peak = 0;
     const complete = vi.fn(async (): Promise<ModelResponse> => {
@@ -434,10 +448,9 @@ describe('wait resolution and shared execution limits', () => {
     const b = child(app, runId);
     const results = await Promise.all([app.coordinator.wake(a), app.coordinator.wake(b)]);
     expect(peak).toBe(1);
-    expect(complete).toHaveBeenCalledTimes(1);
-    expect(results.map(x => x.status).sort()).toEqual(['completed', 'failed']);
-    expect(results.find(x => x.status === 'failed')?.error).toContain('CHILD_BUDGET');
-    expect(app.store.session(app.store.run(runId).sessionId)).toMatchObject({ modelCalls: 1, tokens: 80 });
+    expect(results.map(x => x.status)).toEqual(['completed', 'completed']);
+    expect(app.store.session(app.store.run(runId).sessionId)).toMatchObject({ modelCalls: 2, tokens: 160 });
+    expect((await app.run(runId)).error).toContain('MODEL_BUDGET');
   });
 
   it('serializes three independent peers through one model slot without losing queued work', async () => {

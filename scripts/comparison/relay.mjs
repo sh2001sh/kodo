@@ -3,10 +3,13 @@ import { once } from 'node:events';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Buffer } from 'node:buffer';
+import { estimateTextTokens } from '../../dist/runtime/context-tokens.js';
+
+const relayFramingTokens = 256;
 
 /** A loopback-only budget meter. The real credential is never passed to a harness child. */
-export async function createBudgetRelay({ directory, upstream, key, model, maxCalls = 26, maxTokens = 500000, maxContextChars = 256000, maxOutputTokens = 3072, unrestricted = false }) {
-  const stats = { requests: 0, tokens: 0, estimated: false, rejected: [], calls: [] };
+export async function createBudgetRelay({ directory, upstream, key, model, maxCalls = 26, maxTokens = 500000, maxContextChars = 256000, maxOutputTokens = 3072, unrestricted = false, cacheReadCostPercent = 100 }) {
+  const stats = { requests: 0, tokens: 0, estimated: false, unmeasured: 0, clientAborted: 0, rejected: [], calls: [] };
   const pending = new Set();
   const active = new Set();
   const server = createServer((request, response) => {
@@ -30,7 +33,8 @@ export async function createBudgetRelay({ directory, upstream, key, model, maxCa
       if (context.length > maxContextChars) return reject(400, 'CONTEXT_BUDGET');
       if (!unrestricted && stats.requests >= maxCalls) return reject(429, 'MODEL_CALL_BUDGET');
       const maxOutput = Math.min(body.max_tokens ?? body.max_completion_tokens ?? maxOutputTokens, maxOutputTokens);
-      const reserve = Buffer.byteLength(context) + maxOutput;
+      const estimatedInputTokens = estimateTextTokens(context) + relayFramingTokens;
+      const reserve = estimatedInputTokens + maxOutput;
       if (!unrestricted && stats.tokens + reserve > maxTokens) return reject(429, 'TOKEN_BUDGET');
       const requestedOutput = body.max_tokens ?? body.max_completion_tokens;
       if ('max_completion_tokens' in body) body.max_completion_tokens = maxOutput;
@@ -38,7 +42,7 @@ export async function createBudgetRelay({ directory, upstream, key, model, maxCa
       body.stream_options = { ...body.stream_options, include_usage: true };
       const index = ++stats.requests;
       stats.tokens += reserve;
-      const call = { index, contextChars: context.length, reserve, requestedOutput, outputLimit: maxOutput, startedAt: Date.now() };
+      const call = { index, contextChars: context.length, estimatedInputTokens, reserve, requestedOutput, outputLimit: maxOutput, startedAt: Date.now() };
       stats.calls.push(call);
       await writeFile(path.join(directory, `request-${index}.json`), JSON.stringify(body, null, 2), 'utf8');
       const controller = new globalThis.AbortController();
@@ -58,7 +62,9 @@ export async function createBudgetRelay({ directory, upstream, key, model, maxCa
           let item;
           try { item = JSON.parse(line.slice(5)); } catch { continue; }
           const usage = item.usage;
-          const measured = usage?.prompt_tokens + usage?.completion_tokens;
+          const cached = Number.isSafeInteger(usage?.prompt_tokens_details?.cached_tokens) ? Math.min(usage.prompt_tokens_details.cached_tokens, usage.prompt_tokens) : 0;
+          // Cache-read input settles at the host-registered percent, matching Kodo's maxTokens charging.
+          const measured = usage?.prompt_tokens - cached + Math.ceil(cached * cacheReadCostPercent / 100) + usage?.completion_tokens;
           if (Number.isSafeInteger(measured) && measured >= 0) {
             // Settle before forwarding: clients may close as soon as finish_reason arrives.
             call.usage = usage;
@@ -113,7 +119,12 @@ export async function createBudgetRelay({ directory, upstream, key, model, maxCa
         if (!response.headersSent) reject(502, call.error);
         else response.destroy();
       } finally {
-        if (!measuredUsage && !call.usageKnownZero) stats.estimated = true;
+        call.metering = measuredUsage ? 'measured' : call.usageKnownZero ? 'knownZero' : 'unknown';
+        if (call.metering === 'unknown') {
+          stats.estimated = true;
+          stats.unmeasured++;
+          if (call.error === 'CLIENT_ABORTED') stats.clientAborted++;
+        }
         active.delete(controller);
         response.removeListener('close', onClose);
         call.elapsedMs = Date.now() - call.startedAt;

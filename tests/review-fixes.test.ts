@@ -1,3 +1,4 @@
+import { storageTestConnection } from '../src/storage/test-access.js';
 import { describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -108,7 +109,7 @@ describe('review regressions', () => {
 
   it.each(['any', 'question'])('does not settle an unrelated parent %s wait on a child cycle', mode => {
     const { app, runId } = fixture();
-    const spawn = (): string => operation(app, runId, 'spawn_agent', { objective: 'independent work' }).id as string;
+    const spawn = (): string => operation(app, runId, 'spawn_agent', { objective: 'independent work', permissions: ['read'] }).id as string;
     const [a, b, healthy] = [spawn(), spawn(), spawn()] as [string, string, string];
     let args: Record<string, unknown> = { run_ids: [a, healthy], mode: 'any' };
     if (mode === 'question') {
@@ -145,10 +146,11 @@ describe('review regressions', () => {
     app.store.event(runId, 'context.compacted', { archivedRef: nested });
     const artifact = app.store.blob({ content: 'report' });
     app.store.artifact(runId, artifact);
+    app.store.gc();
     const orphan = app.store.blob({ uncommitted: true });
     const report = app.store.gc({ vacuum: true });
     expect(report.removedBlobs).toBe(1);
-    expect(existsSync(path.join(app.store.directory, 'blobs', `${orphan}.json`))).toBe(false);
+    expect(app.store.hasBlob(orphan)).toBe(false);
     expect(app.store.readBlob(leaf)).toEqual({ text: 'verbatim evidence' });
     expect(app.store.readBlob(artifact)).toEqual({ content: 'report' });
     app.store.updateRun(runId, { status: 'running' });
@@ -163,7 +165,7 @@ describe('review regressions', () => {
     app.store.putSession({ ...session, createdAt: '2020-01-01T00:00:00Z' });
     app.store.updateRun(runId, { status: 'completed' });
     expect(app.store.gc({ olderThanDays: 1 }).removedSessions).toBe(0);
-    app.store.db.prepare('UPDATE events SET time=?').run('2020-01-01T00:00:00Z');
+    storageTestConnection(app.store).prepare('UPDATE events SET time=?').run('2020-01-01T00:00:00Z');
     const requestRef = app.store.blob({ unknown: true });
     app.store.putCall({ id: 'legacy-unknown', runId, step: 0, kind: 'tool', name: 'process.exec', status: 'unknown', effect: 'write', requestRef, reservedTokens: 0 });
     expect(app.store.gc({ olderThanDays: 1 }).removedSessions).toBe(0);

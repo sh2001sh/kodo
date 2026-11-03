@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 128" role="img" aria-labelledby="title" color="#EAECEF"><title id="title">Kodo</title><g fill="currentColor" transform="translate(8 8)"><path d="M0 15H49C34 26 5 40 5 51C5 62 23 65 39 81C24 78 11 91 0 101Z" />
+  <path d="M33 63C26 46 38 35 58 23C79 10 95 1 119 0C115 22 99 36 79 47C62 56 46 61 33 63Z" />
+  <path d="M33 63C68 62 96 79 128 109C104 110 85 110 69 99C54 88 44 75 33 63Z" />
+</g><g fill="none" stroke="currentColor" stroke-width="5.5" stroke-linejoin="round" transform="translate(190 30)"><path d="M3 2V66M4 41L66 2M26 27L68 66" />
+  <path d="M117 20C94 20 85 27 85 43C85 60 94 66 117 66C140 66 149 60 149 43C149 27 140 20 117 20Z" />
+  <path d="M228 2V66M228 43C228 27 219 20 196 20C173 20 164 27 164 43C164 60 173 66 196 66C219 66 228 60 228 43Z" />
+  <path d="M278 20C255 20 246 27 246 43C246 60 255 66 278 66C301 66 310 60 310 43C310 27 301 20 278 20Z" />
+</g></svg>

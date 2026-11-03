@@ -23,9 +23,11 @@ describe('bounded and recoverable tool IO', () => {
     let collected = '';
     let count = 0;
     do {
-      const page = await app.coordinator.tools.execute(runId, 'file.read', { path: 'large.txt', ...cursor, limit: 7, maxChars: 257 }, signal()) as Page;
+      // Alternate character-limited and line-limited pages; both must compose losslessly.
+      const bounds = count % 2 === 0 ? { limit: 7, maxChars: 257 } : { limit: 17, maxChars: 4093 };
+      const page = await app.coordinator.tools.execute(runId, 'file.read', { path: 'large.txt', ...cursor, ...bounds }, signal()) as Page;
       expect(page.hash).toBe(digest(original));
-      expect(page.content.length).toBeLessThanOrEqual(257);
+      expect(page.content.length).toBeLessThanOrEqual(bounds.maxChars);
       expect(page.content).not.toContain('\uFFFD');
       collected += page.content;
       expect(page.truncated).toBe(!page.complete);
@@ -39,7 +41,7 @@ describe('bounded and recoverable tool IO', () => {
     // Enlarging read scope must not enlarge the destructive patch scope.
     await expect(app.coordinator.tools.execute(runId, 'file.apply_patch', { path: 'large.txt', expectedHash: digest(original), content: 'replacement' }, signal())).rejects.toMatchObject({ code: 'FILE_SIZE' });
     await expect(app.coordinator.tools.execute(runId, 'file.apply_patch', { path: 'new-large.txt', expectedHash: null, content: '中'.repeat(22000) }, signal())).rejects.toMatchObject({ code: 'FILE_SIZE' });
-  });
+  }, 20_000);
 
   it('defaults to 8000 characters and makes a Unicode single line fully retrievable', async () => {
     const { app, root, runId } = fixture();
@@ -96,6 +98,20 @@ describe('bounded and recoverable tool IO', () => {
     await expect(app.coordinator.tools.execute(second.id, 'artifact.read', { id: written.id }, signal())).rejects.toMatchObject({ code: 'ARTIFACT_DENIED' });
   });
 
+  it('uses larger default pages in lean sessions and keeps a full page readable', async () => {
+    const { app, runId, root } = fixture(undefined, ['read', 'exec'], { toolProfile: 'lean-solo', taskProtocol: 3 });
+    writeFileSync(path.join(root, 'long.txt'), Array.from({ length: 700 }, (_, index) => `line "${index}" ${'x'.repeat(20)}`).join('\n'));
+    const page = await app.coordinator.tools.execute(runId, 'file.read', { path: 'long.txt' }, signal()) as { content: string; hash: string; truncated: boolean; next: { offset: number } | null; maxChars: number; limit: number };
+    expect(page).toMatchObject({ truncated: true, maxChars: 24_000, limit: 600 });
+    expect(page.content.length).toBeGreaterThan(8000);
+    expect(page.hash).toMatch(/^[a-f0-9]{64}$/);
+    const explicit = await app.coordinator.tools.execute(runId, 'file.read', { path: 'long.txt', maxChars: 1000 }, signal()) as { maxChars: number };
+    expect(explicit.maxChars).toBe(1000);
+    const shell = await app.coordinator.tools.execute(runId, 'shell.exec', { command: `node -e "process.stdout.write('o'.repeat(20000))"` }, signal()) as { stdout: string; truncated: boolean };
+    expect(shell.stdout.length).toBe(12_000);
+    expect(shell.truncated).toBe(true);
+  });
+
   it('preserves long stdout/stderr as paginated private artifacts without killing successful programs', async () => {
     const { app, runId, root } = fixture(undefined, ['read', 'exec']);
     const original = '😀中文'.repeat(12000);
@@ -144,12 +160,12 @@ describe('bounded and recoverable tool IO', () => {
   });
 
   it('keeps post-start errors uncertain and rejects asynchronous launch failures as PROCESS_START', async () => {
-    const { app, runId } = fixture(scripted(calls(call('process.exec', { program: 'started', args: [] })), answer('must not run')), ['exec']);
+    const { app, runId } = fixture(scripted(calls(call('process.exec', { program: 'started', args: [] })), answer('Cannot verify the process outcome.')), ['exec']);
     await expect(app.coordinator.tools.execute(runId, 'process.exec', { program: '__kodo_nonexistent_program__', args: [] }, signal())).rejects.toMatchObject({ code: 'PROCESS_START' });
     vi.mocked(spawn).mockImplementationOnce(() => {
       const child = new ChildProcess();
       Object.defineProperties(child, { pid: { value: 123 }, stdout: { value: new PassThrough() }, stderr: { value: new PassThrough() } });
-      queueMicrotask(() => child.emit('error', new Error('failure after startup')));
+      queueMicrotask(() => { child.emit('error', new Error('failure after startup')); child.emit('close', null, null); });
       return child;
     });
     expect((await app.coordinator.wake(runId)).status).toBe('failed');

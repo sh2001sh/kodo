@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "license": "MIT",
+  "source": { "url": "https://github.com/sh2001sh/kodo/tree/main/examples/capability-package" },
+  "files": [
+    { "path": "AGENT.md", "distributable": true },
+    { "path": "LICENSE", "distributable": true },
+    { "path": "skills/text-statistics/SKILL.md", "distributable": true },
+    { "path": "tools/text-stats.json", "distributable": true },
+    { "path": "tools/text-stats.mjs", "distributable": true }
+  ],
+  "resources": {
+    "skills": [{ "id": "example/text-statistics", "entry": "skills/text-statistics/SKILL.md" }],
+    "tools": [{ "name": "text.stats", "descriptor": "tools/text-stats.json", "entry": "tools/text-stats.mjs" }]
+  },
+  "requirements": { "node": ">=24 <25", "platforms": ["win32", "linux", "darwin"] },
+  "examples": [
+    {
+      "name": "empty input",
+      "input": "{\"tool\":\"text.stats\",\"arguments\":{\"text\":\"\"}}",
+      "expected": "{\"codePoints\":0,\"utf8Bytes\":0,\"whitespaceWords\":0,\"lines\":0}"
+    },
+    {
+      "name": "ASCII multiline",
+      "input": "{\"tool\":\"text.stats\",\"arguments\":{\"text\":\"alpha beta\\nalpha\"}}",
+      "expected": "{\"codePoints\":16,\"utf8Bytes\":16,\"whitespaceWords\":3,\"lines\":2}"
+    },
+    {
+      "name": "Unicode and terminal CRLF",
+      "input": "{\"tool\":\"text.stats\",\"arguments\":{\"text\":\"你好 world 👋\\r\\n\"}}",
+      "expected": "{\"codePoints\":12,\"utf8Bytes\":19,\"whitespaceWords\":3,\"lines\":2}"
+    }
+  ]
+}

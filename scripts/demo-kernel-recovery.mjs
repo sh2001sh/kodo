@@ -26,27 +26,25 @@ const snapshot = id => ({ ...app.snapshot(id), calls: app.store.calls(id) });
 function contextProvider() {
   let step = 0;
   let readingOriginal = false;
+  let firstArchive;
   return { async complete(request, signal) {
     signal.throwIfAborted();
+    const marker = request.messages.find(message => message.role === 'user' && message.content.startsWith('Context archive ('));
+    if (marker && !firstArchive) firstArchive = JSON.parse(marker.content.slice(marker.content.indexOf(': ') + 2)).ref;
     if (step < 9) return call('file.read', { path: `context-${step++}.txt` });
     const result = request.messages.findLast(message => message.role === 'tool');
     if (readingOriginal) {
       const original = JSON.parse(result.content);
-      const identifier = JSON.stringify(original.messages).match(/original-evidence-[a-f0-9-]{36}/)?.[0];
-      expect(identifier, 'verbatim history did not return the original random identifier');
+      expect(!original.preview, 'history page was compacted before use; request a smaller page');
+      const identifier = JSON.stringify({ messages: original.messages, fragments: original.fragments }).match(/original-evidence-[a-f0-9-]{36}/)?.[0];
+      if (!identifier && original.next) return call('history.read', { ...original.next, limit: 100, maxChars: 1200 });
+      expect(identifier, 'paged verbatim history did not return the original random identifier');
       return answer(`Recovered original evidence from durable history: ${identifier}`);
     }
-    const page = result && JSON.parse(result.content);
-    if (page?.ref && Array.isArray(page.messages)) {
-      if (page.previousRef) return call('history.read', { ref: page.previousRef, offset: 0, limit: 1 });
-      readingOriginal = true;
-      return call('history.read', { ref: page.ref, offset: 5, limit: 1 });
-    }
-    const marker = request.messages.find(message => message.role === 'user' && message.content.startsWith('Context archive ('));
-    expect(marker, 'long context was not compacted');
-    const archive = JSON.parse(marker.content.slice(marker.content.indexOf(': ') + 2));
+    expect(firstArchive, 'long context was not compacted');
     expect(!JSON.stringify(request.messages).includes('original-evidence-'), 'the original evidence was still live instead of retrieved from history');
-    return call('history.read', { ref: archive.ref, offset: 0, limit: 1 });
+    readingOriginal = true;
+    return call('history.read', { ref: firstArchive, offset: 0, limit: 100, maxChars: 1200 });
   } };
 }
 
@@ -66,8 +64,15 @@ capabilities:
 ---
 Read the evidence files, then retrieve the original identifier through history.read after compaction.
 `);
-  app = new Application(dataDir, contextProvider());
-  const contextRun = app.createRun({ objective: 'Read nine evidence files and retrieve the original evidence from compacted history.', workspace, binding, card, budget: { maxTokens: 300_000, maxContextChars: 16_000, maxModelCalls: 30 } });
+  // This stage exercises deterministic archive retrieval; it does not script a summary model.
+  app = new Application(dataDir, contextProvider(), undefined, { compaction: false, agentFactors: { D: false, E: false } });
+  const contextRun = app.createRun({ objective: 'Read nine evidence files and retrieve the original evidence from compacted history.', workspace, binding, card, budget: { maxTokens: 300_000, maxModelCalls: 30 } });
+  const contextSession = app.store.session(contextRun.sessionId);
+  const tools = [...app.coordinator.tools.specs(card.tools, contextSession), ...app.coordinator.mailbox.specs(contextRun)];
+  // Size the window from actual fixed rules and schemas, leaving bounded room for
+  // the environment/state and evidence. Nine file results still force archival.
+  const fixedChars = JSON.stringify({ messages: app.store.readBlob(contextRun.contextRef), tools }).length;
+  app.store.putSession({ ...contextSession, budget: { ...contextSession.budget, maxContextChars: fixedChars + 13_000 } });
   const contextResult = await app.run(contextRun.id);
   expect(contextResult.status === 'completed', `context demonstration failed: ${contextResult.status}:${contextResult.error ?? ''}`);
   const compactions = app.store.events(contextRun.id).filter(event => event.type === 'context.compacted');
@@ -82,12 +87,20 @@ Read the evidence files, then retrieve the original identifier through history.r
   let modelCalls = 0;
   app = new Application(dataDir, { async complete(request) {
     if (modelCalls++ === 0) return call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('external-effect.txt','once\\n')"] });
+    if (modelCalls === 2) return answer('The external effect needs independent verification before completion.');
     expect(JSON.stringify(request.messages).includes('Verified external-effect.txt'), 'continuation did not receive verified recovery evidence');
     return answer('External effect verified; completed without replay.');
-  } });
+  } }, undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { B: false, D: false, E: false } });
   const external = app.createRun({ objective: 'Apply one external effect and report.', workspace, binding, permissions: ['read', 'exec'], budget: { maxTokens: 200_000 } });
   const execute = app.coordinator.tools.execute.bind(app.coordinator.tools);
-  app.coordinator.tools.execute = async (...args) => { const result = await execute(...args); if (args[1] === 'process.exec') throw new Error('demo fault injection: effect occurred but result recording failed'); return result; };
+  app.coordinator.tools.execute = async (...args) => {
+    // Preserve effect-start evidence while withholding the normal result commit.
+    const uncommitted = { ...args[5] };
+    delete uncommitted.settle;
+    const result = await execute(...args.slice(0, 5), uncommitted);
+    if (args[1] === 'process.exec') throw new Error('demo fault injection: effect occurred but result recording failed');
+    return result;
+  };
   const failed = await app.run(external.id);
   expect(failed.status === 'failed' && failed.error.startsWith('UNKNOWN_WRITE:'), 'unknown effect did not block execution');
   const originalRun = JSON.stringify(app.store.run(external.id));
@@ -104,6 +117,7 @@ Read the evidence files, then retrieve the original identifier through history.r
   const resolution = app.resolveCall(external.id, unknown.id, { outcome: 'succeeded', evidence: 'Verified external-effect.txt with an independent filesystem read; it contains exactly one once line.' });
   const continued = await app.recover(external.id);
   expect(continued.status === 'completed' && continued.continuationOf === external.id && continued.id !== external.id, 'failed source did not produce a recovery continuation');
+  expect(app.store.readBlob(continued.resultRef).text === 'External effect verified; completed without replay.', 'recovery did not produce a final response from the verified evidence');
   expect(JSON.stringify(app.store.run(external.id)) === originalRun && JSON.stringify(app.store.calls(external.id)) === originalCalls, 'original terminal execution records were mutated');
   expect(await readFile(path.join(workspace, 'external-effect.txt'), 'utf8') === 'once\n', 'uncertain external effect was replayed');
   evidence.external = { blocked, resolution, original: snapshot(external.id), continuation: snapshot(continued.id) };
@@ -113,10 +127,20 @@ Read the evidence files, then retrieve the original identifier through history.r
   stage = 'automatic file hash reconciliation';
   let patchModels = 0;
   let patchExecutions = 0;
-  app = new Application(dataDir, { async complete() { return patchModels++ === 0 ? call('file.apply_patch', { path: 'patch-effect.txt', expectedHash: null, content: 'verified patch effect' }) : answer('Patch hash verified; completed without replay.'); } });
+  app = new Application(dataDir, { async complete() {
+    if (patchModels++ === 0) return call('file.apply_patch', { path: 'patch-effect.txt', expectedHash: null, content: 'verified patch effect' });
+    if (patchModels === 2) return answer('The native file effect needs hash verification before completion.');
+    return answer('Patch hash verified; completed without replay.');
+  } }, undefined, { agentFactors: { B: false, D: false, E: false } });
   const patch = app.createRun({ objective: 'Create one patch and report.', workspace, binding, permissions: ['read', 'write'], budget: { maxTokens: 200_000 } });
   const patchExecute = app.coordinator.tools.execute.bind(app.coordinator.tools);
-  app.coordinator.tools.execute = async (...args) => { const result = await patchExecute(...args); if (args[1] === 'file.apply_patch') { patchExecutions++; throw new Error('demo fault injection after atomic patch'); } return result; };
+  app.coordinator.tools.execute = async (...args) => {
+    const uncommitted = { ...args[5] };
+    delete uncommitted.settle;
+    const result = await patchExecute(...args.slice(0, 5), uncommitted);
+    if (args[1] === 'file.apply_patch') { patchExecutions++; throw new Error('demo fault injection after atomic patch'); }
+    return result;
+  };
   const patchFailed = await app.run(patch.id);
   expect(patchFailed.status === 'failed' && patchFailed.error.startsWith('UNKNOWN_WRITE:'), 'patch fault did not yield an unknown effect');
   const patchOriginal = JSON.stringify(app.store.run(patch.id));
@@ -124,6 +148,7 @@ Read the evidence files, then retrieve the original identifier through history.r
   expect(reconciled.blocked.length === 0 && reconciled.resolutions.some(item => item.source === 'probe' && item.outcome === 'succeeded' && item.evidence.includes('SHA-256')), 'file patch was not verified by hash');
   const patchContinued = await app.recover(patch.id);
   expect(patchContinued.status === 'completed' && patchExecutions === 1, 'verified file patch was replayed');
+  expect(app.store.readBlob(patchContinued.resultRef).text === 'Patch hash verified; completed without replay.', 'patch recovery reused an unverified final response');
   expect(JSON.stringify(app.store.run(patch.id)) === patchOriginal, 'original failed patch run was reopened');
   evidence.patch = { reconciled, original: snapshot(patch.id), continuation: snapshot(patchContinued.id) };
   console.log('PASS file recovery: observed before/after SHA-256, automatic reconciliation, and no patch replay');

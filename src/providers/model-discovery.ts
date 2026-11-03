@@ -1,7 +1,8 @@
 import { KodoError } from '../runtime/types.js';
 import type { Budget, ModelBinding, ModelLimits, ResolvedModelLimits } from '../runtime/types.js';
 import { object } from './errors.js';
-import { resolveModelLimits, validateModelBinding } from './model-limits.js';
+import { modelApiBaseURL, resolveModelLimits, validateModelBinding } from './model-limits.js';
+import { abortable } from '../runtime/step-host.js';
 
 const responseLimit = 8 * 1024 * 1024;
 const positive = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -32,7 +33,7 @@ function selectedModel(body: unknown, model: string): Record<string, unknown> | 
 async function readMetadata(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<unknown> {
   const response = await fetch(url, { headers, signal, redirect: 'error' });
   if (!response.ok) {
-    await response.body?.cancel();
+    void response.body?.cancel().catch(() => undefined);
     throw new KodoError('MODEL_METADATA', `metadata HTTP ${response.status}`);
   }
   if (!response.body) throw new KodoError('MODEL_METADATA', 'metadata response is empty');
@@ -41,14 +42,18 @@ async function readMetadata(url: string, headers: Record<string, string>, signal
   let size = 0;
   try {
     for (;;) {
-      const next = await reader.read();
+      const next = await abortable(() => reader.read(), signal);
       if (next.done) break;
       size += next.value.byteLength;
       if (size > responseLimit) throw new KodoError('MODEL_METADATA', 'metadata response exceeds 8 MiB');
       chunks.push(next.value);
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
-  } finally { await reader.cancel(); reader.releaseLock(); }
+  } finally {
+    // Cleanup must not extend the discovery deadline when the body is stalled.
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
 }
 
 /** Read-only, bounded discovery; never generate paid probe completions or follow redirects. */
@@ -63,7 +68,7 @@ export async function discoverModelLimits(binding: ModelBinding, overrides: Part
     if (binding.protocol === 'anthropic') { headers['x-api-key'] = key; headers['anthropic-version'] = '2023-06-01'; }
     else headers.authorization = `Bearer ${key}`;
   }
-  const base = binding.baseURL.replace(/\/+$/, '');
+  const base = modelApiBaseURL(binding);
   const url = new URL(base);
   const routes = url.hostname === 'openrouter.ai' || url.hostname.endsWith('.openrouter.ai') ? ['models/user', 'models'] : ['models'];
   routes.push(`models/${encodeURIComponent(binding.model)}`);

@@ -1,0 +1,11 @@
+# Local image input
+
+`image.read` reads an existing workspace image and attaches its actual bytes to the next model request. It requires the `read` permission and a card that grants `image.read`; the same canonical workspace, protected-path, private-runtime-directory and per-run read-scope checks as native file tools apply. An image cannot grant access to another path, and a textual result returned by another tool cannot create an image attachment.
+
+PNG, JPEG, GIF and static WebP inputs are recognized from bytes rather than filename extensions. Each file must be a regular file of at most 5 MiB, with positive dimensions at most 16,384 per side and 40 million total pixels. The reader checks container lengths, required image sections and end markers, PNG checksums and supported image headers. It rejects truncated containers and animated WebP. This is container validation, not a full pixel decoder; a provider can still reject corrupt compressed pixel data.
+
+The result records MIME type, dimensions, size and SHA-256. The private durable result retains the base64 image for resume/replay. The runtime sends metadata as the textual tool result and attaches bytes separately, so normal tool output does not print base64. Inspection and historical text pages expose attachment metadata rather than base64. Context compaction can archive old image attachments while preserving complete assistant/tool groups; use `image.read` again when pixels are needed. Vision tokens are estimated conservatively from image dimensions, separately from textual tokens.
+
+All three model protocols receive native vision inputs: Chat Completions uses `image_url` data URLs, Responses uses `input_image`, and Anthropic uses base64 `image` sources inside tool results. Textual results, call identifiers and provider reasoning history remain intact. Chat Completions appends a user image turn after all adjacent tool results, preserving multi-call ordering. Provider adapters validate bytes and MIME again and accept at most eight images per message. Use a model that supports vision; Kodo does not silently fall back to describing only filenames.
+
+Run focused validation with `npx vitest run tests/image-tool.test.ts tests/provider-images.test.ts`.
