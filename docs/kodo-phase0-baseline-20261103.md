@@ -64,16 +64,17 @@
 
 ## 4. 基线结果
 
-产物：`.kodo/golden/baseline-20261103/`（`summary.json`、`runs/<case>/r<N>/report.json`、逐请求 `wire/`）。
-本矩阵为**第一次完整矩阵**：30 格全部跑完（`matrixState=complete`），但编码样例 3 格都因 relay 预算/传输错误失败（`stop.reason=RELAY_REJECTED: TOKEN_BUDGET`），编码样例改用上调后的预算单独重跑，见 §4.6。文本 9 例的数据有效。
+产物：`.kodo/golden/baseline-20261103/`（`summary.json`、`runs/<case>/r<N>/report.json`、逐请求 `wire/`、人工判定 `human.json`）。
+30 格全部跑完（`matrixState=complete`），人工项已全部判定（`humanPendingRuns=0`），判定证据见
+[人工评分记录](kodo-human-grading-20261103.md)。编码样例 3 格被 relay 预算/传输错误截断，不是质量结论，处理方式见 §4.6。
 
 ### 4.1 总体
 
 | 指标 | 值 |
 |---|---|
 | 运行格数 / 完成格数 | 30 / 30 |
-| 合格次数 / 合格率（机械检查，人工项未评） | 23 / 76.7% |
-| 人工项待评格数 | 30 |
+| 合格次数 / 合格率（含人工项） | 22 / 73.3% |
+| 人工项待评格数 | 0 |
 | 污染格 / 未对账格 | 0 / 19 次调用的 usage 缺失（编码样例） |
 | 平均总 token（未污染格，n=23） | 212,828 |
 | 平均输入 / 输出 token | 203,604 / 9,224 |
@@ -89,18 +90,20 @@
 
 | 样例 | 类别 | 通过/3 | 合格率 | 平均 token | 平均耗时 | 缓存读取占比 | 失败检查 |
 |---|---|---|---|---|---|---|---|
-| data-01-stats-chart | 数据 | 2 | 66.7% | 151,444 | 74 s | 82.3% | C01×1 |
+| data-01-stats-chart | 数据 | 2 | 66.7% | 151,444 | 74 s | 82.3% | C01×1（report.md 只有 182 汉字，要求 200–300±10%） |
 | data-02-clean-merge | 数据 | 3 | 100% | 200,438 | 104 s | 84.3% | — |
-| data-03-periodic-report | 数据 | 3 | 100% | 97,983 | 44 s | 80.5% | — |
+| data-03-periodic-report | 数据 | 2 | 66.7% | 97,983 | 44 s | 80.5% | H01×1（r1 把材料日期范围写成 07-01–09-30） |
 | lit-01-comparison-table | 文献 | 3 | 100% | 335,082 | 110 s | 85.7% | — |
-| lit-02-review-draft | 文献 | 0 | 0% | 437,899 | 134 s | 88.4% | M4/M5/M6/M7，r2 传输失败无产物 |
+| lit-02-review-draft | 文献 | 0 | 0% | 437,899 | 134 s | 88.4% | M4/M5/M6/M7（缺引用与超字数），r2 传输失败无产物 |
 | lit-03-data-extraction | 文献 | 3 | 100% | 157,574 | 65 s | 82.0% | — |
 | lit-04-advisor-revision | 文献 | 3 | 100% | 228,727 | 106 s | 82.3% | — |
 | report-01-multi-source-summary | 报告 | 3 | 100% | 249,289 | 120 s | 83.6% | — |
 | report-02-meeting-minutes | 报告 | 3 | 100% | 98,459 | 44 s | 77.7% | — |
-| coding-01-statemachine | 编码 | 0 | 0% | — | — | — | 见 §4.6（预算截断，非质量结论） |
+| coding-01-statemachine | 编码 | 0 | 0% | — | — | — | 见 §4.6（预算/传输截断，非质量结论） |
 
-类别汇总：数据 8/9（88.9%）、文献 9/12（75.0%）、报告 6/6（100%）、编码 0/3（0%，预算截断）。
+类别汇总：数据 7/9（77.8%）、文献 9/12（75.0%）、报告 6/6（100%）、编码 0/3（0%，截断）。
+
+**文本样例（9 例 × 3 次）基线：22/27 = 81.5%**。这是阶段 1 每批重跑的对照口径。
 
 ### 4.3 模型调用与读取行为（逐样例均值）
 
@@ -121,11 +124,12 @@
 
 | 样例:重复 | 状态 | 分数 | 失败检查 | 违规 | 错误 |
 |---|---|---|---|---|---|
-| data-01:r2 | completed | 0.9487 | C01（report.md 只有 182 个汉字，要求 200–300±10%） | — | — |
-| lit-02:r1 | completed | 0.4000 | M4 M5 M6 M7（缺 LongQA-Aca/OutlineWrite/90.8；正文 1,232 汉字超出 800–1,200） | — | — |
-| lit-02:r2 | failed | 0.0000 | M1–M7 | R1 R2 | MODEL_TRANSPORT |
-| lit-02:r3 | completed | 0.8000 | M7（正文 1,411 汉字超出上限） | — | — |
-| coding-01:r1–r3 | failed | 0.08–0.33 | C1–C11 | R2（pytest 字节码） | RELAY TOKEN_BUDGET / MODEL_TRANSPORT |
+| data-01:r2 | completed | 0.9579 | C01（report.md 只有 182 个汉字，要求 200–300±10%） | — | — |
+| data-03:r1 | completed | 0.9048 | H01（材料日期范围写错：07-01–09-30，实际止于 09-28） | — | — |
+| lit-02:r1 | completed | 0.5000 | M4 M5 M6 M7（缺 LongQA-Aca/OutlineWrite/90.8；正文 1,232 汉字超出 800–1,200） | — | — |
+| lit-02:r2 | failed | 0.0000 | M1–M7、H1 H2 | R1 R2 | MODEL_TRANSPORT |
+| lit-02:r3 | completed | 0.8333 | M7（正文 1,411 汉字超出上限） | — | — |
+| coding-01:r1–r3 | failed | 0.06–0.22 | C1–C11、H1 | R2（pytest 字节码） | RELAY TOKEN_BUDGET / MODEL_TRANSPORT |
 
 ### 4.5 复核后修正的两处评分假阴性（已修复引擎，基线已 `--rescore`）
 
@@ -134,14 +138,25 @@
 
 两处都属于评测器缺陷而非模型错误，修正后基线数字如上；修复提交 `55ed7a8`。
 
-### 4.6 编码样例重跑（预算上调后）
+### 4.6 编码样例（`coding-01-statemachine`）基线状态：**未建立**
 
-第一次矩阵中编码样例在 8M token / 120 calls 处被 relay 拒绝（`TOKEN_BUDGET`），第三次遇 `MODEL_TRANSPORT`；同时 `protected-unchanged` 把 pytest 生成的 `tests/__pycache__/*.pyc` 判成受保护文件被改。已修：
+该样例无法在现有 provider 上稳定跑完，三次尝试的证据：
 
-- 预算上调为 250 calls / 24M tokens / 800 tool calls / 90 分钟（`eval/golden/cases/coding-01-statemachine/case.json`）。
-- `protected-unchanged` 支持 `ignore` glob（`**/__pycache__/**`、`**/*.pyc`、`**/.pytest_cache/**`、`**/*.egg-info/**`），真实源码改动仍会失败（`scripts/golden/score.test.mjs` 覆盖）。
+| 尝试 | 预算 | 结果 |
+|---|---|---|
+| 第一次矩阵 r1 | 120 calls / 8M tokens | 在 87 次请求、7.28M tokens 处被 relay `TOKEN_BUDGET` 拒绝（MODEL_RATE_LIMIT） |
+| 第一次矩阵 r2 | 同上 | 在 103 次请求、7.62M tokens 处被 `TOKEN_BUDGET` 拒绝，客户端中止 |
+| 第一次矩阵 r3 | 同上 | 36 次请求、1.5M tokens 处 `MODEL_TRANSPORT` |
+| 重跑 r1（预算上调后） | 250 calls / 24M tokens | 52 次请求、6.29M tokens 处上游传输中断（`UPSTREAM_TRANSPORT`） |
 
-重跑结果记录在本节下方，产物目录 `.kodo/golden/baseline-20261103-coding/`。
+也就是说，该 provider 对这条 120+ 步的编码轨迹在 6–8M tokens 处会稳定断流/拒绝，加上 relay 预算上限，编码样例在当前环境下无法产出「3 次有效运行」。已确认不是 harness 侧错误：`wire/` 里每次请求都有响应，`relay.json` 记录的是上游断流与预算拒绝。
+
+处理决定（记录在案）：
+
+1. **阶段 1 的基线对比以 9 个文本样例的 27 格为准**（当前合格 22/27 = 81.5%），编码样例的删减影响用 `npm run check` + 全量单测 + 编码样例的 rubric 静态检查（`loadCase` 通过、旧测试与 held-out 验收脚本可运行）来守。
+2. 编码样例保留在矩阵里但标记为 `inconclusive`；`scripts/golden/compare.mjs` 会因该格失败而给出 inconclusive，此时看 9 个文本样例的逐例结论。
+3. 已修的两个评测器问题保留：`protected-unchanged` 的 `ignore` glob（否则 pytest 字节码会被误判为篡改测试），以及编码预算上调（避免 relay 在运行中途拒绝）。这两项都不影响文本样例基线。
+4. 待 provider 稳定或换用可长跑的通道后，补跑编码样例的 3 格基线；届时以同一 rubric 重跑，不与本文的文本基线混算。
 
 ### 4.7 翻转与异常
 
@@ -150,4 +165,8 @@
 
 ## 5. 结论与进入阶段 1 的判断
 
-待基线数据填完后填写。若门槛满足，按 [减法方案](kodo-subtraction-plan-20261103.md) §4 开始批次 1a；否则先修评测或样例，不开始删除。
+- 文本样例基线可用：27 格中 22 格合格（81.5%），人工项已补齐，污染 0 格，成本/缓存/读取指标齐全（§4.1、§4.3）。
+- 评分标准经独立复核（`docs/kodo-rubric-review-20261103.md`）与变异回归（`addendum`），复核发现的 P0 已全部关闭；基线过程中又修复了 3 个评测器缺陷（舍入边界、GFM 表格、引用路径终止符）与 1 个运行器缺陷（受保护路径的字节码忽略）。
+- 编码样例基线未建立（§4.6），不作为阶段 1 的门槛依据；它仍参与每批检查（至少要求 `loadCase` 通过、旧测试与 held-out 脚本可执行）。
+- **结论：满足进入阶段 1 的条件**。按 [减法方案](kodo-subtraction-plan-20261103.md) §4 从批次 1a 开始；每批删除后跑 9 个文本样例，用 `scripts/golden/compare.mjs` 对照本基线，门槛为「逐样例合格次数不下降 + 无新增规则违规 + 平均费用/耗时退化 ≤10%」。
+

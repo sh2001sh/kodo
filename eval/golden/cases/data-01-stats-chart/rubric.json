@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.95,
+  "passThreshold": 0.99,
   "checks": [
     {
       "id": "M01",
       "kind": "file-exists",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/summary.csv",
         "minBytes": 100
@@ -279,7 +279,7 @@
     {
       "id": "M20",
       "kind": "file-exists",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/chart.png",
         "minBytes": 5000
@@ -288,7 +288,7 @@
     {
       "id": "M21",
       "kind": "file-exists",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/report.md",
         "minBytes": 400
@@ -297,7 +297,7 @@
     {
       "id": "M22",
       "kind": "file-contains",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/report.md",
         "all": [

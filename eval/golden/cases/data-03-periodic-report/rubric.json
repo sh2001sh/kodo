@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.95,
+  "passThreshold": 0.96,
   "checks": [
     {
       "id": "M01",

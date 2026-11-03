@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.95,
+  "passThreshold": 0.99,
   "checks": [
     {
       "id": "M01",
       "kind": "file-exists",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/merged.csv",
         "minBytes": 2000
@@ -259,7 +259,7 @@
     {
       "id": "M19",
       "kind": "file-exists",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/data-quality.md",
         "minBytes": 200
@@ -283,7 +283,7 @@
     {
       "id": "M21",
       "kind": "file-contains",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/data-quality.md",
         "any": [
@@ -295,7 +295,7 @@
     {
       "id": "M22",
       "kind": "file-contains",
-      "weight": 1,
+      "weight": 4,
       "params": {
         "path": "deliverables/data-quality.md",
         "any": [

@@ -212,3 +212,133 @@
 - 参考解未变（comparison `3d6a4b015f627844`、review `70184cee0410dd10`、extracted `d1287acf88936d7c`、revised `e0b05e2e9eb87b79`）。
 - 执行：临时 harness（同 task-5，新增 `--human` 注入）跑 4 例 × {reference, empty} + 26 组变异（含 task-5 的 10 个 Lit 变异与 16 个新变异/补评情形）；4 例自带 `node verify/check-rubric.mjs` 均 exit 0。只在系统临时目录写中间产物，未改仓库。
 - 只读声明：本轮未修改任何样例/脚本/源码，仅新增本文档；未 git commit。
+
+---
+
+## 8. Data/Report 5 例修复回归（task-8 第二部分）
+
+状态更新：Lead 已在 commit `0d3d862`（`fix(eval): close rubric safety gaps in golden cases`）提交 Data/Report 5 例修复，工作区干净（HEAD=`0d3d862`）。本轮按与 Lit 相同的方法（真实 `scripts/golden/score.mjs` + `cases.mjs`，参考解/空输出/独立变异/held-out command）复核。**同一提交还修正了 lit-03 的 objective**（`case.json:6` 已改为“共 36 行（每篇论文表 2 的 6 行 × 2 个指标）”），因此前文 §4.1 的 P1-A 已关闭；lit-03 仅剩 `verify/README.md:33,69` 两行陈旧（仍写“M3 数据行 ≥ 12 / 要求 12..∞”）。
+
+### 8.1 逐例关闭结论
+
+| 样例 | P0-1 权重/阈值 | P0-2 materials 保护 | P0-3 | command/H 误伤参考解 | 空输出 | 结论 |
+|---|---|---|---|---|---|---|
+| data-01 | **已关闭** | **已关闭** | — | 无（reference 1.0、C01 exit 0） | fail | 见 §8.8（附 P1 建议） |
+| data-02 | **已关闭** | **已关闭** | — | 无 | fail | 见 §8.8（附 P1 建议） |
+| data-03 | **已关闭** | **已关闭** | — | 无 | fail | 见 §8.8（附 P1 建议） |
+| report-01 | **已关闭** | **已关闭** | **已关闭**（材料时间线自洽 + held-out 能拦漂移） | 无 | fail | **可候选**（P2 残留） |
+| report-02 | **已关闭** | **已关闭** | — | 无 | fail | **可候选**（P2 残留） |
+
+修复内容（本轮核对）：5 例 `passThreshold` 均 0.95；核心 `csv-cell/csv-rows` 权重提到 4；每例新增 held-out `command` C01（权重 4）与 `human` H01；`rules` 增加 `protected-unchanged ["materials"]`；report-01 新增 `grading.restore/stage`（`case.json:20`）并在 `notes` 记录 P0-3；各 `case.json:6` objective 同步写入了新增的机械约束（如 data-01 要求真实 PNG 且 600×400、report-01 首末周数值必须与标签同一句/行）。
+
+### 8.2 P0-1 关闭证据（lead 指定的 9 类核心错误全部不合格）
+
+用真实引擎在“参考解 + 变异”工作区上评分（阈值 0.95）：
+
+| 变异（独立构造） | 样例 | score | passed | 失败项 | C01 exit |
+|---|---|---:|---|---|---:|
+| **两区域 total 互换**（华东 85528.13 ↔ 华北 53777.43） | data-01 | 0.8974 | **false** | M04,M08 | 0 |
+| 单个区域 total 错（85528.13→85528.99） | data-01 | 0.9487 | **false** | M04 | 0 |
+| **假 chart**（向 chart.png 追加非 PNG 文本） | data-01 | 0.9487 | **false** | C01 | 1 |
+| 报告过短（删掉一段，CJK<190） | data-01 | 0.9487 | **false** | C01 | 1 |
+| **merged.csv 只有 274 行** | data-02 | 0.8947 | **false** | M03,C01 | 1 |
+| A/B/C 计数标签互换（8↔12） | data-02 | 0.9474 | **false** | C01 | 1 |
+| 一个客户名错（周军→李四） | data-02 | 0.9474 | **false** | M05 | 0 |
+| **月份标签互换**（2026-07↔2026-09） | data-03 | 0.7895 | **false** | C01 | 1 |
+| **最大类别写错**（办公用品→市场推广） | data-03 | 0.7368 | **false** | M07,C01 | 1 |
+| 类别合计错（63106.90→63106.91） | data-03 | 0.7895 | **false** | C01 | 1 |
+| **首末周数值对调** | report-01 | 0.7647 | **false** | C01 | 1 |
+| **少引用材料**（materials/metrics.csv→materials/metrics） | report-01 | 0.5882 | **false** | M03,C01 + R01 违规 | 1 |
+| 删除全部中文引号（0 处引文） | report-01 | 0.7647 | **false** | C01 | 1 |
+| **负责人-截止日期互换**（张伟↔陈曦） | report-02 | 0.7778 | **false** | C01 | 1 |
+| **删光 3 条决定** | report-02 | 0.7778 | **false** | C01 | 1 |
+| 删除全部中文引号（0 处引文） | report-02 | 0.7778 | **false** | C01 | 1 |
+
+结论：task-5 变异清单在 Data/Report 5 例上**全部由“通过”翻转为“不合格”**（此前 data-01 两区域指标错 0.90 合格、data-02 274 行 0.9268 合格、data-03 月份互换 1.0 合格、report-01 首末周对调 1.0 合格、report-02 负责人互换/删决定 1.0 合格——均已关闭）。权重敏感度：W(pending)=78/76/19/17/18，允许失败权重=3.90/3.80/0.95/0.85/0.90，故 data-01/02 的核心权重 4 检查、data-03/report-01/02 的任一权重 1 检查单失败都会导致不合格。
+
+### 8.3 P0-2 关闭证据（篡改 materials 全部触发 protected 违规）
+
+| 样例 | 篡改对象 | 结果 |
+|---|---|---|
+| data-01 | materials/sales.csv 追加内容 | score=1.0，**passed=false**，violations=[R01] |
+| data-02 | materials/orders.csv 追加内容 | score=1.0，**passed=false**，violations=[R01] |
+| data-03 | materials/daily_ledger.csv 追加内容 | score=1.0，**passed=false**，violations=[R01] |
+| report-01 | materials/metrics.csv 追加内容 | score=1.0，**passed=false**，violations=[R02] |
+| report-02 | materials/attendees.md 追加内容 | score=1.0，**passed=false**，violations=[R02] |
+
+对照正常解：5 例参考解 violations=0；空输出时 protected 规则通过（data 类 viol=[]；report 类仅 citation 规则违规，无 protected 违规）——**新增保护规则没有误伤只写 deliverables 的正常解或空输出**。
+
+### 8.4 P0-3 关闭证据（report-01 材料时间线）
+
+- 材料自洽（独立重算）：`metrics.csv:2-9` 共 8 行，W1..W8 的 week_start 为 `2026-08-10/08-17/08-24/08-31/09-07/09-14/09-21/09-28`（连续 7 天、首末 08-10→09-28），**全部落在 `project-brief.md:11` 所述“2026 年 7 月至 9 月”内**，且全部早于简报日期 `2026-10-08`（`project-brief.md:5`）；旧版本破坏性的 `2026-10-19` 已不存在。
+- held-out 漂移拦截（直接执行 `verify/stage/check-report.mjs`，不经过 protected）：
+  - 未修改参考工作区 → exit 0（`check-report: OK`）；
+  - 把 W8 week_start 改到 `2026-10-05` → **exit 1**，stderr：`materials/metrics.csv week_start 2026-10-05 is outside the 2026-07..2026-09 grazing period stated in project-brief.md`；
+  - 只留 7 周 → **exit 1**，stderr：`materials/metrics.csv has 7 data rows, expected 8`。
+- 残留（P2-R5c）：held-out 只校验“材料”自洽，不校验报告文字里声称的灰度期间——直接给参考解追加“灰度期为 2026 年 10 月至 11 月”后 command 仍 exit 0。该点由 H01 兜底（report-01 的 H01 判 false 会导致不合格：16/17=0.9412<0.95，实测 passed=false）。
+
+### 8.5 command / human 不误伤参考解、空输出仍 fail
+
+- 参考解：5/5 `score=1.0, passed=true, violations=0`，C01 全部 exit 0（data-01 `check-chart: OK (…, 20483 bytes?)`、data-02 `check-quality: OK (275 rows …)`、data-03 `check-report: OK`、report-01 `check-report: OK`、report-02 `check-minutes: OK`）。
+- 空输出：5/5 `passed=false`，C01 全部 exit 1（缺交付物）；data 类 protected 通过，report 类仅 citation 违规。
+- 自带自检脚本独立运行：5/5 `SELF-CHECK OK`（阈值已显示 0.95，且都包含“篡改 materials → protected 违规”负例）。
+
+### 8.6 独立复跑作者 negative-controls 与交叉验证
+
+- 独立执行 `node eval/golden/cases/data-01-stats-chart/verify/negative-controls.mjs` → **NEGATIVE-CONTROL OK（exit 0）**。脚本共 28 个场景（5 个参考解 + 23 个负例，含 5 个 materials-tampered、5 个 empty、13 个变异），全部符合“reference 通过、其余失败”的期望。该脚本导入真实 `score.mjs`/`cases.mjs`/`v3-eval-ledger.protectedSnapshot`，不是作者自报结论。
+- 我的独立变异（与作者脚本不同的构造，见 §8.2–8.4）与作者脚本结论一致；5 例自检、`loadCases` 10/10（独立执行）、我自写的 schema/recompute 检查器（0 problems）也全部一致。
+- 数据重算未回退：data-01 16 个区域指标、data-02 275 行全量、data-03 月/环比/类别与 task-5 相同，无差异。
+
+### 8.7 仍存在的 P1/P2 残留（带 文件:行）
+
+**P1-R1（建议基线前修；影响 data-01/02/03）：H01 人工项不具判定力。** `H01` 权重 1，而 data-01 W=79、data-02 W=77、data-03 W=20；H01 判 false 时真实引擎分数分别为 `78/79=0.9873`、`76/77=0.9870`、`19/20=0.9500`——**均 ≥0.95，仍然合格**（`data-01/rubric.json:28`、`data-02/rubric.json:28`、`data-03/rubric.json:15`）。后果：图表语义、未抽样行、文字结论等只能靠人工判断的质量问题，人工判 false 也无法让样例不合格。建议：data-01/02 的 H01 权重提到 4（`>0.05×W`），data-03 提到 2；或接受“H01 仅作质量记录”并在基线报告中注明。
+
+**P2-R2（data-01）：图表内容只校验“是合法 PNG 且 ≥600×400”。** `verify/stage/check-chart.mjs:20-44` 校验签名/IHDR/IDAT/IEND/尺寸，不校验图形内容；实测把 chart.png 换成一张**合法但内容错误**的 600×400 随机像素 PNG（721 KB）后仍 **1.0 合格**（M20 只查 size）。同理 `report.md` 只说“含 华东”即可（`check-chart.mjs:46-58`），实测把结论改成“销售额最高的区域是华南”但保留别处“华东”字样仍 **1.0 合格**。该缺陷与 P1-R1 叠加（H01 不能判不合格），建议至少把 `最高区域` 措辞改为正则断言（如 `销售额最高的区域是华东`）或提高 H01 权重。
+
+**P2-R3（data-02）：未抽样行不校验。** `check-quality.mjs:78-94` 只校验列、275 行、order_id 唯一；数值正确性只有 M04–M18 的 15 个抽查单元格（rubric `:8-22`）。实测把未抽样订单 O0100 的 total_amount 改为 9999.99 后仍 **1.0 合格**（H01 问题不覆盖 merged.csv 数值）。建议 command 增加低成本不变量：每行 `total_amount == round(quantity*unit_price,2)`、日期正则、join 后名称/类别非空。
+
+**P2-R4（data-03）：文字结论不校验。** `check-report.mjs:55-125` 只校验两张表的“标签↔数值”绑定；实测把正文“全季度金额最大的类别是办公用品”改成“差旅”、表格保持正确后仍 **1.0 合格**（M07/M08 命中表格中的字符串）。H01 问题覆盖“文字结论是否与表格数字吻合”，但受 P1-R1 影响不具判定力。
+
+**P2-R5（report-01）：**
+- (a) 风险条数未校验：objective（`case.json:6` 第 2 条）要求“风险部分至少 3 条并说明影响”，`check-report.mjs` 无风险计数；实测删掉 2 条风险（剩 2 条）后仍 **1.0 合格**（长度仍 ≥1200）。
+- (b) 引文来源未限定访谈：objective 要求“至少 2 处访谈原话”，`check-report.mjs:94-105` 只要求“≥2 处 ≥10 字的 materials 引文”；引用简报而非访谈也可满足。
+- (c) 报告文字里的灰度期间未校验（见 §8.4 残留）。
+  以上三项目前均由 H01（report-01 的 H01 有判定力）或人工复核兜底，可列为 P2。
+
+**P2-R6（report-02）：参会人白名单与会议元数据未校验。** `check-minutes.mjs:69-147` 只校验待办“负责人↔截止日期”、决定条数、引文；实测在纪要中加入“外部列席：李明”并把“总部 3 号会议室”改为“总部 9 号会议室”后仍 **1.0 合格**（M05 只看 6 个姓名存在、M06 只禁 5 个固定虚构名）。H01 问题含“是否虚构了参会人”，可兜底参会人；但**会议地点/时间不在 H01 问题内**，建议 command 增加“参会人集合 == attendees.md 名单”和“时间/地点与 transcript 一致”两项。
+
+**P2-R7（lit-03 文档同步）：** `lit-03-data-extraction/verify/README.md:33` 仍写“M3 数据行 ≥ 12”、`:69` 仍展示旧输出“要求 12..∞”，而 rubric 已固定 36 行、objective 已改为“共 36 行”。仅文档陈旧，不影响评分；建议随下次提交更新。
+
+**P2-R8（未变）：** citation-sources 对强调引号偏严、report-01/02 的 `minBytes` 与汉字口径差异等 task-5 已列 P2 未变化；本轮未发现新的 command 误伤（参考解全部通过）。
+
+### 8.8 最终名单：9 个文本样例是否可进入阶段 0 基线
+
+**结论：9/9 均可作为阶段 0 基线候选；P0-1、P0-2、P0-3 与 task-5 的 P1 变异缺口已全部关闭。** 按“是否有阻塞项”细分：
+
+| 样例 | 进入基线 | 条件/残留 |
+|---|---|---|
+| lit-01 | **可** | 无阻塞（task-5 P2 已在 0d3d862 同步 README） |
+| lit-02 | **可** | 无阻塞 |
+| lit-03 | **可** | P1-A 已关闭；仅 P2-R7 两行 README 陈旧，建议顺手修 |
+| lit-04 | **可** | 无阻塞 |
+| report-01 | **可** | P2-R5(a)(b)(c)，H01 有判定力可兜底；建议后续补 command |
+| report-02 | **可** | P2-R6，H01 部分兜底（地点/时间未覆盖）；建议后续补 command |
+| data-01 | **可（附 P1-R1 建议）** | H01 权重不足，图表语义/最高区域措辞错误不会判不合格 |
+| data-02 | **可（附 P1-R1 建议）** | H01 权重不足；未抽样行数值不校验（P2-R3） |
+| data-03 | **可（附 P1-R1 建议）** | H01 恰在阈值上（19/20=0.95 通过）；文字结论错误不判不合格（P2-R4） |
+
+即：**5 个无阻塞（lit-01/02/03/04、report-01）、另有 report-02 仅 P2、data-01/02/03 各带 1 条 P1 建议；若 Lead 要求“人工兜底必须能独立否决”作为基线硬条件，则 data-01/02/03 需先把 H01 权重调到 4/4/2（3 个样例），其余 6 个立即可以进入基线。**
+
+### 8.9 Data/Report 复核快照（HEAD=`0d3d862`，只读）
+
+| 样例 | case.json | rubric.json | stage 脚本（verify/stage/） |
+|---|---|---|---|
+| data-01 | `a6363d1936c5324c` | `9bb2506f628ef85b` | check-chart.mjs `5d4f9f83f7a1338b` |
+| data-02 | `f49fb2520763d95c` | `8addb708a52228b6` | check-quality.mjs `249b327ec92912a8` |
+| data-03 | `ffe5918bf65d9aa2` | `94312aba5e3f7b31` | check-report.mjs `f454ae81d80fc546` |
+| report-01 | `61f11fc6bcba7df6` | `bf361178ef50455f` | check-report.mjs `1bad892f5e5b6bcc` |
+| report-02 | `65f2959ea6d8c0bc` | `6b963e103d6de81b` | check-minutes.mjs `bdc0fc5bad84c183` |
+| lit-03（本轮 objective 修复） | `a200f6c2e6199c7a` | `45b9086755ae9094` | — |
+| 引擎 | — | — | score.mjs `4e2893b74043dea7`、cases.mjs `5b90cbdadb3073b1`（均未变） |
+
+执行：5 例 × {reference, empty} + 21 组独立核心变异 + 6 组残留探针 + 5 组 H01=false 补评；直接执行 4 组 P0-3 drift 测试；独立复跑作者 negative-controls（28 场景）；5/5 自带自检；`loadCases` 10/10；自写 schema/recompute 检查 0 problems。全部中间产物在系统临时目录，未改仓库、未 git commit。
