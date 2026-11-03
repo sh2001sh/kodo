@@ -487,7 +487,7 @@ function checkCsvCell(params, context) {
         const left = numeric(actual);
         const right = numeric(expected);
         if (left !== null && right !== null) {
-          if (Math.abs(left - right) > params.tolerance) reasons.push(`${column}: expected ${jsonPreview(right)} +/- ${params.tolerance}, got ${jsonPreview(actual)}`);
+          if (Math.abs(left - right) > params.tolerance + 1e-9) reasons.push(`${column}: expected ${jsonPreview(right)} +/- ${params.tolerance}, got ${jsonPreview(actual)}`);
           continue;
         }
       }

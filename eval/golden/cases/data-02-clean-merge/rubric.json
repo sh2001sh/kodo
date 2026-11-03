@@ -2,32 +2,339 @@
   "schemaVersion": 1,
   "passThreshold": 0.95,
   "checks": [
-    { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/merged.csv", "minBytes": 2000 } },
-    { "id": "M02", "kind": "csv-columns", "weight": 2, "params": { "path": "deliverables/merged.csv", "required": ["order_id", "order_date", "customer_id", "customer_name", "product_id", "product_name", "category", "quantity", "unit_price", "total_amount"] } },
-    { "id": "M03", "kind": "csv-rows", "weight": 4, "params": { "path": "deliverables/merged.csv", "minRows": 275, "maxRows": 275 } },
-    { "id": "M04", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0001" }, "expect": { "order_date": "2026-01-11" } } },
-    { "id": "M05", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0001" }, "expect": { "customer_name": "周军" } } },
-    { "id": "M06", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0001" }, "expect": { "total_amount": 12274.0 }, "tolerance": 0.01 } },
-    { "id": "M07", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0002" }, "expect": { "order_date": "2026-02-06" } } },
-    { "id": "M08", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0002" }, "expect": { "customer_name": "何平" } } },
-    { "id": "M09", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0002" }, "expect": { "total_amount": 7939.72 }, "tolerance": 0.01 } },
-    { "id": "M10", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0003" }, "expect": { "order_date": "2026-01-14" } } },
-    { "id": "M11", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0003" }, "expect": { "customer_name": "朱霞" } } },
-    { "id": "M12", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0003" }, "expect": { "total_amount": 3682.24 }, "tolerance": 0.01 } },
-    { "id": "M13", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0008" }, "expect": { "order_date": "2026-01-08" } } },
-    { "id": "M14", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0008" }, "expect": { "customer_name": "赵敏" } } },
-    { "id": "M15", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0008" }, "expect": { "total_amount": 3876.0 }, "tolerance": 0.01 } },
-    { "id": "M16", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0006" }, "expect": { "order_date": "2026-03-05" } } },
-    { "id": "M17", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0006" }, "expect": { "customer_name": "陈强" } } },
-    { "id": "M18", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/merged.csv", "where": { "order_id": "O0006" }, "expect": { "total_amount": 23074.74 }, "tolerance": 0.01 } },
-    { "id": "M19", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/data-quality.md", "minBytes": 200 } },
-    { "id": "M20", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/data-quality.md", "all": ["320", "8", "12", "25", "275"] } },
-    { "id": "M21", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/data-quality.md", "any": ["去重", "重复"] } },
-    { "id": "M22", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/data-quality.md", "any": ["外键", "关联"] } },
-    { "id": "C01", "kind": "command", "weight": 4, "params": { "program": "node", "args": ["_verify/check-quality.mjs"], "expectExit": 0, "timeoutMs": 120000 } },
-    { "id": "H01", "kind": "human", "weight": 1, "params": { "question": "data-quality.md 的 320/8/12/25/275 是否与 merged.csv 实际行数、去重规则（保留 updated_at 最新）和无效外键处理一致，且每类剔除原因与对应行数写在一起、没有互换？" } }
+    {
+      "id": "M01",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "minBytes": 2000
+      }
+    },
+    {
+      "id": "M02",
+      "kind": "csv-columns",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "required": [
+          "order_id",
+          "order_date",
+          "customer_id",
+          "customer_name",
+          "product_id",
+          "product_name",
+          "category",
+          "quantity",
+          "unit_price",
+          "total_amount"
+        ]
+      }
+    },
+    {
+      "id": "M03",
+      "kind": "csv-rows",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "minRows": 275,
+        "maxRows": 275
+      }
+    },
+    {
+      "id": "M04",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0001"
+        },
+        "expect": {
+          "order_date": "2026-01-11"
+        }
+      }
+    },
+    {
+      "id": "M05",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0001"
+        },
+        "expect": {
+          "customer_name": "周军"
+        }
+      }
+    },
+    {
+      "id": "M06",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0001"
+        },
+        "expect": {
+          "total_amount": 12274
+        },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M07",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0002"
+        },
+        "expect": {
+          "order_date": "2026-02-06"
+        }
+      }
+    },
+    {
+      "id": "M08",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0002"
+        },
+        "expect": {
+          "customer_name": "何平"
+        }
+      }
+    },
+    {
+      "id": "M09",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0002"
+        },
+        "expect": {
+          "total_amount": 7939.72
+        },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M10",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0003"
+        },
+        "expect": {
+          "order_date": "2026-01-14"
+        }
+      }
+    },
+    {
+      "id": "M11",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0003"
+        },
+        "expect": {
+          "customer_name": "朱霞"
+        }
+      }
+    },
+    {
+      "id": "M12",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0003"
+        },
+        "expect": {
+          "total_amount": 3682.24
+        },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M13",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0008"
+        },
+        "expect": {
+          "order_date": "2026-01-08"
+        }
+      }
+    },
+    {
+      "id": "M14",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0008"
+        },
+        "expect": {
+          "customer_name": "赵敏"
+        }
+      }
+    },
+    {
+      "id": "M15",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0008"
+        },
+        "expect": {
+          "total_amount": 3876
+        },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M16",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0006"
+        },
+        "expect": {
+          "order_date": "2026-03-05"
+        }
+      }
+    },
+    {
+      "id": "M17",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0006"
+        },
+        "expect": {
+          "customer_name": "陈强"
+        }
+      }
+    },
+    {
+      "id": "M18",
+      "kind": "csv-cell",
+      "weight": 4,
+      "params": {
+        "path": "deliverables/merged.csv",
+        "where": {
+          "order_id": "O0006"
+        },
+        "expect": {
+          "total_amount": 23074.74
+        },
+        "tolerance": 0.01
+      }
+    },
+    {
+      "id": "M19",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/data-quality.md",
+        "minBytes": 200
+      }
+    },
+    {
+      "id": "M20",
+      "kind": "file-contains",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/data-quality.md",
+        "all": [
+          "320",
+          "8",
+          "12",
+          "25",
+          "275"
+        ]
+      }
+    },
+    {
+      "id": "M21",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/data-quality.md",
+        "any": [
+          "去重",
+          "重复"
+        ]
+      }
+    },
+    {
+      "id": "M22",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/data-quality.md",
+        "any": [
+          "外键",
+          "关联"
+        ]
+      }
+    },
+    {
+      "id": "C01",
+      "kind": "command",
+      "weight": 4,
+      "params": {
+        "program": "node",
+        "args": [
+          "_verify/check-quality.mjs"
+        ],
+        "expectExit": 0,
+        "timeoutMs": 120000
+      }
+    },
+    {
+      "id": "H01",
+      "kind": "human",
+      "weight": 5,
+      "params": {
+        "question": "data-quality.md 的 320/8/12/25/275 是否与 merged.csv 实际行数、去重规则（保留 updated_at 最新）和无效外键处理一致，且每类剔除原因与对应行数写在一起、没有互换？"
+      }
+    }
   ],
   "rules": [
-    { "id": "R01", "kind": "protected-unchanged", "params": { "paths": ["materials"] } }
+    {
+      "id": "R01",
+      "kind": "protected-unchanged",
+      "params": {
+        "paths": [
+          "materials"
+        ]
+      }
+    }
   ]
 }

@@ -38,22 +38,29 @@
 
 ## 3. 样例与评分标准复核清单
 
-复核标记：`[ ]` 待复核、`[x]` 通过。复核人：Lead（必要时请用户抽检）。
+复核标记：`[ ]` 待复核、`[x]` 通过。复核人：Lead + 独立复核（[评分标准复核](kodo-rubric-review-20261103.md) 与 [修复回归](kodo-rubric-review-addendum-20261103.md)）。
 
 | 样例 | 类别 | 材料 | 机械检查 | 人工项 | 不可违反规则 | 复核 |
 |---|---|---|---|---|---|---|
-| lit-01-comparison-table | 文献 | 5 篇文本化论文 | 表格结构/行数/精确指标/引用真实/无外部链接 | 综合结论质量 | 引用真实、不编造、不改 materials | [ ] |
-| lit-02-review-draft | 文献 | 6 篇论文 | 字数/引用数/研究空白小节/引用真实 | 综述结构与论证 | 引用真实、无外部链接 | [ ] |
-| lit-03-data-extraction | 文献 | 3 篇带结果表论文 | CSV 列名/行数/精确数值 | 抽取口径一致性 | 数值真实、不改 materials | [ ] |
-| lit-04-advisor-revision | 文献 | 草稿+导师意见 | 5 条意见逐条落实 | 修改是否保留原意 | 不改 materials 原件 | [ ] |
-| data-01-stats-chart | 数据 | 销售 CSV ≥200 行 | 统计值精确核对/CSV 结构/图存在 | 结论是否基于数据 | 不篡改输入、数字自洽 | [ ] |
-| data-02-clean-merge | 数据 | 三表 | 清洗后行数/join 缺失数/列结构 | 数据质量说明 | 清洗规则与 objective 一致 | [ ] |
-| data-03-periodic-report | 数据 | 90 天流水 | 月度合计/环比精确值 | 报告可读性 | 数字自洽 | [ ] |
-| report-01-multi-source-summary | 报告 | 4 份材料 | 必需小节/引用真实/关键数字 | 结论与证据对应 | 引用真实、不虚构来源 | [ ] |
-| report-02-meeting-minutes | 报告 | 会议记录+参会名单 | 待办负责人/日期/不虚构参会人 | 纪要完整性 | 不虚构、不改材料 | [ ] |
+| lit-01-comparison-table | 文献 | 5 篇文本化论文 | 表格结构/行数/精确指标/引用真实/无外部链接 | 综合结论质量 | 引用真实、不编造、不改 materials | [x] |
+| lit-02-review-draft | 文献 | 6 篇论文 | 字数/引用数/研究空白小节/引用真实 | 综述结构与论证 | 引用真实、无外部链接、不改 materials | [x] |
+| lit-03-data-extraction | 文献 | 3 篇带结果表论文 | CSV 列名/行数/精确数值 | 抽取口径一致性 | 数值真实、不改 materials | [x] |
+| lit-04-advisor-revision | 文献 | 草稿+导师意见 | 5 条意见逐条落实 | 修改是否保留原意 | 不改 materials 原件 | [x] |
+| data-01-stats-chart | 数据 | 销售 CSV 240 行 | 统计值精确核对/CSV 结构/图存在/图表 PNG 结构 | 结论是否基于数据 | 不篡改输入、数字自洽 | [x] |
+| data-02-clean-merge | 数据 | 三表 | 清洗后行数/join 缺失数/列结构/标签-计数绑定 | 数据质量说明 | 清洗规则与 objective 一致、不改 materials | [x] |
+| data-03-periodic-report | 数据 | 90 天流水 | 月度合计/环比/表格标签-数值绑定 | 报告可读性 | 数字自洽、不改 materials | [x] |
+| report-01-multi-source-summary | 报告 | 4 份材料 | 必需小节/引用真实/关键数字/引文逐字/首末周配对 | 结论与证据对应 | 引用真实、不虚构来源、不改 materials | [x] |
+| report-02-meeting-minutes | 报告 | 会议记录+参会名单 | 待办负责人/日期配对/决定条数/不虚构参会人 | 纪要完整性 | 不虚构、不改 materials | [x] |
 | coding-01-statemachine | 编码 | python-statemachine 快照 | 旧测试回归（115 条）+ 11 条规格验收 | 最终答复证据如实性 | 不改测试、旧行为不翻转 | [x] |
 
 编码样例自检已完成：未实现新特性时旧测试 115/115 通过、held-out 验收 11 条全部失败（预期）。
+
+### 3.1 复核结论与修复
+
+- 独立复核用真实评分引擎跑了 28 组变异，发现初版评分标准有 P0 安全网缺口：阈值 0.9 允许单个核心检查失败仍合格；7/9 文本样例没有 materials 保护；report-01 材料时间线矛盾。第一次基线因此中止。
+- 修复：文本样例阈值统一 0.95；全部补 `protected-unchanged: ["materials"]`；data/report 重标定权重并新增 held-out command 与人工兜底项；report-01 时间线修复；lit-03 行数固定 36。
+- 回归证据：`docs/kodo-rubric-review-addendum-20261103.md` 确认 lit 4 例 P0 全部关闭；`eval/golden/cases/data-01-stats-chart/verify/negative-controls.mjs` 的 15 个变异全部不合格；10/10 样例 `loadCase` 与自检通过，`npm run test:golden` 49/49。
+- 已知限制（不阻塞基线，记录待后续批次）：citation 规则对“强调引号”偏严；data-01/02 的人工项权重不足以独立否决；部分 command 校验是启发式；5 份自检脚本为复制件。
 
 ## 4. 基线结果（待填）
 

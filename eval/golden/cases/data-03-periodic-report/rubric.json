@@ -2,19 +2,144 @@
   "schemaVersion": 1,
   "passThreshold": 0.95,
   "checks": [
-    { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "minBytes": 500 } },
-    { "id": "M02", "kind": "markdown-table", "weight": 2, "params": { "path": "deliverables/monthly-report.md", "requiredHeaders": ["月份", "合计", "环比"], "minRows": 3 } },
-    { "id": "M03", "kind": "markdown-table", "weight": 2, "params": { "path": "deliverables/monthly-report.md", "requiredHeaders": ["类别", "合计"], "minRows": 5 } },
-    { "id": "M04", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["2026-07", "2026-08", "2026-09"] } },
-    { "id": "M05", "kind": "file-contains", "weight": 3, "params": { "path": "deliverables/monthly-report.md", "all": ["114325.16", "110368.29", "97463.51"] } },
-    { "id": "M06", "kind": "file-contains", "weight": 3, "params": { "path": "deliverables/monthly-report.md", "all": ["-3.46%", "-11.69%"] } },
-    { "id": "M07", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["办公用品"] } },
-    { "id": "M08", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["96274.26"] } },
-    { "id": "M09", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["—"] } },
-    { "id": "C01", "kind": "command", "weight": 4, "params": { "program": "node", "args": ["_verify/check-report.mjs"], "expectExit": 0, "timeoutMs": 120000 } },
-    { "id": "H01", "kind": "human", "weight": 1, "params": { "question": "月报中的月份-合计-环比与类别-合计是否与流水明细一致（标签与数值一一对应），最大类别及其合计是否写对，文字结论是否与表格数字吻合？" } }
+    {
+      "id": "M01",
+      "kind": "file-exists",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "minBytes": 500
+      }
+    },
+    {
+      "id": "M02",
+      "kind": "markdown-table",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "requiredHeaders": [
+          "月份",
+          "合计",
+          "环比"
+        ],
+        "minRows": 3
+      }
+    },
+    {
+      "id": "M03",
+      "kind": "markdown-table",
+      "weight": 2,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "requiredHeaders": [
+          "类别",
+          "合计"
+        ],
+        "minRows": 5
+      }
+    },
+    {
+      "id": "M04",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "all": [
+          "2026-07",
+          "2026-08",
+          "2026-09"
+        ]
+      }
+    },
+    {
+      "id": "M05",
+      "kind": "file-contains",
+      "weight": 3,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "all": [
+          "114325.16",
+          "110368.29",
+          "97463.51"
+        ]
+      }
+    },
+    {
+      "id": "M06",
+      "kind": "file-contains",
+      "weight": 3,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "all": [
+          "-3.46%",
+          "-11.69%"
+        ]
+      }
+    },
+    {
+      "id": "M07",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "all": [
+          "办公用品"
+        ]
+      }
+    },
+    {
+      "id": "M08",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "all": [
+          "96274.26"
+        ]
+      }
+    },
+    {
+      "id": "M09",
+      "kind": "file-contains",
+      "weight": 1,
+      "params": {
+        "path": "deliverables/monthly-report.md",
+        "all": [
+          "—"
+        ]
+      }
+    },
+    {
+      "id": "C01",
+      "kind": "command",
+      "weight": 4,
+      "params": {
+        "program": "node",
+        "args": [
+          "_verify/check-report.mjs"
+        ],
+        "expectExit": 0,
+        "timeoutMs": 120000
+      }
+    },
+    {
+      "id": "H01",
+      "kind": "human",
+      "weight": 2,
+      "params": {
+        "question": "月报中的月份-合计-环比与类别-合计是否与流水明细一致（标签与数值一一对应），最大类别及其合计是否写对，文字结论是否与表格数字吻合？"
+      }
+    }
   ],
   "rules": [
-    { "id": "R01", "kind": "protected-unchanged", "params": { "paths": ["materials"] } }
+    {
+      "id": "R01",
+      "kind": "protected-unchanged",
+      "params": {
+        "paths": [
+          "materials"
+        ]
+      }
+    }
   ]
 }

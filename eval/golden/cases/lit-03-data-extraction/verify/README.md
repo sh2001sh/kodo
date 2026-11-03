@@ -30,7 +30,7 @@
 |---|---|---:|---|
 | M1 | file-exists | 1 | `deliverables/extracted.csv` ≥ 400 字节 |
 | M2 | csv-columns | 2 | 表头含 paper / model / dataset / metric / value |
-| M3 | csv-rows | 2 | 数据行 ≥ 12 |
+| M3 | csv-rows | 2 | 数据行固定 36（每篇 6 行 × 2 指标） |
 | M4 | csv-cell | 1 | paper-1 / BM25 / LongDoc-Write-test / nDCG@10 = 41.3（容差 0.01） |
 | M5 | csv-cell | 1 | paper-1 / DenseRet-Aca / SciRet-zh / Recall@100 = 75.4 |
 | M6 | csv-cell | 1 | paper-2 / Rerank-Aca / LongDoc-Write-test / MAP = 50.3 |
@@ -66,7 +66,7 @@ node verify/check-rubric.mjs
 === 参考解（verify/reference） ===
   M1 PASS  deliverables/extracted.csv 存在且 >= 400B
   M2 PASS  表头齐全：paper,model,dataset,metric,value
-  M3 PASS  数据行 36（要求 12..∞）
+  M3 PASS  数据行 36（要求固定 36）
   M4..M9 PASS（6 个 csv-cell 抽查全部命中且数值一致）
   H1 PENDING
   R1 protected-unchanged PASS
