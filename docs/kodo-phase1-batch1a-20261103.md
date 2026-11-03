@@ -94,4 +94,7 @@ B 的失败是 M6 检查器假阴性，见 §3；用它自己的交付物跑修�
 
 - `npm run check`：通过。
 - `npm run build` + build manifest：通过。
-- 全量 `npm test`：见提交后的记录（worktree 全量 2402 passed；合并后主仓库复跑见阶段 1b 前记录）。
+- 合并后主仓库全量 `npm test`：**202 个测试文件全部通过，2403 passed / 14 skipped / 0 failed**（937s）。
+  分支 worktree 里那次唯一的失败是 `windows-verification-compat` 的 `node_modules` junction 环境问题，
+  合并后主仓库不复现。
+
