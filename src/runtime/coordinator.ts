@@ -24,7 +24,6 @@ import { turnEndDelivery } from './turn-end.js';
 import type { CompletionValidator, Message, ModelBinding, ModelResponse, Provider, Run, StepOutcome } from './types.js';
 import type { ProjectKnowledge } from '../knowledge/index.js';
 import { refreshTodoDependencies, todoRunReady } from './todo-dependencies.js';
-import { preparePendingExecution } from './execution-admission.js';
 import { taskGraphTerminalCheck } from './task-completion.js';
 
 export { runBudget } from './run-budget.js';
@@ -102,22 +101,6 @@ export class RunCoordinator implements StepHost {
     if (run.status === 'waiting') {
       this.store.transaction(() => this.mailbox.refresh(runId));
       if (this.store.run(runId).status === 'waiting') return Promise.resolve(this.store.run(runId));
-    }
-    try {
-      // Dependency acceptance may have advanced the source HEAD. Allocate a
-      // checkout only at real admission, never while filtering the queued set.
-      if (!preparePendingExecution(this.store, this.store.run(runId))) return Promise.resolve(this.store.run(runId));
-    } catch (error) {
-      if (this.store.fault !== undefined) {
-        this.stopForStorageFault(error);
-        return Promise.resolve({ ...run, status: 'interrupted', error: `STORAGE_FAULT: ${errorText(error)}` });
-      }
-      this.store.transaction(() => {
-        this.store.updateRun(runId, { status: 'failed', error: errorText(error) });
-        this.store.event(runId, 'run.failed', { error: errorText(error), phase: 'execution_admission' });
-        this.mailbox.onTerminal(runId);
-      });
-      return Promise.resolve(this.store.run(runId));
     }
     const controller = new AbortController();
     const promise = Promise.resolve().then(() => this.advance(runId, controller)).finally(() => {
@@ -429,11 +412,6 @@ export class RunCoordinator implements StepHost {
   classifyRecovery(runId: string): void {
     this.store.transaction(() => {
       for (const call of this.store.calls(runId)) if (call.status === 'running' && call.kind === 'tool') {
-        // A host call (snapshot commit or integration) is never replayed from a model response; one that had not started is settled for a fresh attempt.
-        if (call.host && call.effectState === 'not_started') {
-          this.store.putCall({ ...call, status: 'cancelled', effectOutcome: 'not_applied', resultRef: this.store.blob({ error: 'HOST_INTERRUPTED: the host step had not started; the workspace was not changed', notStarted: true, retry: true }) });
-          continue;
-        }
         // Internal effects and their result commit atomically. A running record has no committed effect.
         const unknown = call.effect === 'write' && call.effectState !== 'not_started' && !collaborationTool(call.name) && !call.effectAtomic;
         this.store.putCall({ ...call, status: unknown ? 'unknown' : 'planned', ...(unknown ? { effectOutcome: 'unknown', resultRef: call.resultRef ?? this.store.blob({ error: 'UNKNOWN_WRITE: interrupted write may have changed its scope; it will not be replayed automatically', roots: call.effectRoots }) } : {}) });

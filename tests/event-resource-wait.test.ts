@@ -22,16 +22,6 @@ function plan(app: Application, runId: string, items: TodoItem[]): void {
 }
 
 describe('event-driven task waits', () => {
-  it('records isolated admission failure on the child without rejecting the driver', async () => {
-    const { app, runId } = fixture(scripted());
-    protocol(app, runId);
-    const isolated = app.coordinator.mailbox.execute(app.store.run(runId), 'non-git-isolated', 'spawn_agent', { objective: 'Synthetic isolated task in a non-Git fixture', permissions: ['read', 'write'], scope: { read: ['.'], write: ['.'] }, execution: 'isolated' }) as { id: string };
-    await expect(app.coordinator.wake(isolated.id)).resolves.toMatchObject({ status: 'failed', error: expect.stringContaining('EXECUTION_GIT') });
-    expect(app.store.calls(isolated.id)).toHaveLength(0);
-    expect(app.store.events(isolated.id, { types: ['run.failed'] }).at(-1)?.data.phase).toBe('execution_admission');
-    expect(app.store.run(runId).status).toBe('queued');
-  });
-
   it('renews internal deadlines without another model request, then wakes on completion', async () => {
     let peer = '';
     const { app, runId } = fixture(scripted(async () => calls(call('wait_for_events', { run_ids: [peer] })), answer('Accepted the completed task.')));

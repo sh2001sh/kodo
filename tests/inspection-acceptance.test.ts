@@ -119,18 +119,19 @@ describe('bounded acceptance evidence', () => {
     expect(() => inspect({ call_ids: ['check'], call_id: 'check' })).toThrowError(expect.objectContaining({ code: 'INSPECT_ARGUMENTS' }));
   });
 
-  it('exposes the aggregate through the real mailbox schema and resolves recorded paths against the execution root', () => {
+  it('exposes the aggregate through the real mailbox schema and resolves recorded paths against the shared workspace', () => {
     const { app, runId, root, child, record, inspect } = setup();
-    const execution = { kind: 'clone' as const, root: `${root}/execution`, sourceRoot: root, baseCommit: '0123456789abcdef' };
-    mkdirSync(`${execution.root}/src`, { recursive: true });
+    mkdirSync(`${root}/src`, { recursive: true });
     app.store.updateRun(runId, { scope: { read: ['src'] } });
-    app.store.updateRun(child.id, { execution, scope: { read: ['src'] } });
-    record('read-in-copy', { content: 'recorded code' }, { name: 'file.read', effect: 'read' }, { path: `${execution.root}/src/index.ts` });
+    app.store.updateRun(child.id, { scope: { read: ['src'] } });
+    record('read-in-copy', { content: 'recorded code' }, { name: 'file.read', effect: 'read' }, { path: `${root}/src/index.ts` });
     expect(inspect({ call_id: 'read-in-copy' })).toMatchObject({ evidence: { text: '{"content":"recorded code"}' } });
     const parent = app.store.run(runId);
     const args = app.coordinator.mailbox.validate(parent, 'inspect_run', JSON.stringify({ run_id: child.id, section: 'acceptance' }));
     const result = app.coordinator.mailbox.execute(parent, 'inspect-summary', 'inspect_run', args) as { acceptance: Page };
-    expect(JSON.parse(result.acceptance.text)).toMatchObject({ execution: { root: execution.root, baseCommit: execution.baseCommit }, parentJudgment: 'not_checked' });
+    const acceptance = JSON.parse(result.acceptance.text) as Record<string, unknown>;
+    expect(acceptance).toMatchObject({ parentJudgment: 'not_checked' });
+    expect(acceptance).not.toHaveProperty('execution');
   });
 
   it('reports task generations and obsolete prerequisites without mutating the run or confusing decision versions', () => {

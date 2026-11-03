@@ -74,10 +74,10 @@ describe('TUI Agent library and explicit launches', () => {
     const { context, complete } = setup();
     const list = await agentCommand(context, []);
     expect(list.items?.some(item => item.id === 'kodo/explorer@1.0.0')).toBe(true);
-    expect(list.items?.some(item => item.id === 'kodo/explorer@1.2.0')).toBe(true);
     expect(list.items?.some(item => item.id === 'kodo/explorer@1.3.0')).toBe(true);
+    expect(list.items?.some(item => item.id === 'kodo/explorer@1.4.0')).toBe(true);
     const search = await agentCommand(context, ['search', 'explorer']);
-    expect(search.items?.filter(item => item.command?.startsWith('/agents show ')).map(item => item.id)).toEqual(['kodo/explorer@1.3.0', 'kodo/explorer@1.2.0', 'kodo/explorer@1.0.0']);
+    expect(search.items?.filter(item => item.command?.startsWith('/agents show ')).map(item => item.id)).toEqual(['kodo/explorer@1.4.0', 'kodo/explorer@1.3.0', 'kodo/explorer@1.0.0']);
     const detail = await agentCommand(context, ['show', 'kodo/explorer@1.0.0']);
     expect(detail.lines.join('\n')).toContain('Case evidence: none recorded');
     expect(detail.lines.join('\n')).toContain('Input question');
@@ -99,7 +99,7 @@ describe('TUI Agent library and explicit launches', () => {
     await agentCommand(context, ['launch', token]);
     const child = app.store.listRuns(session).find(run => run.parentId === runId)!;
     expect(child.card.id).toBe('kodo/explorer');
-    expect(child.card.version).toBe(toolProfile === 'full' ? '1.0.0' : '1.3.0');
+    expect(child.card.version).toBe(toolProfile === 'full' ? '1.0.0' : '1.4.0');
     expect(child.objective).toBe('Locate the entry point.');
     expect(context.wake).toHaveBeenCalledWith(child.id);
     await expect(agentCommand(context, ['launch', token])).rejects.toThrow('expired');
@@ -144,13 +144,13 @@ Change only the assigned documentation roots.
     const panel = await agentCommand(context, ['run', 'kodo/explorer', 'Locate the entry point.', '--slot', 'question=Where does the CLI start?']);
     expect(context.startTask).not.toHaveBeenCalled();
     await agentCommand(context, ['launch', tokenOf(panel)]);
-    expect(context.startTask).toHaveBeenCalledWith('Locate the entry point.', { agent: 'kodo/explorer@1.3.0', slots: { question: 'Where does the CLI start?' }, scope: undefined });
+    expect(context.startTask).toHaveBeenCalledWith('Locate the entry point.', { agent: 'kodo/explorer@1.4.0', slots: { question: 'Where does the CLI start?' }, scope: undefined });
   });
 
   it('keeps an explicitly selected new version outside a frozen full-profile roster', async () => {
     const { context, app, runId, complete } = setup('full');
-    const pending = await agentCommand(context, ['run', 'kodo/explorer@1.2.0', 'Inspect the entry point.', '--slot', 'question=Where does the CLI start?']);
-    expect(pending.lines).toContain('Agent: kodo/explorer@1.2.0');
+    const pending = await agentCommand(context, ['run', 'kodo/explorer@1.3.0', 'Inspect the entry point.', '--slot', 'question=Where does the CLI start?']);
+    expect(pending.lines).toContain('Agent: kodo/explorer@1.3.0');
     expect((await agentCommand(context, ['launch', tokenOf(pending)])).title).toBe('This version requires a new session');
     expect(app.store.listRuns(app.store.run(runId).sessionId)).toHaveLength(1);
     expect(context.wake).not.toHaveBeenCalled();

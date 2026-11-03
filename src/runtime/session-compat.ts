@@ -1,7 +1,10 @@
+import type { Store } from '../storage/index.js';
 import type { Session } from './types.js';
 import { KodoError } from './types.js';
 
 const LEGACY_PROFILE = 'lean-team';
+/** Events only the deleted isolated-checkout subsystem could produce. */
+const LEGACY_EXECUTION_EVENTS = ['execution.snapshot.captured', 'execution.prepared', 'execution.integrated', 'execution.committed'] as const;
 
 /**
  * A lean-team session predates this build: its tool profile and task-graph size
@@ -15,12 +18,44 @@ export function isLegacyLeanSession(session: Session): boolean {
 }
 
 /**
- * Old lean-team sessions stay visible through read-only APIs but must not execute
- * or create children: silently degrading them to the legacy view would change the
- * task's accepted semantics without the author's knowledge. The product is not yet
- * released, so the explicit incompatibility error is the compatibility policy.
+ * Runs and session events written by the deleted isolated-checkout subsystem.
+ * This build can no longer create these markers, so one scan per session is
+ * cached; only external data edits could invalidate it.
  */
-export function assertSessionCompatible(session: Session): void {
-  if (!isLegacyLeanSession(session)) return;
-  throw new KodoError('SESSION_INCOMPATIBLE', 'This session was created by the deleted lean-team task graph and is not compatible with this version. The product has not shipped; start a new task (use `kodo inspect` if the old evidence must be kept).');
+const executionScans = new WeakMap<Store, Map<string, boolean>>();
+
+function scanLegacyExecution(store: Store, sessionId: string): boolean {
+  for (const run of store.listRuns(sessionId)) {
+    const raw = run as unknown as Record<string, unknown>;
+    if (raw.execution !== undefined || raw.executionPending !== undefined) return true;
+    if (store.hasEvent(run.id, { types: [...LEGACY_EXECUTION_EVENTS] })) return true;
+  }
+  return false;
+}
+
+export function isLegacyExecutionSession(store: Store, sessionId: string): boolean {
+  let scans = executionScans.get(store);
+  if (!scans) { scans = new Map(); executionScans.set(store, scans); }
+  const cached = scans.get(sessionId);
+  if (cached !== undefined) return cached;
+  const legacy = scanLegacyExecution(store, sessionId);
+  scans.set(sessionId, legacy);
+  return legacy;
+}
+
+/**
+ * Old isolated-checkout and lean-team sessions stay visible through read-only APIs
+ * but must not execute or create children: silently degrading them to the legacy
+ * behavior would change the task's accepted semantics without the author's
+ * knowledge. The product is not yet released, so the explicit incompatibility
+ * error is the compatibility policy.
+ */
+export function assertSessionCompatible(store: Store, session: Session): void {
+  const execution = isLegacyExecutionSession(store, session.id);
+  const lean = isLegacyLeanSession(session);
+  if (!execution && !lean) return;
+  const reason = execution
+    ? 'This session uses the deleted isolated-checkout execution subsystem and is not compatible with this version.'
+    : 'This session was created by the deleted lean-team task graph and is not compatible with this version.';
+  throw new KodoError('SESSION_INCOMPATIBLE', `${reason} The product has not shipped; start a new task (use \`kodo inspect\` if the old evidence must be kept).`);
 }

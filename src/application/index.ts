@@ -446,7 +446,7 @@ export class Application {
   createRun(options: CreateRunOptions): Run { return this.createResolvedRun(options); }
   /** Host and model delegates share the same transaction, scope checks and child budget. */
   spawnAgent(sessionId: string, request: SpawnAgentRequest): Run {
-    assertSessionCompatible(this.store.session(sessionId));
+    assertSessionCompatible(this.store, this.store.session(sessionId));
     const active = this.store.listRuns(sessionId).filter(run => !run.parentId && !terminal(run.status) && !run.cancelRequested);
     if (active.length !== 1) throw new KodoError('SPAWN_PARENT', active.length ? 'session has multiple active main runs; resolve the continuation before spawning' : 'session has no active main run; start a follow-up before spawning');
     const parent = active[0]!;
@@ -518,7 +518,7 @@ export class Application {
     return run;
   }
   run(runId: string): Promise<Run> {
-    assertSessionCompatible(this.store.session(this.store.run(runId).sessionId));
+    assertSessionCompatible(this.store, this.store.session(this.store.run(runId).sessionId));
     return this.coordinator.drive(runId);
   }
   /** Trusted host validation; callbacks must be reattached after reopening the data directory. */
@@ -540,7 +540,7 @@ export class Application {
   }
   recover(runId: string): Promise<Run> {
     const target = this.store.run(runId);
-    assertSessionCompatible(this.store.session(target.sessionId));
+    assertSessionCompatible(this.store, this.store.session(target.sessionId));
     if (this.coordinator.busy) throw new KodoError('RECOVERY_ACTIVE', 'stop active execution before recovery');
     if (terminal(target.status) && !(target.status === 'failed' && target.error?.startsWith('UNKNOWN_WRITE:'))) throw new KodoError('NOT_INTERRUPTED', 'terminal records remain immutable');
     const recovered = this.store.events(runId, { types: ['recovery.continued'] })[0];
@@ -615,7 +615,7 @@ export class Application {
       let run = this.store.run(runId);
       if (run.parentId) throw new KodoError('INPUT_TARGET', 'user input must target a main run');
       const session = this.store.session(run.sessionId);
-      assertSessionCompatible(session);
+      assertSessionCompatible(this.store, session);
       if (terminal(run.status) || options.mode === 'follow_up') {
         const id = randomUUID();
         const permissions = session.permissions.filter(x => (run.permissions ?? session.permissions).includes(x));

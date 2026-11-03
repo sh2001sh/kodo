@@ -161,7 +161,7 @@ export function declareTasks(store: Store, ownerId: string, declaration: TaskDec
   return store.transaction(() => {
     const current = readTaskGraph(store, ownerId);
     const owner = store.run(ownerId);
-    const { graph, errors } = planTaskDeclaration(current, declaration, { workspace: owner.execution?.root ?? store.session(owner.sessionId).workspace, parentScope: owner.scope, ...options });
+    const { graph, errors } = planTaskDeclaration(current, declaration, { workspace: store.session(owner.sessionId).workspace, parentScope: owner.scope, ...options });
     if (errors.length) throw new KodoError('TASK_GRAPH_INVALID', `delegate rejected; no task changed:\n${errors.join('\n')}`);
     for (const id of declaration.remove ?? []) removeTaskNode(store, ownerId, current.nodes.find(node => node.id === id)!);
     for (const spec of declaration.tasks) writeTaskNode(store, ownerId, graph.nodes.find(node => node.id === spec.id)!, { declared: true });

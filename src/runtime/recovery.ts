@@ -14,8 +14,6 @@ export interface PatchRecoveryProbe {
   bindingSnapshot?(allowed: string[], skillIds?: readonly string[]): Record<string, string>;
   /** Native file probes serialize their read-only evidence with workspace effects. */
   probeNativeForRecovery?(runId: string, call: Call, request: ToolRequest, signal: AbortSignal): Promise<ToolRecoveryCheck>;
-  /** Plan-backed verifier for snapshot integration and host commit calls; undefined for every other call. */
-  planVerifier?(call: Call): ToolRecoveryVerifier | undefined;
 }
 export type RecoveryOutcome = 'succeeded' | 'not_applied' | 'failed';
 export interface RecoveryResolution {
@@ -99,7 +97,7 @@ export class RecoveryManager {
       }
       if (!legacyPatch) {
         const nativeProbe = nativeRecoveryNames.includes(call.name as typeof nativeRecoveryNames[number]) ? this.tools.probeNativeForRecovery?.bind(this.tools) : undefined;
-        const verifier = this.verifiers.get(call.name) ?? this.tools.planVerifier?.(call) ?? (nativeProbe ? (({ run, call, request, signal }) => nativeProbe(run.id, call, request, signal)) satisfies ToolRecoveryVerifier : undefined);
+        const verifier = this.verifiers.get(call.name) ?? (nativeProbe ? (({ run, call, request, signal }) => nativeProbe(run.id, call, request, signal)) satisfies ToolRecoveryVerifier : undefined);
         if (!verifier) {
           const evidence = 'No automatic verifier exists for this effect. Explicit user verification is required.';
           this.observed(runId, call.id, evidence);

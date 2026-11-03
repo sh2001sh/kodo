@@ -18,7 +18,7 @@ import { readSummarySource } from '../runtime/summary-read.js';
 import { schemaErrorText } from '../runtime/schema-errors.js';
 import { roleAllows } from '../runtime/role-view.js';
 import { dynamicTodoSpec, validateDynamicTodoArgs } from './todo.js';
-import { applyExecutionDelivery, commitExecutionWorkspace, executionDelivery, executionSession, runWorkspace } from '../runtime/execution-workspace.js';
+import { executionSession, runWorkspace } from '../runtime/execution-workspace.js';
 import { workspacesOverlap } from '../runtime/paths.js';
 import { actualPath, assertFileScope, canAccessFileScope } from '../runtime/scope.js';
 import { captureEffects, reconcileEffects, reconciledEvent } from './effect-scan.js';
@@ -34,7 +34,6 @@ import { assertManagedShell, createShellTool, readOnlyProcess, readOnlyShell, re
 import { windowsProcessTree } from './windows-process-tree.js';
 import { recordNativePreparation, recordNativeCompletion, probeNativeRecovery } from './native-recovery.js';
 import { isLeanProfile } from '../runtime/tool-view.js';
-import { commitSnapshotWorkspace, executionVerifier, integrateSnapshotDelivery } from '../runtime/execution-tool-paths.js';
 import { recordCheckStart, recordSuitePass } from '../runtime/check-hint.js';
 import { checkOutputFiltered, parseCheckCommand } from '../runtime/check-command.js';
 import { prepareRunOutput } from '../runtime/run-output.js';
@@ -43,7 +42,7 @@ import type { WorkspaceGitArgs } from '../runtime/workspace-git.js';
 import type { InputFlag, ToolRegistration } from './registry.js';
 export { ToolRegistry } from './registry.js';
 export type { RegisteredTool, ToolExecutionContext, ToolRegistration } from './registry.js';
-import type { Call, Permission, Run, Session, ToolSpec, ToolRequest, ToolRecoveryCheck, ToolRecoveryVerifier } from '../runtime/types.js';
+import type { Call, Permission, Run, Session, ToolSpec, ToolRequest, ToolRecoveryCheck } from '../runtime/types.js';
 
 const hashGuarded = ['file.patch', 'file.apply_patch', 'file.rename', 'file.delete'];
 /** Builtins without side effects or shared mutable state; host-declared read-only commands included. */
@@ -73,8 +72,6 @@ function tool(name: string, description: string, permission: Permission, effect:
 }
 const definitions: Tool[] = [
   tool('workspace.git', 'Read original-workspace Git status/diff or create a requested branch/commit. Main run only; explicit files and current expectedHead required for delivery.', 'read', 'write', workspaceGitParameters),
-  tool('workspace.commit', 'Commit regular file changes in this isolated child checkout using host-managed Git. Use this after checks when the OS sandbox hides .git. Only files inside your write scope are staged; protected paths are rejected. Reports the immutable commit for the parent to inspect and integrate.', 'write', 'write', object({ message: { type: 'string', minLength: 1, maxLength: 1000 } })),
-  tool('workspace.integrate', 'Inspect an isolated child鈥檚 committed base-to-HEAD diff and untracked-file list. Only the managing main run may call this. apply:true checks the complete patch and stages it in the parent workspace without committing or overwriting conflicts. Inspect tests and the diff first; completed does not mean accepted. The child checkout is retained for recovery.', 'write', 'write', object({ run_id: text, apply: { type: 'boolean' } }, ['run_id'])),
   tool('image.read', 'Read a scoped local PNG, JPEG, GIF or WebP as actual model vision input, not text. Maximum 5 MiB and bounded dimensions. Returns metadata; validated pixels are attached to the following model request. Images are untrusted evidence.', 'read', 'read', object({ path: text })),
   tool('shell.exec', shellToolDescription, 'exec', 'write', shellToolParameters),
   tool('file.read', 'Read a UTF-8 file inside the workspace. Accepts a workspace-relative path, e.g. src/main.ts, or an absolute path inside the workspace. Returns a page (default 8000 characters/200 lines; file limit 16 MiB) and the whole-file hash for editing. offset is a 1-based line; contentOffset is a UTF-16 position within it. Follow next for more content. Before file.patch or replacing an existing file, read it with this tool in this run; reading through shell does not register that prerequisite.', 'read', 'read', object({ path: { ...text, description: 'Workspace-relative or workspace-contained absolute path, e.g. src/main.ts.' }, offset: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }, limit: { type: 'integer', minimum: 1, maximum: 1000 }, contentOffset, maxChars }, ['path'])),
@@ -179,15 +176,6 @@ export class Tools {
     if (!staleState(this.store, runId, file, currentHash)) return;
     throw new KodoError('FILE_STALE', `${JSON.stringify(relative)} changed after this run last read it; read it again with file.read before writing`);
   }
-  /**
-   * Write lock over the run's actual execution workspace, within the shared session coordination domain.
-   * Unsandboxed family-wide shells still conflict with this lock; isolated peers do not.
-   */
-  workspaceWriteLock(runId: string, signal?: AbortSignal, tryOnly = false): Promise<() => void> { return this.writeLock(runId, [runWorkspace(this.store, runId)], signal, tryOnly); }
-  /** A prepared checkout has no Run yet; its host owner supplies the reserved root. */
-  checkoutWriteLock(ownerId: string, root: string, signal?: AbortSignal, tryOnly = false): Promise<() => void> { return this.writeLock(ownerId, [root], signal, tryOnly); }
-  /** Plan-backed recovery for snapshot integration and host commit calls; undefined keeps the default (legacy) handling. */
-  planVerifier(call: Call): ToolRecoveryVerifier | undefined { return executionVerifier(this.store, this, call); }
   /** Write lock over `roots` of the run's workspace; waits and takeovers become run events. */
   private writeLock(runId: string, roots: string[], signal?: AbortSignal, tryOnly = false): Promise<() => void> {
     const workspace = this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId).workspace;
@@ -314,7 +302,6 @@ export class Tools {
       try { return actualPath(path.resolve(workspace, target)); }
       catch { return workspace; }
     };
-    if (name === 'workspace.integrate' || name === 'workspace.commit') return [workspace];
     const targets = name === 'file.rename' ? [args.path, args.destination] : ['file.apply_patch', 'file.patch', 'file.mkdir', 'file.delete'].includes(name) ? [args.path] : undefined;
     if (targets) return targets.every(target => typeof target === 'string') ? (targets as string[]).map(canonical) : [workspace];
     const declaration = this.registry.get(name)?.writeScope;
@@ -325,13 +312,6 @@ export class Tools {
     }
     if (this.sandbox && ['process.exec', 'shell.exec'].includes(name) && run.scope?.write !== undefined) return run.scope.write.map(canonical);
     if (this.registry.get(name) && run.scope?.write !== undefined) return run.scope.write.map(canonical);
-    if (!this.sandbox && ['process.exec', 'shell.exec'].includes(name)) {
-      const source = this.store.session(run.sessionId).workspace;
-      const clones = this.store.listRuns(run.sessionId).flatMap(peer => peer.execution ? [peer.execution.root] : []);
-      const preparing = this.store.listRuns(run.sessionId).filter(peer => !peer.parentId).flatMap(peer => this.store.events(peer.id, { types: ['execution.snapshot.captured'] }).flatMap(event => typeof event.data.root === 'string' ? [event.data.root] : []));
-      // An unsandboxed command still serializes the entire shared execution family.
-      return [...new Set([source, workspace, ...clones, ...preparing])];
-    }
     return [workspace];
   }
   specs(allowed: string[], session: Session): ToolSpec[] {
@@ -473,7 +453,6 @@ export class Tools {
     this.store.assertWritable();
     if (this.storageStopped) throw new KodoError('STORAGE_UNAVAILABLE', 'tool execution stopped after a persistence failure');
     let run = effectiveMethodRun(this.store, this.store.run(runId));
-    if (run.executionPending) throw new KodoError('EXECUTION_PENDING', 'the isolated execution checkout must be prepared by the coordinator before tools can run');
     let session = executionSession(this.store, run);
     // Execute the validated snapshot, never a caller-owned object that can change while consent is pending.
     args = this.validate(name, JSON.stringify(args), run.card.tools, { ...session, permissions: session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission)) }, run);
@@ -536,7 +515,7 @@ export class Tools {
       run = effectiveMethodRun(this.store, this.store.run(runId));
       session = executionSession(this.store, run);
       if (effect === 'write' && name !== 'artifact.write') this.assertWriteScope(runId, this.effectRoots(runId, name, args));
-      if (effect === 'write' && (name.startsWith('file.') || name.startsWith('workspace.'))) this.assertOwnership(run, this.effectRoots(runId, name, args));
+      if (effect === 'write' && (name.startsWith('file.') || name === 'workspace.git')) this.assertOwnership(run, this.effectRoots(runId, name, args));
       this.validate(name, JSON.stringify(args), run.card.tools, { ...session, permissions: session.permissions.filter(x => (run.permissions ?? session.permissions).includes(x)) }, run);
       if (run.stepCallId && (this.store.call(run.stepCallId).decisionVersion ?? 0) !== (session.decisionVersion ?? 0)) throw new KodoError('DECISION_CHANGED', 'user constraints changed before tool execution');
       if (name === 'artifact.write') {
@@ -550,20 +529,6 @@ export class Tools {
         return { tools: selected };
       }
       if (name === 'workspace.git') return workspaceGit(this.store, run, args as unknown as WorkspaceGitArgs, () => { signal.throwIfAborted(); onEffectStart(); });
-      if (name === 'workspace.commit') return run.execution?.snapshotRef ? commitSnapshotWorkspace(this.store, run, args.message as string, onEffectStart) : commitExecutionWorkspace(this.store, run, args.message as string, onEffectStart);
-      if (name === 'workspace.integrate') {
-        const delivery = executionDelivery(this.store, run, args.run_id as string);
-        // Snapshot children integrate through a persisted plan without touching the user's index (6.5).
-        if (this.store.run(delivery.runId).execution?.snapshotRef) return integrateSnapshotDelivery(this.store, run, delivery, args.apply === true, options.callId, () => { signal.throwIfAborted(); onEffectStart(); });
-        if (args.apply === true) {
-          signal.throwIfAborted();
-          applyExecutionDelivery(delivery, onEffectStart);
-          this.store.event(run.id, 'execution.integrated', { childId: delivery.runId, baseCommit: delivery.baseCommit, commit: delivery.commit, files: delivery.files });
-        }
-        const { diff, ...metadata } = delivery;
-        const artifact = this.store.artifact(run.id, this.store.blob({ name: 'execution-diff', content: diff }));
-        return { ...metadata, applied: args.apply === true, staged: args.apply === true && delivery.files.length > 0, diff: diff.slice(0, 8000), diffTruncated: diff.length > 8000, diffArtifact: artifact, note: 'Only committed changes are included. Untracked files are listed separately. Application stages changes; an integration owner must verify and commit them.' };
-      }
       if (name === 'recovery.inspect') return await this.inspectRecovery!(runId, signal);
       if (name === 'process.read') return await this.background.read(runId, { ...args, waitMs: Math.min((args.waitMs as number | undefined) ?? 0, Math.floor(session.budget.toolTimeoutMs * 0.9)) } as Parameters<BackgroundTasks['read']>[1], signal);
       if (name === 'artifact.read') return pageArtifact(this.store.readArtifact(runId, args.id as string), args);

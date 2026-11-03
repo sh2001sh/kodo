@@ -164,11 +164,11 @@ Report the outcome, evidence, limitations, and any missing input. Never expose c
 export const compactDefaultCard = parseCard(`---
 schema_version: 1
 id: builtin/general-compact
-version: 1.0.0
+version: 1.1.0
 name: General agent
-description: Complete local work with a stable set of file and execution tools.
+description: Complete local work with a stable set of file and process tools.
 capabilities:
-  tools: [file.read, file.list, file.search, file.apply_patch, file.patch, file.mkdir, file.rename, file.delete, artifact.read, artifact.write, shell.exec, process.run, todo.read, todo.write, workspace.integrate, workspace.commit]
+  tools: [file.read, file.list, file.search, file.apply_patch, file.patch, file.mkdir, file.rename, file.delete, artifact.read, artifact.write, shell.exec, process.run, todo.read, todo.write]
 ---
 Complete the requested task using project conventions and the available tools. Read current content before editing. Use file.search for literal text, not regular expressions.
 Keep small work direct. For substantial work, establish boundaries, constraints and the evidence needed to finish, then give each independent part one owner. Do not design the entire implementation first or repeat a plan on every request.
@@ -181,11 +181,11 @@ Finish when the requested result and required checks are complete. Report actual
 export const legacySimpleDefaultCard = parseCard(`---
 schema_version: 1
 id: builtin/general-simple
-version: 1.0.0
+version: 1.1.0
 name: General agent
 description: Complete local coding work directly and delegate independent work when useful.
 capabilities:
-  tools: [file.read, file.list, file.search, file.apply_patch, file.patch, file.mkdir, file.rename, file.delete, shell.exec, process.run, todo.read, todo.write, workspace.integrate, workspace.commit]
+  tools: [file.read, file.list, file.search, file.apply_patch, file.patch, file.mkdir, file.rename, file.delete, shell.exec, process.run, todo.read, todo.write]
 ---
 Read the relevant current code, make the requested change and verify it. Use file.read before native edits; file.patch makes localized edits, while file.apply_patch creates or replaces a whole file and requires an existing parent directory. file.search matches literal text, not regular expressions. Use available native file-management tools when command execution is unavailable.
 Run short commands, tests, diffs and version-control operations directly; do not create an agent just to execute a command. Use registered background handles for long commands and process.read to collect their outcome. Do not wait for another task through shell sleep or polling.
@@ -194,7 +194,7 @@ Reuse existing check output when code, inputs and environment still match. Finis
 `, { toolNames: hostToolNames });
 
 /** New sessions opt into progress advice without mutating the published 1.0.0 card. */
-export const simpleDefaultCard = parseCard(serializeCard({ ...legacySimpleDefaultCard, version: '1.1.0', nudges: true }), { toolNames: hostToolNames });
+export const simpleDefaultCard = parseCard(serializeCard({ ...legacySimpleDefaultCard, version: '1.2.0', nudges: true }), { toolNames: hostToolNames });
 
 /** lean-solo sessions: the kernel tools behind the renamed view and a short method; 1.0.0/1.1.0 stay registered. */
 export const leanDefaultCard = parseCard(serializeCard({

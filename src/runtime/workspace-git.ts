@@ -56,7 +56,7 @@ function diffWithoutFilters(root: string, args: string[]): string {
  * Only these structured operations may touch the original repository metadata.
  */
 export function workspaceGit(store: Store, run: Run, args: WorkspaceGitArgs, markStarted: () => void): unknown {
-  if (run.parentId || run.execution || run.executionPending) throw new KodoError('EXECUTION_OWNER', 'original-workspace Git delivery belongs to the main run');
+  if (run.parentId) throw new KodoError('EXECUTION_OWNER', 'original-workspace Git delivery belongs to the main run');
   const session = store.session(run.sessionId);
   const mutates = args.action === 'branch' || args.action === 'commit';
   for (const permission of mutates ? ['read', 'write'] as const : ['read'] as const) {

@@ -119,7 +119,7 @@ function queuedCancellations(store: Store, parent: Run, args: Record<string, unk
   return ids.map(id => {
     const run = store.listRuns(parent.sessionId).find(item => item.id === id);
     if (!run || run.parentId !== parent.id || !run.todo || !changed.has(run.todo.id)) throw new KodoError('TODO_ACTIVE', `cancelQueued ${id} must name this parent’s dispatched task being changed or removed`);
-    if (run.status !== 'queued' || run.step !== 0 || run.stepCallId || run.waitId || run.execution || run.cancelRequested || run.interruptRequested || store.calls(id).length || store.hasEvent(id, { types: ['execution.prepared'] }) || store.listRuns(parent.sessionId).some(child => child.parentId === id)) {
+    if (run.status !== 'queued' || run.step !== 0 || run.stepCallId || run.waitId || run.cancelRequested || run.interruptRequested || store.calls(id).length || store.listRuns(parent.sessionId).some(child => child.parentId === id)) {
       throw new KodoError('TODO_ACTIVE', `run ${id} may have started; use cancel_agent and wait for settlement before changing its assignment`);
     }
     return run;

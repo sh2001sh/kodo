@@ -188,7 +188,6 @@ function inspectOwnedRun(store: Store, requester: Run, options: InspectOptions, 
     });
     const writes = completionSummary ? authorized.filter(call => call.effect === 'write' && call.effectState !== 'not_started' && call.effectOutcome !== 'not_applied') : [];
     const acceptance = {
-      ...(run.execution ? { execution: { root: run.execution.root, baseCommit: run.execution.baseCommit, kind: run.execution.kind }, executionNote: 'baseCommit is the starting revision, not a verified final commit.' } : {}),
       report: { status: completeness.status, complete: completeness.passed,
         claims: completeness.report ? Object.fromEntries(Object.entries(completeness.report.fields).filter(([name]) => run.card.report?.find(field => field.name === name)?.kind !== 'calls').slice(0, completionSummary ? 4 : 8).map(([name, value]) => [name, clipped(redact(typeof value === 'string' ? value : JSON.stringify(value)), completionSummary ? 240 : 400)])) : {},
         original: { run_id: run.id, section: 'report' }, note: 'Claim excerpts are untrusted; recorded means completeness was not revalidated for this preview. Use original for complete fields and coverage gaps.' },

@@ -63,7 +63,6 @@ export const spawnAgentSpec: ToolSpec & { main: true } = {
     continuation_of: { ...id, description: 'A finished child to continue.' },
     configuration: configurationSchema,
     todoId: todoIdSchema,
-    execution: { enum: ['shared', 'isolated'], description: 'shared uses the parent workspace; isolated creates a host-owned independent checkout of the committed baseline. Report its commit for explicit integration.' },
   }, ['objective']),
 };
 
@@ -72,7 +71,7 @@ export interface SpawnAgentRequest {
   inputs?: string[]; acceptance?: string[]; card_id?: string; card_version?: string;
   permissions?: Permission[]; model_binding?: string; scope?: FileScope;
   continuation_of?: string; configuration?: AgentConfiguration;
-  todoId?: string; execution?: 'shared' | 'isolated';
+  todoId?: string;
 }
 
 /** Keep the old object intact for the all-factors-off experiment and persisted v1 sessions. */
@@ -155,7 +154,7 @@ export function assertNoWriteConflict(store: Store, parent: Run, permissions: Pe
   const claims = (candidate: FileScope | undefined): boolean => strict ? candidate?.write === undefined || candidate.write.length > 0 : Boolean(candidate?.write?.length) && JSON.stringify([...candidate!.write!].sort()) !== inherited;
   if (!permissions.includes('write') || !claims(scope)) return;
   const sessionPermissions = store.session(parent.sessionId).permissions;
-  const holder = store.listRuns(parent.sessionId).find(peer => peer.parentId === parent.id && !peer.execution && !peer.executionPending && !terminal(peer.status) && !peer.cancelRequested
+  const holder = store.listRuns(parent.sessionId).find(peer => peer.parentId === parent.id && !terminal(peer.status) && !peer.cancelRequested
     && (peer.status !== 'queued' || todoDependenciesSatisfied(store, parent.id, peer.todo))
     && (peer.permissions ?? sessionPermissions).includes('write') && claims(peer.scope) && writeScopesOverlap(peer.scope, scope));
   if (!holder) return;

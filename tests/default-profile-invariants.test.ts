@@ -5,7 +5,7 @@ import { toolSpecs } from '../src/runtime/step-host.js';
 import { answer, binding, scripted, temp } from './helpers.js';
 
 /** Serialized default compact-v2 tool catalog; a changed budget must be an explicit, reviewed decision. */
-const COMPACT_V2_TOOL_SPEC_BYTES = 17_278;
+const COMPACT_V2_TOOL_SPEC_BYTES = 17_063;
 const COMPACT_V2_TOOL_NAMES = [
   'file.read', 'file.list', 'file.search', 'artifact.read', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
   'spawn_agent', 'followup_task', 'inspect_run', 'send_message', 'wait_for_events', 'ask_user', 'interrupt_agent', 'cancel_agent',
