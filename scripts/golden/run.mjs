@@ -170,8 +170,11 @@ function publishProgress(context, state, finished = false) {
   writeText(path.join(context.outRoot, 'progress.json'), progressRecord(context, state, finished), context.credentials?.key);
 }
 
+/** Relay rejection codes that the kernel already retries; they abort nothing by themselves. */
+const TRANSIENT_RELAY_REJECTIONS = new Set(['UPSTREAM_TRANSPORT', 'CLIENT_ABORTED']);
+
 /** §7: stop the whole matrix on a fatal cell. Ordinary task failures are results, not stops. */
-function fatalReason(context, state) {
+export function fatalReason(context, state) {
   const { plan } = context;
   // Plan-order prefix of completed cells; concurrency may complete later cells out of order.
   const prefix = [];
@@ -181,7 +184,12 @@ function fatalReason(context, state) {
     prefix.push(report);
   }
   for (const report of prefix) {
-    if (report.relay?.rejected?.length) return `RELAY_REJECTED: ${report.relay.rejected.join(', ')}`;
+    // Budget/config rejections are fatal (a rerun needs a different setup), but a
+    // transient upstream transport failure is retried by the kernel (minute-scale
+    // backoff) and the cell can still complete; it stays a provider failure, not a
+    // reason to abandon the matrix.
+    const fatalRejections = (report.relay?.rejected ?? []).filter(code => !TRANSIENT_RELAY_REJECTIONS.has(code));
+    if (fatalRejections.length) return `RELAY_REJECTED: ${fatalRejections.join(', ')}`;
     if (report.protected && report.protected.ok === false) return 'PROTECTED_VIOLATION';
     if (report.metrics?.usageComplete === false) {
       // An unknown-usage call is explained when it corresponds to a recorded
