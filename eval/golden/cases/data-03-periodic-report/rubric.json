@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "minBytes": 500 } },
+    { "id": "M02", "kind": "markdown-table", "weight": 2, "params": { "path": "deliverables/monthly-report.md", "requiredHeaders": ["月份", "合计", "环比"], "minRows": 3 } },
+    { "id": "M03", "kind": "markdown-table", "weight": 2, "params": { "path": "deliverables/monthly-report.md", "requiredHeaders": ["类别", "合计"], "minRows": 5 } },
+    { "id": "M04", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["2026-07", "2026-08", "2026-09"] } },
+    { "id": "M05", "kind": "file-contains", "weight": 3, "params": { "path": "deliverables/monthly-report.md", "all": ["114325.16", "110368.29", "97463.51"] } },
+    { "id": "M06", "kind": "file-contains", "weight": 3, "params": { "path": "deliverables/monthly-report.md", "all": ["-3.46%", "-11.69%"] } },
+    { "id": "M07", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["办公用品"] } },
+    { "id": "M08", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["96274.26"] } },
+    { "id": "M09", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/monthly-report.md", "all": ["—"] } }
+  ],
+  "rules": []
+}

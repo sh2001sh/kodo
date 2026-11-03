@@ -1,0 +1,33 @@
+{
+  "case": "data-01-stats-chart",
+  "inputRows": 240,
+  "invalidRows": 14,
+  "validRows": 226,
+  "topRegion": "华东",
+  "regions": {
+    "华东": {
+      "total_sales": "85528.13",
+      "mean_sales": "1474.62",
+      "median_sales": "1496.62",
+      "order_count": 58
+    },
+    "华北": {
+      "total_sales": "53777.43",
+      "mean_sales": "995.88",
+      "median_sales": "1061.17",
+      "order_count": 54
+    },
+    "华南": {
+      "total_sales": "42520.76",
+      "mean_sales": "733.12",
+      "median_sales": "765.51",
+      "order_count": 58
+    },
+    "西部": {
+      "total_sales": "29994.35",
+      "mean_sales": "535.61",
+      "median_sales": "538.53",
+      "order_count": 56
+    }
+  }
+}

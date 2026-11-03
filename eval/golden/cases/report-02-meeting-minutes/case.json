@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "report-02-meeting-minutes",
+  "category": "report",
+  "title": "会议纪要整理（决定清单 + 待办表格）",
+  "objective": "你是项目经理助理。materials/ 下有会议记录 meeting-transcript.md 和参会人名单 attendees.md，请据此整理会议纪要 deliverables/minutes.md。\n\n要求：\n1. 会议信息：写明会议时间、地点、主持人、记录人，并在会议信息中列出全部参会人；参会人只能来自 materials/attendees.md，不得虚构参会人。\n2. 决定清单：完整列出本次会议形成的全部决定（不少于 3 条）。\n3. 待办表格：一个 Markdown 表格，列名固定为 负责人 | 截止日期 | 事项，覆盖会议记录中的全部 5 条待办；负责人与截止日期必须与会议记录完全一致，截止日期使用记录中的 YYYY-MM-DD 格式。\n4. 关键讨论摘录：至少 1 处使用中文引号“”逐字摘录会议记录中的原话，不得改写。\n5. 写明下次会议时间。\n\n约束：不得加入 materials/ 中没有的参会人、日期或数据；不需要联网；只写 deliverables/minutes.md，不要修改 materials/ 下的文件。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 100,
+    "maxTokens": 3000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "notes": "报告类样例：会议记录（4.8KB 逐字稿）+ 参会人名单，纪要需含决定清单与 5 行待办表格。rubric 用 markdown-table 校验表头与行数，file-contains 校验 5 位负责人、5 个截止日期、6 位参会人、下次会议日期；none 校验常见虚构人名；citation-sources 规则校验引用的路径真实、中文引号原话可在记录中逐字找到。"
+}

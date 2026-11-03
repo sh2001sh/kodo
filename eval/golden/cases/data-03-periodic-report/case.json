@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "data-03-periodic-report",
+  "category": "data",
+  "title": "季度费用月度报告（合计、环比、最大类别）",
+  "objective": "你是财务数据分析师。请基于 materials/daily_ledger.csv 生成一份季度费用月度报告，写入 deliverables/monthly-report.md。\n\n输入：materials/daily_ledger.csv（UTF-8、逗号分隔），列为 entry_id,date,category,amount；date 为 YYYY-MM-DD，覆盖 2026 年 7 月至 9 月，共 90 天、每天 2 条记录，category 为中文类别名，amount 为金额。\n\n任务：\n1. 按自然月汇总 2026-07、2026-08、2026-09 三个月的费用合计。\n2. 计算 8 月对 7 月、9 月对 8 月的环比变化：环比 = (本月合计 - 上月合计) / 上月合计 × 100%。\n3. 计算各 category 的季度金额合计，找出金额最大的类别。\n4. 写 deliverables/monthly-report.md，必须包含：\n   - 一个 Markdown 表格，表头为 月份 | 合计 | 环比，三行数据分别对应 2026-07、2026-08、2026-09；月份列使用 YYYY-MM 文本，首月环比写 “—”。\n   - 一个 Markdown 表格，表头为 类别 | 合计，列出全部 5 个类别。\n   - 一段文字说明全季度金额最大的类别及其季度合计。\n\n格式要求：金额保留两位小数、不写千分位（如 123456.78）；环比保留两位小数并带 % 号，正数不加 + 号（如 4.25%、-1.80%），首月写 —；所有数字必须来自材料文件，不得编造。\n\n约束：不需要联网；不要修改 materials/ 下的文件。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 100,
+    "maxTokens": 3000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "notes": "数据类样例：90 天 180 条流水，产出 Markdown 月报。objective 固定了月份/金额/百分比的格式，rubric 用 markdown-table 校验两张表结构，用 file-contains 精确核对 3 个月合计、2 个环比百分比与最大类别。"
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "data-02-clean-merge",
+  "category": "data",
+  "title": "订单数据清洗与多表合并",
+  "objective": "你是数据工程师。materials/ 下有三张 UTF-8、逗号分隔的 CSV（orders.csv、customers.csv、products.csv），请按下面的规则清洗并合并订单数据，所有产物写入 deliverables/ 目录。\n\n输入表：\n- materials/orders.csv：列 order_id,order_date,customer_id,product_id,quantity,updated_at。order_date 混用四种格式：YYYY-MM-DD、MM/DD/YYYY、YYYYMMDD、YYYY/M/D；updated_at 为 YYYY-MM-DD HH:MM:SS。数据中有 order_id 为空、order_id 重复、customer_id 或 product_id 缺失/无法关联的行。\n- materials/customers.csv：列 customer_id,customer_name,city,signup_date。\n- materials/products.csv：列 product_id,product_name,category,unit_price。\n\n清洗与合并规则（必须按此顺序执行）：\n1. 剔除 order_id 为空白的行，记下剔除行数 A。\n2. 按 order_id 去重：保留 updated_at 最晚的那一行，记下去重移除行数 B。\n3. 把 order_date 统一为 YYYY-MM-DD 格式。\n4. 剔除 customer_id 为空、或 customer_id 在 customers.csv 中不存在的行；再剔除 product_id 为空、或 product_id 在 products.csv 中不存在的行；两类合计记下剔除行数 C。\n5. 关联出 customer_name、product_name、category；unit_price 取 products.csv 中的单价。\n6. 计算 total_amount = quantity × unit_price，四舍五入保留两位小数。\n7. 写 deliverables/merged.csv：表头固定为 order_id,order_date,customer_id,customer_name,product_id,product_name,category,quantity,unit_price,total_amount；unit_price 与 total_amount 保留两位小数；按 order_id 升序排列；UTF-8、逗号分隔、无 BOM。\n8. 写 deliverables/data-quality.md：写明 orders.csv 原始行数、A、B、C、清洗合并后的最终行数，并说明每一类剔除的原因。\n\n约束：不需要联网；不要修改 materials/ 下的文件。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 100,
+    "maxTokens": 3000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "notes": "数据类样例：清洗规则全部写进 objective（order_id 空值剔除→按 updated_at 去重保留最新→日期统一→无效外键剔除），使期望行数唯一确定。期望值由 verify/gen-data.py 用 pandas 实现参考流水线并交叉核对。"
+}

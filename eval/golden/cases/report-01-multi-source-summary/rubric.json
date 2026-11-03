@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/summary.md", "minBytes": 3500 } },
+    { "id": "M02", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "all": ["结论", "证据", "风险"] } },
+    { "id": "M03", "kind": "file-contains", "weight": 3, "params": { "path": "deliverables/summary.md", "all": ["materials/project-brief.md", "materials/interview-01.md", "materials/interview-02.md", "materials/metrics.csv"] } },
+    { "id": "M04", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["52.4", "52.40"] } },
+    { "id": "M05", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["68.4", "68.40"] } },
+    { "id": "M06", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["3.86"] } },
+    { "id": "M07", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["4.42"] } },
+    { "id": "M08", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["知识库"] } },
+    { "id": "M09", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["合规"] } },
+    { "id": "M10", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["王琳"] } },
+    { "id": "M11", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["陈昊"] } }
+  ],
+  "rules": [
+    { "id": "R01", "kind": "citation-sources", "params": { "path": "deliverables/summary.md", "allowedRoots": ["materials"], "requireExcerpt": true } }
+  ]
+}

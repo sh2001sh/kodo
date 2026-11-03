@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "passThreshold": 0.9,
+  "checks": [
+    { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/minutes.md", "minBytes": 1200 } },
+    { "id": "M02", "kind": "markdown-table", "weight": 3, "params": { "path": "deliverables/minutes.md", "requiredHeaders": ["负责人", "截止日期", "事项"], "minRows": 5 } },
+    { "id": "M03", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/minutes.md", "all": ["2026-11-06", "2026-11-10", "2026-11-13", "2026-11-17", "2026-11-20"] } },
+    { "id": "M04", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/minutes.md", "all": ["张伟", "陈曦", "刘洋", "王琳", "林可"] } },
+    { "id": "M05", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/minutes.md", "all": ["周明远", "张伟", "王琳", "刘洋", "陈曦", "林可"] } },
+    { "id": "M06", "kind": "file-contains", "weight": 2, "params": { "path": "deliverables/minutes.md", "none": ["赵磊", "孙倩", "高翔", "杨帆", "何静"] } },
+    { "id": "M07", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/minutes.md", "all": ["决定"] } },
+    { "id": "M08", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/minutes.md", "all": ["2026-11-24"] } }
+  ],
+  "rules": [
+    { "id": "R01", "kind": "citation-sources", "params": { "path": "deliverables/minutes.md", "allowedRoots": ["materials"], "requireExcerpt": true } }
+  ]
+}

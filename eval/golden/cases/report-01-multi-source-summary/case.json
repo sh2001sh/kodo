@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "report-01-multi-source-summary",
+  "category": "report",
+  "title": "多源材料汇总报告（项目简报 + 两份访谈 + 指标 CSV）",
+  "objective": "你是产品分析师。materials/ 下有 4 份关于“极光”智能客服助手扩量试点的材料：project-brief.md（项目简报）、interview-01.md（访谈记录）、interview-02.md（访谈记录）、metrics.csv（8 周灰度指标）。请通读全部材料，写一份中文汇总报告 deliverables/summary.md。\n\n报告要求：\n1. 全文不少于 1200 字，必须包含三个部分，标题分别为“结论”“证据”“风险”。\n2. 结论部分给出 2-3 条明确判断；证据部分要用指标数据与访谈内容支撑结论；风险部分至少列出 3 条风险并说明影响。\n3. 必须引用全部 4 份材料，来源写法使用 materials/<文件名>（如 materials/metrics.csv）；不得虚构材料之外的事实、人物或数据，也不要编造外部文献、链接。\n4. 报告必须给出 metrics.csv 中首周与末周的问题拦截率（deflection_rate）和 CSAT 数值，并给出至少 2 处访谈原话引用；引用原话必须使用中文引号“”逐字摘录，不得改写。\n5. 只写 deliverables/summary.md 一个产物，不修改 materials/ 下的文件，不需要联网。",
+  "limits": {
+    "contextTokens": 1048576,
+    "outputTokens": 393216,
+    "maxOutputTokens": 16384,
+    "maxModelCalls": 100,
+    "maxTokens": 3000000,
+    "maxToolCalls": 300,
+    "maxDurationMs": 2700000
+  },
+  "permissions": ["read", "write", "exec"],
+  "deliverableDir": "deliverables",
+  "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
+  "materialsGlobs": ["materials/**/*"],
+  "notes": "报告类样例：4 份自洽材料（简报/两访谈/指标 CSV），负责人、日期、关键数字一一对应。rubric 用 citation-sources 规则校验引用路径真实且中文引号片段可在材料中逐字找到；file-contains 校验全部 4 份来源路径、首末周拦截率与 CSAT、风险关键词。"
+}
