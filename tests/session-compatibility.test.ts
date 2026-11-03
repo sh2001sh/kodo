@@ -14,7 +14,7 @@ describe('legacy lean-team session compatibility', () => {
     try {
       const run = app.createRun({ objective: 'Legacy evidence task.', workspace: root, binding });
       const session = app.store.session(run.sessionId);
-      app.store.putSession({ ...session, toolProfile: 'lean-team' } as typeof session);
+      app.store.putSession({ ...session, toolProfile: 'lean-team' } as unknown as typeof session);
 
       expect(caught(() => app.run(run.id))).toMatchObject({ code: 'SESSION_INCOMPATIBLE' });
       expect(caught(() => app.recover(run.id))).toMatchObject({ code: 'SESSION_INCOMPATIBLE' });

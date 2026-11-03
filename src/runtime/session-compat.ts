@@ -7,12 +7,10 @@ const LEGACY_PROFILE = 'lean-team';
  * A lean-team session predates this build: its tool profile and task-graph size
  * budget only exist in data written by the deleted scheduler. Persisted JSON is
  * intentionally still readable (only old records can carry these fields), so the
- * gate reads the raw shape rather than trusting the narrowed session type.
+ * gate reads the raw record shape instead of the narrowed session type.
  */
-interface LegacySessionFields { toolProfile?: string; maxTaskNodes?: unknown }
-
 export function isLegacyLeanSession(session: Session): boolean {
-  const legacy = session as Session & LegacySessionFields;
+  const legacy = session as unknown as Record<string, unknown>;
   return legacy.toolProfile === LEGACY_PROFILE || legacy.maxTaskNodes !== undefined;
 }
 

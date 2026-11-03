@@ -10,7 +10,7 @@ import type { HostHooks } from './hooks.js';
 import { runBudget } from './run-budget.js';
 import { contextOutputReserve } from '../providers/model-limits.js';
 import { roleAllows } from './role-view.js';
-import { isLeanProfile, leanChildRole, leanToolSpecs, viewExec } from './tool-view.js';
+import { isLeanProfile, leanToolSpecs, viewExec } from './tool-view.js';
 
 /** Coordinator capabilities shared by the step modules; durable state stays in the store. */
 export interface StepHost {
@@ -49,7 +49,7 @@ export function toolSpecs(host: StepHost, run: Run, session: Session): ToolSpec[
   const native = host.tools.requestSpecs(run, effectiveSession(run, session), capacity);
   const collaboration = host.mailbox.specs(run).filter(spec => session.methodToolView !== 'active' || !activeMethod(host.store, run.id) || methodControlTools.includes(spec.name));
   const all = [...native, ...collaboration].filter(spec => roleAllows(run, session, spec.name));
-  if (isLeanProfile(session.toolProfile) && (!run.parentId || session.toolProfile === 'lean-team')) return leanToolSpecs(all, viewExec(run, effectiveSession(run, session)), leanChildRole(run));
+  if (isLeanProfile(session.toolProfile) && !run.parentId) return leanToolSpecs(all, viewExec(run, effectiveSession(run, session)));
   // Benchmark-only ablation (KODO_ABLATION=small-tools): expose just the file and process tools.
   return process.env.KODO_ABLATION === 'small-tools' ? all.filter(spec => ablationCoreTools.includes(spec.name)) : all;
 }

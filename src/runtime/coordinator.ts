@@ -315,7 +315,7 @@ export class RunCoordinator implements StepHost {
   private continuationReady(run: Run): boolean {
     if (!run.continuationOf) return true;
     const source = this.store.run(run.continuationOf);
-    return terminal(source.status) || Boolean(run.taskNode && source.status === 'interrupted' && !this.active.has(source.id) && !this.stopping.has(source.id) && !this.tools.hasInFlightEffects(source.id));
+    return terminal(source.status);
   }
   revokeSession(sessionId: string): void {
     for (const [id, controllers] of this.toolControllers) if (this.store.run(id).sessionId === sessionId) for (const controller of controllers) controller.abort(new KodoError('PERMISSIONS_REVOKED', 'user changed effective permissions'));

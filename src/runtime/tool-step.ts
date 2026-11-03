@@ -370,7 +370,7 @@ export async function runToolStep(host: StepHost, run: Run, modelCall: Call, res
   // Instruction files reached by this batch follow its results, before advisory feedback.
   const touched = store.transaction(() => touchedInstructions(store, store.run(run.id), executionSession(store, store.run(run.id)), requests.map(request => ({ request, succeeded: store.call(`${modelCall.id}:${request.id}`).status === 'succeeded' }))));
   // Lean views name tools as advertised; only runtime-authored text is rewritten.
-  const profile = (!run.parentId || store.session(run.sessionId).toolProfile === 'lean-team') && isLeanProfile(store.session(run.sessionId).toolProfile) ? store.session(run.sessionId).toolProfile : undefined;
+  const profile = !run.parentId && isLeanProfile(store.session(run.sessionId).toolProfile) ? store.session(run.sessionId).toolProfile : undefined;
   const attachments = orderAttachments([...notices, ...(touched ? [touched] : []), ...extra.messages]).map(message => profile && typeof message.content === 'string' ? { ...message, content: viewText(profile, message.content) } : message);
   const context = [...store.readBlob<Message[]>(run.contextRef), response.message, ...resultMessages(host, modelCall, requests, profile), ...attachments];
   const contextRef = store.blob(context);

@@ -18,21 +18,6 @@ export function executionSession(store: Store, run: Run): Session {
   return run.execution ? { ...session, workspace: runWorkspace(store, run) } : session;
 }
 
-/** A resumed task may retain its interrupted predecessor's checkout after that turn has stopped. */
-function retiredTaskTurn(store: Store, child: Run, peer: Run): boolean {
-  if (peer.status !== 'interrupted' || !peer.taskNode || !child.taskNode || peer.taskNode.nodeId !== child.taskNode.nodeId || peer.taskNode.generation !== child.taskNode.generation) return false;
-  const seen = new Set([child.id]);
-  let current = child;
-  while (current.continuationOf && !seen.has(current.continuationOf)) {
-    const previous = store.run(current.continuationOf);
-    if (previous.sessionId !== child.sessionId || previous.taskNode?.nodeId !== child.taskNode.nodeId || previous.taskNode.generation !== child.taskNode.generation || previous.execution?.root !== child.execution?.root) return false;
-    if (previous.id === peer.id) return true;
-    seen.add(previous.id);
-    current = previous;
-  }
-  return false;
-}
-
 /** Managed Git; `extraEnv` is applied after inherited GIT_* variables are stripped. */
 export function git(cwd: string, args: string[], input?: string, extraEnv: Record<string, string> = {}): string {
   // Managed Git must not inherit a different repository or execute host hooks.
@@ -136,7 +121,7 @@ export function executionDelivery(store: Store, requester: Run, childId: string)
   if (!permissions.includes('read') || !(requester.permissions ?? permissions).includes('read')) throw new KodoError('EXECUTION_PERMISSION', 'read permission is required to inspect and integrate a delivery');
   if (!terminal(child.status) || store.calls(child.id).some(call => ['planned', 'running', 'unknown'].includes(call.status))) throw new KodoError('EXECUTION_ACTIVE', 'settle the child and its effects before inspecting its delivery');
   const { root, sourceRoot, baseCommit } = child.execution;
-  if (store.listRuns(child.sessionId).some(peer => peer.id !== child.id && peer.execution?.root === root && ((!terminal(peer.status) && !retiredTaskTurn(store, child, peer)) || store.calls(peer.id).some(call => ['planned', 'running', 'unknown'].includes(call.status))))) throw new KodoError('EXECUTION_ACTIVE', 'a continuation still owns this checkout; wait for its delivery');
+  if (store.listRuns(child.sessionId).some(peer => peer.id !== child.id && peer.execution?.root === root && ((!terminal(peer.status)) || store.calls(peer.id).some(call => ['planned', 'running', 'unknown'].includes(call.status))))) throw new KodoError('EXECUTION_ACTIVE', 'a continuation still owns this checkout; wait for its delivery');
   if (realpathSync(sourceRoot) !== realpathSync(runWorkspace(store, requester))) throw new KodoError('EXECUTION_BASE', 'the child delivery belongs to a different execution root');
   if (git(root, ['status', '--porcelain', '--untracked-files=no']).trim()) throw new KodoError('EXECUTION_DIRTY', 'the child must commit tracked changes before delivery');
   const commit = git(root, ['rev-parse', 'HEAD']).trim();

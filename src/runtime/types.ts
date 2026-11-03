@@ -111,9 +111,7 @@ export interface Session {
   /** Frozen task semantics: absent/1 is legacy, 2 adds parallel dependencies, 3 adds atomic graph updates. */
   taskProtocol?: 1 | 2 | 3;
   /** Frozen model-visible tool profile; absent preserves the original card view. */
-  toolProfile?: 'compact-v1' | 'compact-v2' | 'full' | 'lean-solo' | 'lean-team';
-  /** Session task-graph size budget (lean-team only); absent defaults to 32. */
-  maxTaskNodes?: number;
+  toolProfile?: 'compact-v1' | 'compact-v2' | 'full' | 'lean-solo';
 }
 export interface Run {
   id: string; sessionId: string; objective: string; status: RunStatus; card: Card;
@@ -122,8 +120,6 @@ export interface Run {
   /** A resumable current-turn pause, distinct from cancellation and crash recovery. */
   interruptRequested?: boolean;
   parentId?: string;
-  /** Host-owned lean task association; separate from the legacy todo protocol. */
-  taskNode?: { ownerId: string; nodeId: string; role: string; generation: number };
   /** Stable child identity across task runs; initial child ID for newly created agents. */
   agentId?: string;
   permissions?: Permission[]; inputCursor?: number; waitId?: string;
@@ -201,8 +197,6 @@ export interface Envelope {
 }
 export interface Wait {
   id: string; runId: string; questionIds: string[]; runIds: string[];
-  /** Lean graph waits include not-yet-created child runs and integration. */
-  taskNodeIds?: string[];
   mode: 'any' | 'all'; deadline: number; status: 'registered' | 'settled';
   reason?: string;
   /** Internal polling deadline renews without generating a model wake. */

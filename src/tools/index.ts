@@ -436,7 +436,7 @@ export class Tools {
     if (!definition || (!leanGit && !implied(name, allowed) && !allowed.includes(name) && !(this.lazyTools && name === 'tool.describe')) || (name === 'tool.describe' && !this.lazyTools) || !session.permissions.includes(definition.permission)) throw new KodoError('TOOL_DENIED', 'tool is not authorized for this run');
     let value: unknown;
     try { value = JSON.parse(args); } catch { throw new KodoError('TOOL_ARGUMENTS', 'arguments must be complete JSON'); }
-    const check = isLeanProfile(session.toolProfile) && (!run.parentId || session.toolProfile === 'lean-team') ? observedValidators.get(name) ?? definition.validate : definition.validate;
+    const check = isLeanProfile(session.toolProfile) && !run.parentId ? observedValidators.get(name) ?? definition.validate : definition.validate;
     if (session.taskProtocol === 3 && dynamicTodoSpec(name)) validateDynamicTodoArgs(name, value);
     else if (!check(value)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the ${name} schema: ${schemaErrorText(check.errors)}`);
     if (name === 'shell.exec') {
@@ -758,7 +758,7 @@ export class Tools {
         // Lean exact replacements can reuse content obtained outside file.read.
         // An existing observation still requires freshness; whole-file writes retain the read prerequisite.
         const unseenExactEdit = name === 'file.patch' && observed && isLeanProfile(session.toolProfile)
-          && (!run.parentId || session.toolProfile === 'lean-team') && !this.store.fileStates.get(runId, file);
+          && !run.parentId && !this.store.fileStates.get(runId, file);
         this.assertFresh(runId, file, old, args.path as string, !unseenExactEdit, observed && !unseenExactEdit ? name === 'file.apply_patch' ? 'create' : 'edit' : undefined);
         // With read access the current hash is already disclosable; returning it lets a finalizing run correct the save without another read.
         if (!observed && old !== args.expectedHash) throw new KodoError('FILE_CONFLICT', `file content changed or expectedHash does not match${readable(run, session) ? `; current hash is ${old === null ? 'null (file absent)' : old}` : ''}`);

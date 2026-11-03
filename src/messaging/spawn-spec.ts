@@ -100,7 +100,7 @@ export const followupTaskSpec: ToolSpec & { main: true } = {
 
 /** Keep unfinished work counted through cancellation and effect reconciliation. */
 export function childIsActive(store: Store, child: Run): boolean {
-  return (!terminal(child.status) && !(child.taskNode && child.status === 'interrupted')) || store.calls(child.id).some(call => {
+  return !terminal(child.status) || store.calls(child.id).some(call => {
     if (call.kind !== 'tool' || !['planned', 'running', 'unknown'].includes(call.status)) return false;
     if (call.effect !== 'write' || call.status === 'planned') return true;
     const resolution = recoveryResolution(store, child.id, call.id);

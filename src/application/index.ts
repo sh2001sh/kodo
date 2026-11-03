@@ -594,8 +594,6 @@ export class Application {
       }
       for (const peer of this.store.listRuns(target.sessionId)) if ( !terminal(peer.status)) {
         const parentId = peer.parentId ? replacements.get(peer.parentId) : undefined;
-        const taskOwner = peer.taskNode ? replacements.get(peer.taskNode.ownerId) : undefined;
-        if (taskOwner) this.store.updateRun(peer.id, { taskNode: { ...peer.taskNode!, ownerId: taskOwner } });
         if (parentId) {
           const session = this.store.session(peer.sessionId);
           const permissions = session.permissions.filter(permission => (peer.permissions ?? session.permissions).includes(permission));

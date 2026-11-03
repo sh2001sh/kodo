@@ -14,7 +14,7 @@ export interface LeanHistoryPointer { tool: 'read'; args: { history: string; off
 export type HistoryPointer<A extends HistoryReadArgs = HistoryReadArgs> = KernelHistoryPointer<A> | LeanHistoryPointer;
 
 /** True when the frozen profile shows the lean tool view (`read` instead of history/artifact tools). */
-export const leanProfile = (profile: string | undefined): boolean => profile === 'lean-solo' || profile === 'lean-team';
+export const leanProfile = (profile: string | undefined): boolean => profile === 'lean-solo';
 
 /**
  * Render a history read pointer for the profile. Old profiles get the given args

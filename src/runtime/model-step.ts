@@ -97,7 +97,7 @@ async function buildRequest(host: StepHost, runId: string, signal: AbortSignal, 
   const stored = store.readBlob<Message[]>(run.contextRef);
   const hardCapacityTokens = Math.min(run.modelLimits?.input ?? session.modelLimits?.input ?? Infinity, budget.maxContextTokens - contextOutputReserve(budget));
   // Benchmark-only ablation (KODO_ABLATION=no-state): send requests without the L7 frame.
-  const lean = isLeanProfile(session.toolProfile) && (!run.parentId || session.toolProfile === 'lean-team');
+  const lean = isLeanProfile(session.toolProfile) && !run.parentId;
   const frame = (pressure?: Parameters<typeof stateFrame>[3]): Message | undefined => lean ? leanStateFrame(host, run, session, pressure) : stateFrame(host, run, session, pressure);
   const withoutState = process.env.KODO_ABLATION === 'no-state';
   let state = withoutState ? undefined : frame();
