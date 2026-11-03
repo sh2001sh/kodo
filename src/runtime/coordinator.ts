@@ -25,7 +25,6 @@ import type { CompletionValidator, Message, ModelBinding, ModelResponse, Provide
 import type { ProjectKnowledge } from '../knowledge/index.js';
 import { refreshTodoDependencies, todoRunReady } from './todo-dependencies.js';
 import { preparePendingExecution } from './execution-admission.js';
-import { TaskRuntime } from './task-runtime.js';
 import { taskGraphTerminalCheck } from './task-completion.js';
 
 export { runBudget } from './run-budget.js';
@@ -39,7 +38,6 @@ export class RunCoordinator implements StepHost {
   readonly tools: Tools;
   readonly mailbox: Mailbox;
   readonly recovery: RecoveryManager;
-  readonly tasks: TaskRuntime;
   readonly knowledge?: ProjectKnowledge;
   readonly compaction?: CompactionPolicy;
   readonly assembly?: AssemblyPolicy;
@@ -73,10 +71,8 @@ export class RunCoordinator implements StepHost {
       knowledgeUses: options.knowledge ? (run, uses) => options.knowledge!.adopt(run.id, uses) : undefined,
       globalInstructions: options.globalInstructions,
       interrupt: id => this.interrupt(id), resumeInterrupted: id => this.resumeInterrupted(id),
-      taskOperation: (run, callId, name, args) => this.tasks.operation(run, callId, name, args),
     });
     this.recovery = new RecoveryManager(store, this.tools);
-    this.tasks = new TaskRuntime({ store, tools: this.tools, mailbox: this.mailbox, busy: id => this.active.has(id) || this.stopping.has(id), cancel: id => this.cancel(id, { initiator: 'parent', by: store.run(id).parentId }), interrupt: id => this.interrupt(id), waitForStop: id => this.waitForStop(id) });
     store.onFault(error => this.stopForStorageFault(error));
   }
   setCompletionValidator(runId: string, validator: CompletionValidator): void {
@@ -150,7 +146,6 @@ export class RunCoordinator implements StepHost {
     this.assertHealthy();
     const run = this.store.run(runId);
     if (terminal(run.status) || run.cancelRequested) return;
-    if (!run.parentId) this.tasks.stop(runId);
     this.store.transaction(() => {
       this.store.updateRun(runId, { cancelRequested: true, interruptRequested: false });
       this.store.event(runId, 'run.cancel_requested', { ...origin });
@@ -163,7 +158,6 @@ export class RunCoordinator implements StepHost {
     this.assertHealthy();
     const run = this.store.run(runId);
     if (terminal(run.status) || run.cancelRequested || run.interruptRequested) return;
-    if (!run.parentId) this.tasks.stop(runId);
     this.store.updateRun(runId, { interruptRequested: true });
     this.store.event(runId, 'run.interrupt_requested', { inputSeq: this.store.inbox(runId).at(-1)?.seq ?? run.inputCursor ?? 0 });
     this.beginStop(runId, 'interrupted');
@@ -254,7 +248,6 @@ export class RunCoordinator implements StepHost {
     for (const clock of this.sessionClocks.values()) clearTimeout(clock.timer);
     for (const active of this.active.values()) active.controller.abort(error);
     for (const controllers of this.toolControllers.values()) for (const controller of controllers) controller.abort(error);
-    void this.tasks.shutdown().catch(() => { /* The original storage fault remains the reported cause. */ });
     void this.tools.stopForStorageFault(error).catch(() => { /* The original storage fault remains the reported cause. */ });
   }
   /** Drive peers until this run ends or the session needs user input. Durable state is authoritative. */
@@ -276,15 +269,12 @@ export class RunCoordinator implements StepHost {
         // A run can leave `active` after the pass below saw it busy and without a further event; waiting on it
         // makes that exit start another pass, so a settled task child is always observed.
         const observed = [...this.active.entries()].filter(([id]) => this.store.run(id).sessionId === sessionId).map(([, x]) => x.promise);
-        await this.tasks.tickForModel(sessionId);
         this.mailbox.refreshAll(sessionId);
         for (const parentId of new Set(this.store.listRuns(sessionId).flatMap(run => run.parentId ? [run.parentId] : []))) refreshTodoDependencies(this.store, parentId);
         let target = this.store.run(runId);
         if (terminal(target.status) || target.status === 'interrupted') {
-          if (!target.parentId) await this.tasks.settle(target.id);
           await Promise.all([...this.stopping.entries()].filter(([id]) => this.store.run(id).sessionId === sessionId).map(([, promise]) => promise));
           if (!target.parentId && terminal(target.status) && !this.store.hasEvent(runId, { types: ['session.ended'] })) {
-            await this.tasks.cleanup(target);
             const endedHook = await this.hooks.run('session.end', { runId, data: { status: target.status } });
             this.store.transaction(() => {
               const current = this.store.run(runId);
@@ -301,11 +291,10 @@ export class RunCoordinator implements StepHost {
         if (!active.length && this.mailbox.userQuestions(sessionId).length) return target;
         const waits = this.store.waits(sessionId, true).filter(x => this.store.run(x.runId).waitId === x.id && this.store.run(x.runId).sessionId === sessionId && !terminal(this.store.run(x.runId).status) && this.store.run(x.runId).status !== 'interrupted');
         const stopping = [...this.stopping.values()];
-        const taskRetry = this.tasks.retryDelay(sessionId);
-        if (!active.length && !waits.length && !stopping.length && taskRetry === undefined) return target;
+        if (!active.length && !waits.length && !stopping.length) return target;
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<void>(resolve => {
-          if (waits.length || taskRetry !== undefined) timer = setTimeout(resolve, Math.max(0, Math.min(...waits.map(x => x.deadline), taskRetry === undefined ? Infinity : Date.now() + taskRetry) - Date.now()));
+          if (waits.length) timer = setTimeout(resolve, Math.max(0, Math.min(...waits.map(x => x.deadline)) - Date.now()));
         });
         try { await Promise.race([notification, timeout, ...active, ...observed, ...stopping]); }
         finally { clearTimeout(timer); }
@@ -314,23 +303,21 @@ export class RunCoordinator implements StepHost {
   }
   async shutdown(): Promise<void> {
     if (this.storageFailure !== undefined) {
-      await Promise.allSettled([this.tools.stopForStorageFault(this.storageFailure), this.tasks.shutdown()]);
+      await Promise.allSettled([this.tools.stopForStorageFault(this.storageFailure)]);
       return;
     }
     for (const id of this.drivers.keys()) this.cancel(id, { initiator: 'shutdown' });
     for (const id of this.active.keys()) this.cancel(id, { initiator: 'shutdown' });
     await Promise.all([...this.stopping.values(), ...this.drivers.values()]);
-    await this.tasks.shutdown();
     await this.tools.stopAllBackground('runtime shutdown');
   }
-  get busy(): boolean { return this.active.size > 0 || this.drivers.size > 0 || this.stopping.size > 0 || this.tasks.busy; }
+  get busy(): boolean { return this.active.size > 0 || this.drivers.size > 0 || this.stopping.size > 0; }
   private continuationReady(run: Run): boolean {
     if (!run.continuationOf) return true;
     const source = this.store.run(run.continuationOf);
     return terminal(source.status) || Boolean(run.taskNode && source.status === 'interrupted' && !this.active.has(source.id) && !this.stopping.has(source.id) && !this.tools.hasInFlightEffects(source.id));
   }
   revokeSession(sessionId: string): void {
-    for (const run of this.store.listRuns(sessionId)) if (!run.parentId) this.tasks.stop(run.id);
     for (const [id, controllers] of this.toolControllers) if (this.store.run(id).sessionId === sessionId) for (const controller of controllers) controller.abort(new KodoError('PERMISSIONS_REVOKED', 'user changed effective permissions'));
     for (const [id, active] of this.active) if (this.store.run(id).sessionId === sessionId) active.controller.abort(new KodoError('PERMISSIONS_REVOKED', 'user changed effective permissions'));
   }
@@ -470,7 +457,6 @@ export class RunCoordinator implements StepHost {
           this.store.updateRun(runId, { status: 'running' });
           this.store.event(runId, 'run.started', {});
         });
-        if (!run.parentId) await this.tasks.tickForModel(run.sessionId);
         const outcome = await this.executeStep(runId, controller.signal);
         this.store.transaction(() => {
           const current = this.store.run(runId);

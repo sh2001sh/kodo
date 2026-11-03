@@ -31,7 +31,6 @@ import { cardDirectoryTool, cardSearchTool, searchCards } from '../agents/discov
 import { cardRoutingTool } from '../agents/routing.js';
 import type { RoutingPolicy } from '../agents/routing.js';
 import { carryRecoveryTodo, todoTools } from '../tools/todo.js';
-import { carryRecoveryTaskGraphs } from '../runtime/task-recovery.js';
 import { lspTools } from '../tools/lsp.js';
 import type { LspOptions } from '../tools/lsp.js';
 import { createWebFetchTool } from '../tools/webfetch.js';
@@ -609,7 +608,6 @@ export class Application {
       }
       for (const [sourceId, targetId] of replacements) carryRecoveryTodo(this.store, sourceId, targetId, replacements);
       for (const run of runs) this.coordinator.prepareResume(run.id);
-      carryRecoveryTaskGraphs(this.store, target.sessionId, replacements, runs.map(run => run.id));
     });
     return this.run(resumedId);
   }

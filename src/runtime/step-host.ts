@@ -27,7 +27,6 @@ export interface StepHost {
   /** Controllers of in-flight tool calls per run; a parallel batch has several. */
   readonly toolControllers: Map<string, Set<AbortController>>;
   readonly completionValidators: Map<string, CompletionValidator>;
-  readonly tasks?: { wait(run: Run, nodeIds: string[], mode: 'any' | 'all'): { waitId: string } };
   onText(runId: string, text: string): void;
   acquireModel(run: Run, signal: AbortSignal): Promise<() => void>;
 }
