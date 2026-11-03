@@ -23,7 +23,7 @@ export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card'
   }
   // Limit the default general workflow only. Explicit specialist/custom cards keep
   // their declared tools; this view never substitutes for permission checks.
-  if (session.toolProfile === 'compact-v1' && /^builtin\/general-compact(?:-(?:memory|verify|web|lsp))*(?:-roster-[a-f0-9]{12})?$/u.test(run.card?.id ?? '')) {
+  if (session.toolProfile === 'compact-v1' && /^builtin\/general-compact(?:-(?:memory|verify|web|lsp))*$/u.test(run.card?.id ?? '')) {
     if (name.startsWith('agent.') || name.startsWith('knowledge.') || ['explore', 'exploration.plan', 'update_progress', 'list_agents'].includes(name)) return false;
   }
   if (!session.agentFactors?.E || run.parentId) return true;

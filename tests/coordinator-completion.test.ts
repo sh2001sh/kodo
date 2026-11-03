@@ -146,7 +146,7 @@ describe('registered effect lifecycle', () => {
     const main = app.store.run(runId);
     const allowed = [...main.card.tools, 'custom.write'];
     app.store.updateRun(runId, { card: { ...main.card, tools: allowed }, toolBindings: app.coordinator.tools.bindingSnapshot(allowed) });
-    const peer = app.store.transaction(() => app.coordinator.mailbox.execute(app.store.run(runId), 'spawn-peer', 'spawn_agent', { objective: 'Peer reader', permissions: ['read'], configuration: { tools: ['file.read'] } })) as { id: string };
+    const peer = app.store.transaction(() => app.coordinator.mailbox.execute(app.store.run(runId), 'spawn-peer', 'spawn_agent', { objective: 'Peer reader', permissions: ['read'] })) as { id: string };
     peerId = peer.id;
     // Independent reads continue, but a final candidate cannot settle unknown effects.
     expect(await app.coordinator.wake(runId)).toMatchObject({ status: 'failed', error: expect.stringMatching(/^UNKNOWN_WRITE:/) });

@@ -63,7 +63,7 @@ describe('compact stable tool profile', () => {
     }
     // Factor E remains an independent explicit role restriction.
     expect(roleAllows(run, { agentFactors: { E: true }, toolProfile: 'compact-v1' }, 'shell.exec')).toBe(false);
-    const configuredDefault = { card: { ...compactDefaultCard, id: 'builtin/general-compact-web-lsp-roster-0123456789ab' } };
+    const configuredDefault = { card: { ...compactDefaultCard, id: 'builtin/general-compact-web-lsp' } };
     expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'web.fetch')).toBe(true);
     expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'lsp.hover')).toBe(true);
     expect(roleAllows(configuredDefault, { agentFactors: { E: false }, toolProfile: 'compact-v1' }, 'agent.derive')).toBe(false);

@@ -414,7 +414,9 @@ export class Store {
     const mark = (content: string): void => {
       for (const ref of content.match(/[a-f0-9]{64}/g) ?? []) if (!marked.has(ref)) { marked.add(ref); queue.push(ref); }
     };
-    for (const table of ['sessions', 'runs', 'calls', 'card_versions', 'artifacts', 'events', 'messages', 'waits', 'decisions', 'knowledge_versions', 'file_checkpoints', 'agent_drafts', ...(hasCaseRuns ? ['case_runs'] : [])]) {
+    // Deleted-subsystem tables (roster/drafts/derived agents) are deliberately not read
+    // or scanned: old data directories keep them untouched, new databases never create them.
+    for (const table of ['sessions', 'runs', 'calls', 'card_versions', 'artifacts', 'events', 'messages', 'waits', 'decisions', 'knowledge_versions', 'file_checkpoints', ...(hasCaseRuns ? ['case_runs'] : [])]) {
       for (const row of this.#db.prepare(`SELECT * FROM ${table}`).iterate()) mark(JSON.stringify(row));
     }
     // References can be nested inside archived snapshots, JSON message strings or segment manifests.

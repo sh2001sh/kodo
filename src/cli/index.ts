@@ -21,7 +21,7 @@ const help = `Kodo development preview (collaboration kernel)
   kodo spawn <session-id> --objective "task" [--model-binding ALIAS] [--scope JSON] [--json]
   kodo runs [--json]
   kodo gc [--vacuum] [--older-than-days N]
-  kodo methods <run-id> [--card file | --disable id] [--digest roster-digest]
+  kodo methods <run-id> [--card file | --disable id] [--digest method-catalog-digest]
   kodo inspect <run-id> [--context] [--json]
   kodo context <run-id> [--json]
   kodo context-report <run-id> [--json]  (C0 aggregation across the run's session)

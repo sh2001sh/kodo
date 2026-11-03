@@ -725,7 +725,7 @@ function explorationMainCard(structured: boolean): Card {
   return parseCard(`---
 schema_version: 1
 id: builtin/exploration-main
-version: ${structured ? '1.2.0' : '1.1.0'}
+version: ${structured ? '1.3.0' : '1.2.0'}
 name: Project exploration agent
 description: Complete local tasks with optional bounded exploration and private project knowledge.
 capabilities:

@@ -71,7 +71,7 @@ function discoverWithinTokens(input: DiscoveryInput, tokens?: number, trigger = 
   return chain;
 }
 
-/** Initial assembly after the session roster and provisional run have been stored. */
+/** Initial assembly after the session and provisional run have been stored. */
 export function prepareInstructionContext(store: Store, run: Run, session: Session, options: { global: string | false; memory?: boolean; inherited?: RunInstructions }): { messages: Message[]; instructions: RunInstructions } {
   session = executionSession(store, run);
   const factors = normalizeAgentFactors(session.agentFactors);
@@ -83,7 +83,7 @@ export function prepareInstructionContext(store: Store, run: Run, session: Sessi
   const budgetTokens = enabled ? Math.floor(runInstructionCapacity(run, session) / bytesPerToken) : undefined;
   const methodTokens = enabled ? instructionMessageTokens(base[1]) : 0;
   if (budgetTokens !== undefined && methodTokens > budgetTokens) throw new KodoError('CARD_INSTRUCTION_BUDGET', `card method needs ${methodTokens} estimated tokens but the shared instruction allowance is ${budgetTokens}; shorten the card method or select a larger input capacity`);
-  // Project/card instructions take priority over optional roster detail. Both
+  // Project/card instructions take priority over optional session method detail. Both
   // share the same allowance with the mandatory method configuration.
   const loaded = initialInstructions(session.workspace, { ...options, capacityBytes: runInstructionCapacity(run, session), scope: run.scope,
     cardRules: run.card.constraints?.rules ?? [], capacityTokens: budgetTokens === undefined ? undefined : Math.max(0, budgetTokens - methodTokens) });
