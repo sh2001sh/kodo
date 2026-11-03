@@ -8,5 +8,5 @@ export default defineConfig({
   // KODO_HOME keeps global instructions and cross-process write locks out of the user's home.
   // FULL-sync storage and real child startup can exceed Vitest's default 5s on
   // a busy workstation. Runtime deadlines remain asserted inside the tests.
-  test: { include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'], maxWorkers: 1, testTimeout: 30_000, env: { KODO_HOME: path.join(os.tmpdir(), `kodo-test-home-${process.pid}`) } },
+  test: { include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'], maxWorkers: 1, testTimeout: 30_000, env: { KODO_HOME: path.join(os.tmpdir(), `kodo-test-home-${process.pid}`), KODO_TEST_RETRY_DELAY_MS: '0' } },
 });

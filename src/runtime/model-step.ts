@@ -33,6 +33,25 @@ interface Lease { release?: () => void }
 const legacySystemPrefixes = ['Current decision version:', 'Current execution environment:', 'Kernel execution state: '];
 
 /**
+ * Minute-scale transport backoff: the first retry waits about 30s and the second
+ * about 60s, so a short gateway outage no longer kills a long task. A provider
+ * retry-after can only lengthen the wait; the session duration budget still caps
+ * the total. Recorded event delays are always these production values.
+ */
+export function transportBackoffMs(transientAttempt: number, retryAfterMs?: number): number {
+  const base = transientAttempt <= 0 ? 30_000 : 60_000;
+  return retryAfterMs === undefined ? base : Math.max(base, retryAfterMs);
+}
+
+/** Host/test seam: KODO_TEST_RETRY_DELAY_MS caps the real wait but never the recorded delay. */
+function retryWaitCeiling(): number | undefined {
+  const raw = process.env.KODO_TEST_RETRY_DELAY_MS;
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+/**
  * Consumes delivered input, refreshes the runtime blocks and compacts the stored
  * context. `force` is overflow recovery: compact toward the target and ignore the
  * summary debounce; hosts without a policy get the mask projection.
@@ -326,11 +345,13 @@ async function callModel(host: StepHost, run: Run, prepared: Prepared, reserve: 
       const outputLimit = outputLimitRetry(host, run, prepared, error);
       const incompleteStream = incompleteStreamRetry(host, run, prepared, error, emitted);
       if (!(error instanceof KodoError) || (!outputLimit && !incompleteStream && (!['MODEL_RATE_LIMIT', 'MODEL_TRANSPORT'].includes(error.code) || attempts - outputRetries - incompleteRetries >= 2))) return { kind: 'fail', error: errorText(error) };
-      const delayMs = outputLimit || incompleteStream ? 0 : Math.min(60_000, Math.max(0, error.metadata?.retryAfterMs ?? Math.ceil(1000 * 2 ** attempts * (1 + Math.random() * 0.25))));
+      const transientAttempt = error.code === 'MODEL_TRANSPORT' ? attempts - outputRetries - incompleteRetries : undefined;
+      const delayMs = outputLimit || incompleteStream ? 0 : transientAttempt !== undefined ? transportBackoffMs(transientAttempt, error.metadata?.retryAfterMs) : Math.min(60_000, Math.max(0, error.metadata?.retryAfterMs ?? Math.ceil(1000 * 2 ** attempts * (1 + Math.random() * 0.25))));
       store.event(run.id, 'model.retry', { requestRef: prepared.requestRef, previousCallId: modelCall.id, nextAttempt: attempts + 2, delayMs, ...(outputLimit ? { reason: 'output_limit' } : incompleteStream ? { reason: 'incomplete_stream' } : {}) });
       lease.release?.();
       lease.release = undefined;
-      await delay(delayMs, undefined, { signal });
+      const waitCeiling = retryWaitCeiling();
+      await delay(waitCeiling === undefined ? delayMs : Math.min(delayMs, waitCeiling), undefined, { signal });
       lease.release = await host.acquireModel(run, signal);
       continue;
     }
