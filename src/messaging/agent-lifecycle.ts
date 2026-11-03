@@ -2,7 +2,7 @@ import type { Store } from '../storage/index.js';
 import { historyRuns } from '../runtime/history.js';
 import { KodoError, terminal } from '../runtime/types.js';
 import type { Message, Run } from '../runtime/types.js';
-import type { Card, FileScope } from '../runtime/types.js';
+import type { FileScope } from '../runtime/types.js';
 
 export function managedChild(store: Store, main: Run, child: Run): boolean {
   return !main.parentId && child.sessionId === main.sessionId && Boolean(child.parentId)
@@ -14,12 +14,9 @@ export function managedChild(store: Store, main: Run, child: Run): boolean {
  * same card, binding, permissions, scope and instructions. Anything else would
  * either change accepted semantics or break the cached context prefix.
  */
-export function forkCompatibility(store: Store, source: Run): void {
+export function forkCompatibility(source: Run): void {
   if (!terminal(source.status)) throw new KodoError('FORK_REQUIRES_SETTLED_SOURCE', 'fork requires a settled child run');
-  const session = store.session(source.sessionId);
-  const card: Card = source.card;
-  if (!card) throw new KodoError('FORK_CONTRACT_CHANGED', 'fork source has no card contract');
-  void session;
+  if (!source.card) throw new KodoError('FORK_CONTRACT_CHANGED', 'fork source has no card contract');
 }
 
 /**

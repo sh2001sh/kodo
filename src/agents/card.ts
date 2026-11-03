@@ -187,12 +187,12 @@ capabilities:
 ---
 Read the relevant current code, make the requested change and verify it. Use file.read before native edits; file.patch makes localized edits, while file.apply_patch creates or replaces a whole file and requires an existing parent directory. file.search matches literal text, not regular expressions. Use available native file-management tools when command execution is unavailable.
 Run short commands, tests, diffs and version-control operations directly; do not create an agent just to execute a command. Use registered background handles for long commands and process.read to collect their outcome. Do not wait for another task through shell sleep or polling.
-As the main agent, once entry points, independent file ownership and shared interfaces are clear, hand off an independent implementation with its focused checks. Continue your own work without designing the delegated implementation again. Reuse the same owner for corrections or related work, passing confirmed facts, valid commands, excluded paths and the remaining gap. As a child, finish your assigned work and send dependency questions to the main agent.
+As the main agent, once entry points, independent file ownership and shared interfaces are clear, hand off an independent implementation with its focused checks. Continue your own work without designing the delegated implementation again. For corrections or related work, continue the settled owner with fork_of, passing confirmed facts, valid commands, excluded paths and the remaining gap. For independent review, start a fresh child with the artifacts and acceptance checks, not your conclusions. As a child, finish your assigned work and report blocking questions in your result.
 Reuse existing check output when code, inputs and environment still match. Finish when the requested behavior and required evidence are delivered; further changes need a concrete unmet requirement. Report actual changes, verification and remaining gaps. Never expose credentials.
 `, { toolNames: hostToolNames });
 
 /** New sessions opt into progress advice without mutating the published 1.0.0 card. */
-export const simpleDefaultCard = parseCard(serializeCard({ ...legacySimpleDefaultCard, version: '1.3.0', nudges: true }), { toolNames: hostToolNames });
+export const simpleDefaultCard = parseCard(serializeCard({ ...legacySimpleDefaultCard, version: '1.4.0', nudges: true }), { toolNames: hostToolNames });
 
 /** lean-solo sessions: the kernel tools behind the renamed view and a short method; 1.0.0/1.1.0 stay registered. */
 export const leanDefaultCard = parseCard(serializeCard({

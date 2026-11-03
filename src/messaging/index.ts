@@ -168,7 +168,7 @@ export class Mailbox {
       if (args.model_binding !== undefined && args.model_binding !== source.modelBindingId) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source model; create a fresh child for another model');
       if (JSON.stringify([...permissions].sort()) !== JSON.stringify([...(source.permissions ?? session.permissions)].sort())) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source permissions; create a fresh child to narrow or change them');
       if (args.scope !== undefined) throw new KodoError('FORK_CONTRACT_CHANGED', 'a fork keeps the source scope; create a fresh child for another scope');
-      forkCompatibility(this.store, source);
+      forkCompatibility(source);
     }
     const currentBindings = this.bindingSnapshot?.(card.tools, card.skills ?? []);
     const toolBindings = source ? source.toolBindings : currentBindings ?? (card.digest === parent.card.digest ? parent.toolBindings : undefined);

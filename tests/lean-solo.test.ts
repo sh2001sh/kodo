@@ -225,7 +225,7 @@ describe('lean-solo view', () => {
     expect(names(requests[0]!)).not.toContain('read');
     expect(names(requests[0]!)).toContain('file.read');
     expect(String(requests[0]!.messages[0]!.content)).not.toContain('You are Kodo, a coding agent.');
-    expect(simpleDefaultCard.version).toBe('1.3.0');
+    expect(simpleDefaultCard.version).toBe('1.4.0');
     expect(leanDefaultCard.version).toBe('1.5.0');
     expect(() => fixture(undefined, ['read'], { toolProfile: 'lean-future' as never })).toThrow('toolProfile must be');
   });

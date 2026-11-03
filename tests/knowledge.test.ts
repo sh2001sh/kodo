@@ -103,7 +103,7 @@ describe('private project knowledge', () => {
   });
 
   it('marks changed-during-collection results unknown and keeps evidence-free results in their source session', async () => {
-    const { knowledge, observe, result, runId, root, app, nextRun } = setup();
+    const { knowledge, observe, result, runId, root, nextRun } = setup();
     const prepared = knowledge.prepare(runId, result([await observe()]));
     writeFileSync(path.join(root, 'source.ts'), 'changed after collection');
     const ref = knowledge.persist(prepared);
@@ -117,7 +117,7 @@ describe('private project knowledge', () => {
   });
 
   it('keeps conflicting revisions immutable and does not silently overwrite a previously saved exploration', async () => {
-    const { knowledge, observe, result, runId, app, nextRun } = setup();
+    const { knowledge, observe, result, runId, nextRun } = setup();
     const evidence = await observe();
     const original = knowledge.persist(knowledge.prepare(runId, result([evidence])));
     expect(knowledge.persist(knowledge.prepare(runId, result([evidence])))).toEqual(original);
@@ -159,7 +159,7 @@ describe('private project knowledge', () => {
   });
 
   it('caps search at five summaries and supports stable bounded reads and path filtering', async () => {
-    const { knowledge, observe, result, runId, app, nextRun } = setup();
+    const { knowledge, observe, result, runId, nextRun } = setup();
     const evidence = await observe();
     let ref = knowledge.persist(knowledge.prepare(runId, result([evidence])));
     for (let index = 0; index < 6; index++) {

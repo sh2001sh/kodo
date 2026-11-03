@@ -100,7 +100,7 @@ describe('complete coding loop with a simple tool profile', () => {
   it('keeps the compact and simple identities distinct', () => {
     expect(simpleDefaultCard.id).not.toBe(compactDefaultCard.id);
     expect(compactDefaultCard.version).toBe('1.2.0');
-    expect(simpleDefaultCard.version).toBe('1.3.0');
+    expect(simpleDefaultCard.version).toBe('1.4.0');
     expect(roleAllows({ card: compactDefaultCard }, { toolProfile: 'compact-v1', agentFactors: factors }, 'shell.exec')).toBe(false);
     for (const taskProtocol of [1, 2, 3] as const) {
       const guidance = parallelMainGuidance(factors, taskProtocol, 'compact-v2');
