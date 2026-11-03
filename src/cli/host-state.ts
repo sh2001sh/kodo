@@ -47,20 +47,21 @@ export interface CliHostSession {
   tools?: CliToolPolicy;
   compaction?: CompactionPolicy | false;
   assembly?: AssemblyPolicy;
-  inlineMethods?: boolean;
-  methodUnloading?: boolean; methodToolView?: 'stable' | 'active';
   memory?: boolean;
   lazyTools?: boolean;
   verification?: VerificationPolicy;
   agents?: CliAgentPolicy;
   package?: { id: string; version: string; digest: string; stdioWrite: boolean; stdioNetwork: 'none' | 'allow' };
 }
+const legacyMethodFields = ['inlineMethods', 'methodUnloading', 'methodToolView'];
 /** Local host bindings are deliberately kept out of portable package contents. */
 export function readHostState(directory: string): CliHostSession[] {
   let parsed: unknown;
   try { parsed = JSON.parse(readFileSync(path.join(directory, 'cli-host.json'), 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw new KodoError('CLI_HOST_STATE', 'cannot read local execution bindings'); }
-  const fields = new Set(['sessionId', 'runIds', 'questionIds', 'tuiApproval', 'sandbox', 'tools', 'compaction', 'assembly', 'inlineMethods', 'methodUnloading', 'methodToolView', 'memory', 'lazyTools', 'verification', 'agents', 'package']);
+  // Sessions saved with the deleted inline-method policy cannot resume under this build.
+  if (Array.isArray(parsed) && parsed.some(item => item && typeof item === 'object' && legacyMethodFields.some(key => key in item))) throw new KodoError('CLI_HOST_STATE', 'saved inline-method policy (inlineMethods, methodUnloading, methodToolView) belongs to deleted method stages; start a new task');
+  const fields = new Set(['sessionId', 'runIds', 'questionIds', 'tuiApproval', 'sandbox', 'tools', 'compaction', 'assembly', 'memory', 'lazyTools', 'verification', 'agents', 'package']);
   if (!Array.isArray(parsed) || parsed.some(item => !item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !fields.has(key)) || typeof item.sessionId !== 'string' || !Array.isArray(item.runIds) || item.runIds.some((id: unknown) => typeof id !== 'string') || !Array.isArray(item.questionIds) || item.questionIds.some((id: unknown) => typeof id !== 'string') || (item.sandbox && !['none', 'allow'].includes(item.sandbox.network)) || (item.package && (typeof item.package.id !== 'string' || typeof item.package.version !== 'string' || !/^[a-f0-9]{64}$/.test(item.package.digest) || typeof item.package.stdioWrite !== 'boolean' || !['none', 'allow'].includes(item.package.stdioNetwork))))) throw new KodoError('CLI_HOST_STATE', 'invalid local execution bindings');
   for (const item of parsed as CliHostSession[]) {
     if (item.tuiApproval !== undefined && typeof item.tuiApproval !== 'boolean') throw new KodoError('CLI_HOST_STATE', 'tuiApproval must be a boolean');
@@ -71,8 +72,6 @@ export function readHostState(directory: string): CliHostSession[] {
     validateToolPolicy(item.tools);
     validateCompactionPolicy(item.compaction === false ? undefined : item.compaction);
     validateAssemblyPolicy(item.assembly);
-    if (item.methodToolView !== undefined && (!item.inlineMethods || !['stable', 'active'].includes(item.methodToolView))) throw new KodoError('CLI_HOST_STATE', 'invalid method tool view');
-    if (item.inlineMethods !== undefined && typeof item.inlineMethods !== 'boolean' || item.methodUnloading !== undefined && (typeof item.methodUnloading !== 'boolean' || !item.inlineMethods)) throw new KodoError('CLI_HOST_STATE', 'invalid method loading policy');
     if ((item.memory !== undefined && typeof item.memory !== 'boolean') || (item.lazyTools !== undefined && typeof item.lazyTools !== 'boolean')) throw new KodoError('CLI_HOST_STATE', 'memory and lazyTools must be booleans');
     validateVerificationPolicy(item.verification);
     // Older host-state files may still carry the deleted agentRetention and

@@ -63,8 +63,6 @@ export interface Card {
   id: string; version: string; name: string; prompt: string; digest: string; tools: string[];
   description?: string;
   skills?: string[];
-  /** Explicit method-loading compatibility; absent retains independent-run behavior. */
-  execution?: { modes: ('inline' | 'child')[] };
   /** Omitted for legacy v1 cards so their persisted and model-visible representations stay unchanged. */
   schemaVersion?: 1 | 2;
   catalog?: { path: string; aliases?: string[] };
@@ -82,15 +80,6 @@ export interface Card {
   derivedFrom?: { id: string; version: string; digest: string };
 }
 export interface Session {
-  /** Host opt-in to card methods through the existing Skill tools. */
-  inlineMethods?: boolean;
-  /** Frozen checkpoint unloading policy; absent on P1 sessions preserves their behavior. */
-  methodUnloading?: boolean;
-  methodTools?: string[];
-  methodSkills?: string[];
-  /** Session-scoped inline method catalog; replaced the frozen roster as the method source. */
-  methodCards?: CardReference[];
-  methodToolView?: 'stable' | 'active';
   id: string; workspace: string; permissions: Permission[]; budget: Budget;
   tokens: number; modelCalls: number; toolCalls: number; usageEstimated: boolean; createdAt: string;
   decisionVersion?: number;
@@ -190,7 +179,7 @@ export interface RuntimeEvent {
   seq: number; sessionId: string; runId: string; type: string; time: string;
   version: 1; data: Record<string, unknown>;
 }
-export type StepOutcome = { kind: 'continue' } | { kind: 'complete'; resultRef: string; workspaceStamp?: string; taskGraphStamp?: string }
+export type StepOutcome = { kind: 'continue' } | { kind: 'complete'; resultRef: string; workspaceStamp?: string }
   | { kind: 'wait'; waitId: string } | { kind: 'fail'; error: string } | { kind: 'cancelled' };
 export const terminal = (status: RunStatus): boolean => ['completed', 'failed', 'cancelled'].includes(status);
 

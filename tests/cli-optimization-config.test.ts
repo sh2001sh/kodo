@@ -21,7 +21,7 @@ describe('optional CLI runtime configuration', () => {
     const file = path.join(directory, 'verify.json');
     const verification = { enabled: true, approved: true, backend: 'container' as const, program: process.execPath, args: ['--version'], repeatLimit: 2, parser: 'exit-code' as const };
     writeFileSync(file, JSON.stringify(verification), 'utf8');
-    const original = { sessionId: 'session', runIds: ['run'], questionIds: [], inlineMethods: true, methodUnloading: false, memory: true, lazyTools: true, verification: cliVerificationPolicy({ 'verification-config': file }) };
+    const original = { sessionId: 'session', runIds: ['run'], questionIds: [], memory: true, lazyTools: true, verification: cliVerificationPolicy({ 'verification-config': file }) };
     writeHostState(directory, [original]);
     writeFileSync(file, '{}', 'utf8');
     expect(readHostState(directory)).toEqual([original]);
@@ -33,8 +33,10 @@ describe('optional CLI runtime configuration', () => {
     const state = { sessionId: 'session', runIds: ['run'], questionIds: [] };
     writeHostState(directory, [state]);
     expect(readHostState(directory)).toEqual([state]);
-    writeFileSync(path.join(directory, 'cli-host.json'), JSON.stringify([{ ...state, methodUnloading: true }]), 'utf8');
-    expect(() => readHostState(directory)).toThrow('invalid method loading policy');
+    for (const legacy of [{ inlineMethods: true }, { inlineMethods: false }, { methodUnloading: true }, { methodToolView: 'stable' }]) {
+      writeFileSync(path.join(directory, 'cli-host.json'), JSON.stringify([{ ...state, ...legacy }]), 'utf8');
+      expect(() => readHostState(directory)).toThrow(expect.objectContaining({ code: 'CLI_HOST_STATE', message: expect.stringContaining('inline-method policy') }));
+    }
     writeFileSync(path.join(directory, 'cli-host.json'), JSON.stringify([{ ...state, memory: 'enabled' }]), 'utf8');
     expect(() => readHostState(directory)).toThrow('must be booleans');
     const file = path.join(directory, 'verify.json');

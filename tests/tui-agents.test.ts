@@ -78,10 +78,10 @@ describe('TUI agent library after the roster removal', () => {
     expect(context.startTask).not.toHaveBeenCalled();
   });
 
-  it('no longer offers roster launch, fill, scope or retention drafts', async () => {
+  it('no longer offers roster launch, fill, scope, retention drafts or session method commands', async () => {
     const { context, app } = setup();
-    for (const command of [['run', 'example/portable', 'Do work'], ['fill', 'token', 'question', 'x'], ['scope', 'token', 'docs'], ['launch', 'token'], ['drafts'], ['drafts', 'show', 'id']]) {
-      await expect(agentCommand(context, command)).rejects.toThrow(/Unsupported agent action|Open an inline-method session/u);
+    for (const command of [['run', 'example/portable', 'Do work'], ['fill', 'token', 'question', 'x'], ['scope', 'token', 'docs'], ['launch', 'token'], ['drafts'], ['drafts', 'show', 'id'], ['methods'], ['install-method', 'method.md', '--digest', 'd'], ['disable-method', 'test/method', '--digest', 'd']]) {
+      await expect(agentCommand(context, command)).rejects.toThrow(/Unsupported agent action/u);
     }
     expect(app.store.listRuns()).toHaveLength(1);
   });

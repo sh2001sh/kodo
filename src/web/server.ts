@@ -9,7 +9,6 @@ import { PackageRegistry } from '../packages/registry.js';
 import { normalizeFileScope } from '../runtime/scope.js';
 import { KodoError } from '../runtime/types.js';
 import type { Run, RuntimeEvent } from '../runtime/types.js';
-import { methodCatalogDigest } from '../extensions/methods.js';
 import { collaborationView } from './collaboration.js';
 import { PackagePanel } from './packages.js';
 import type { PackageOverview, PackagePanelOptions } from './packages.js';
@@ -190,8 +189,6 @@ export async function createLocalServer(app: Application, options: LocalServerOp
         }
         const collaborationRoute = /^\/api\/runs\/([^/]+)\/collaboration$/.exec(route);
         if (collaborationRoute) { const value = run(collaborationRoute[1]!); json(res, 200, collaborationView(app, value.id)); return; }
-        const methodsRoute = /^\/api\/runs\/([^/]+)\/methods$/.exec(route);
-        if (methodsRoute) { const value = run(methodsRoute[1]!, true); const session = app.store.session(value.sessionId); json(res, 200, { methods: session.methodCards ?? [], digest: methodCatalogDigest(session.methodCards) }); return; }
         const contextRoute = /^\/api\/runs\/([^/]+)\/context$/.exec(route);
         if (contextRoute) { const value = run(contextRoute[1]!, true); json(res, 200, app.context(value.id)); return; }
         const knowledgeRoute = /^\/api\/runs\/([^/]+)\/knowledge(?:\/(search|read|versions))?$/.exec(route);
@@ -299,20 +296,13 @@ export async function createLocalServer(app: Application, options: LocalServerOp
         const command = /^\/api\/runs\/([^/]+)\/(input|answer|cancel|resume)$/.exec(route);
         const agentCommand = /^\/api\/runs\/([^/]+)\/agents\/([^/]+)\/cancel$/.exec(route);
         const spawnCommand = /^\/api\/runs\/([^/]+)\/agents\/spawn$/.exec(route);
-        const methodsCommand = /^\/api\/runs\/([^/]+)\/methods$/.exec(route);
         const knowledgeCommand = /^\/api\/runs\/([^/]+)\/knowledge\/(folder|organize|remove-folder)$/.exec(route);
         const response = app.store.transaction(() => {
           let node;
-          let methodRevision;
           if (route === '/api/runs') {
             fields(body, ['objective']);
             target = app.createRun({ workspace: policy.workspace, binding: policy.binding, permissions: policy.permissions, scope: policy.scope, budget: policy.budget, card: policy.card, finalResponse: policy.finalResponse, objective: textField(body, 'objective', 32_000) });
             onSession?.(target.sessionId); explicitSessions?.add(target.sessionId);
-          } else if (methodsCommand) {
-            target = run(methodsCommand[1]!, true); onSession?.(target.sessionId); action = 'methods';
-            fields(body, ['expectedDigest', 'card', 'disable']);
-            if (body.disable !== undefined && (!Array.isArray(body.disable) || body.disable.length > 32 || body.disable.some(value => typeof value !== 'string'))) throw new HttpError(400, 'ARGUMENTS', 'disable must be a list of method IDs');
-            methodRevision = app.updateSessionMethods(target.id, { expectedDigest: textField(body, 'expectedDigest', 64), ...(body.card !== undefined ? { install: [app.parseCard(textField(body, 'card', 128000))] } : {}), disable: body.disable as string[] | undefined });
           } else if (spawnCommand) {
             target = run(spawnCommand[1]!, true); onSession?.(target.sessionId); action = 'agent_spawn';
             fields(body, ['objective', 'fork_of', 'context', 'inputs', 'acceptance', 'permissions', 'model_binding', 'scope']);
@@ -351,7 +341,7 @@ export async function createLocalServer(app: Application, options: LocalServerOp
             agent = app.cancelAgent(target.id, decodeURIComponent(agentCommand[2]!));
             agentRunId = agent.id;
           } else throw new HttpError(404, 'NOT_FOUND', 'Endpoint not found');
-          const receipt = { requestId, runId: target.id, sessionId: target.sessionId, status: action === 'resume' || action === 'agent_spawn' ? 'accepted' : action === 'agent_cancel' ? agent?.status ?? target.status : target.status, ...(agent ? { agentRunId: agent.id } : {}), ...(node ? { node } : {}), ...(methodRevision ? { methodRevision } : {}) };
+          const receipt = { requestId, runId: target.id, sessionId: target.sessionId, status: action === 'resume' || action === 'agent_spawn' ? 'accepted' : action === 'agent_cancel' ? agent?.status ?? target.status : target.status, ...(agent ? { agentRunId: agent.id } : {}), ...(node ? { node } : {}) };
           app.store.webRequests.insert({ request_id: requestId, fingerprint: signature, response: JSON.stringify(receipt), action, run_id: target.id });
           return receipt;
         });

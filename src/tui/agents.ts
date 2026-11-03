@@ -4,7 +4,6 @@ import path from 'node:path';
 import { parseCard, serializeCard } from '../agents/card.js';
 import { safeOutput, writeAgentDraft } from '../agents/authoring.js';
 import { saveConfigurationDraft } from '../agents/configuration-save.js';
-import { methodCatalogDigest } from '../extensions/methods.js';
 import { CaseRunStore } from '../cases/store.js';
 import { exportPackage, inspectPackage } from '../packages/archive.js';
 import type { PackageBindings } from '../packages/runtime.js';
@@ -144,18 +143,6 @@ async function save(context: AgentCommandContext, args: string[], configuration:
 /** TUI operations reuse the live application's services; no second Store or CLI process is opened. */
 export async function agentCommand(context: AgentCommandContext, args: string[]): Promise<TuiPanel> {
   const [command = 'list', ...rest] = args;
-  if (['methods', 'install-method', 'disable-method'].includes(command)) {
-    if (!context.runId) fail('Open an inline-method session first.');
-    const run = context.app.store.run(context.runId!);
-    const session = context.app.store.session(run.sessionId);
-    const revision = methodCatalogDigest(session.methodCards);
-    if (command === 'methods') return { title: 'Session methods', lines: [`Revision: ${revision}`, 'Install: /agents install-method FILE --digest REVISION', 'Disable future activation: /agents disable-method ID --digest REVISION', ...(session.methodCards ?? []).map(ref => `${ref.id}@${ref.version}`)] };
-    const options = parse(rest, ['digest']); exact(options, 1);
-    const expectedDigest = option(options, 'digest');
-    if (!expectedDigest) fail('Use /agents methods to read the current revision, then supply --digest.');
-    const result = context.app.updateSessionMethods(run.id, { expectedDigest: expectedDigest!, ...(command === 'install-method' ? { install: [context.app.parseCard(await readFile(absolute(context, options.positional[0]!), 'utf8'))] } : { disable: [options.positional[0]!] }) });
-    return { title: 'Session methods updated', lines: [`Revision: ${result.digest}`, 'The active method keeps its original version; future stages see the revised catalog.'] };
-  }
   if (command === 'list' || command === 'search') return list(context, rest);
   if (command === 'show') { const options = parse(rest, ['offset']); exact(options, 1); const offset = Number(option(options, 'offset') ?? 0); if (!Number.isSafeInteger(offset) || offset < 0) fail('Offset must be a non-negative integer.'); return detail(context, options.positional[0]!, offset); }
   if (command === 'export') return exportCard(context, rest);

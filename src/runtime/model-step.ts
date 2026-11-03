@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { collaborationTool } from '../messaging/index.js';
 import { buildContext } from './context.js';
-import { recordMethodUnloading } from './method-context.js';
 import type { ContextBuild } from './context.js';
 import { recordSkip, summarizeContext } from './compaction.js';
 import { estimateInputTokens } from './context-tokens.js';
@@ -85,7 +84,6 @@ export function prepareContext(host: StepHost, runId: string, force = false): Co
     const stateTokens = estimateInputTokens(store, run, [state], specs) - estimateInputTokens(store, run, [], specs);
     const built = buildContext(store, next, budget.maxContextChars === null ? null : Math.max(0, budget.maxContextChars - JSON.stringify(state).length - 1), specs, { maxContextTokens: budget.maxContextTokens, maxOutputTokens: contextOutputReserve(budget), maxInputTokens: Math.max(0, capacity - stateTokens), compaction, assembly: host.assembly, force });
     store.updateRun(runId, { contextRef: store.blob(built.messages), inputCursor: pending.at(-1)?.seq ?? run.inputCursor ?? 0, decisionVersion: session.decisionVersion ?? 0, waitId: undefined });
-    recordMethodUnloading(store, runId, built.methodUnloading);
     if (built.archivedRef) {
       store.event(runId, 'context.compacted', { archivedRef: built.archivedRef, previousRef: built.previousRef, originalChars: built.originalChars, compactedChars: built.compactedChars, omittedMessages: built.omittedMessages, prunedMessages: built.prunedMessages ?? 0, strategy: built.strategy, beforeTokens: built.originalInputTokens, afterTokens: built.estimatedInputTokens, workInputTokens: built.workInputTokens, triggerRatio: built.geometry?.triggerRatio, targetTokens: built.targetTokens, targetMet: built.targetMet, ...(built.hardTargetTokens ? { hardTargetTokens: built.hardTargetTokens } : {}), ...(force ? { forced: true } : {}) });
     }

@@ -1,5 +1,4 @@
 import { collaborationTool, controlTool } from '../messaging/index.js';
-import { effectiveMethodRun, recordMethodLoad } from '../extensions/methods.js';
 import { validateImageInput } from '../tools/image.js';
 import type { ImageInput } from '../tools/image.js';
 import { reconciledEvent } from '../tools/effect-scan.js';
@@ -100,7 +99,7 @@ function executionFailure(host: StepHost, call: Call, error: unknown, stopped: b
 async function admit(host: StepHost, run: Run, modelCall: Call, call: Call, request: ToolRequest, invalidBatch: boolean, signal: AbortSignal, notices: Message[]): Promise<Record<string, unknown>> {
   const { store } = host;
   const session = executionSession(store, run);
-  run = effectiveMethodRun(store, store.run(run.id));
+  run = store.run(run.id);
   if (run.toolChoice === 'none') throw new KodoError('TOOL_CHOICE', 'this host-created text generation task does not execute tools');
   if (invalidBatch) throw new KodoError('CONTROL_BATCH', 'entire tool batch rejected: at most one control call, in last position');
   if ((modelCall.decisionVersion ?? 0) !== (session.decisionVersion ?? 0)) throw new KodoError('DECISION_CHANGED', 'not executed: user constraints changed after this model request');
@@ -234,8 +233,7 @@ function record(host: StepHost, run: Run, call: Call, outcome: Outcome): void {
   // Its terminal source and unknown call remain immutable for audited recovery.
   if (terminal(store.run(run.id).status)) return;
   store.transaction(() => {
-    const result = outcome.status === 'succeeded' ? recordMethodLoad(store, store.run(run.id), call, outcome.result) : outcome.result;
-    const resultRef = store.blob(result);
+    const resultRef = store.blob(outcome.result);
     const background = backgroundOf(outcome.result);
     if (background) {
       const current = store.call(call.id);
@@ -313,10 +311,7 @@ export async function runToolStep(host: StepHost, run: Run, modelCall: Call, res
   const requests = resolved.map(item => item.request);
   const viewErrors = new Map(resolved.flatMap(item => item.error ? [[item.request.id, item.error] as const] : []));
   for (const [id, error] of responseSpawnWriteConflicts(host, run, requests)) viewErrors.set(id, error);
-  const controls = requests.filter(x => {
-    try { return controlTool(x.name, JSON.parse(x.arguments) as Record<string, unknown>); }
-    catch { return controlTool(x.name); }
-  });
+  const controls = requests.filter(x => controlTool(x.name));
   const invalidBatch = controls.length > 1 || (controls.length === 1 && requests.at(-1) !== controls[0]);
   const repeats = new Map<string, number>();
   const notices: Message[] = [];

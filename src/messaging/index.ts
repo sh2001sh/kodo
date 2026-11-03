@@ -1,7 +1,3 @@
-import type { ProjectKnowledge } from '../knowledge/index.js';
-import { executeMethodStage, methodTaskSpec } from '../runtime/method-stage.js';
-import { activeMethod, effectiveMethodRun, methodControlTools } from '../extensions/methods.js';
-import { endMethod } from '../extensions/methods.js';
 import { roleAllows } from '../runtime/role-view.js';
 import { Ajv } from 'ajv';
 import { executionSession, runWorkspace } from '../runtime/execution-workspace.js';
@@ -28,7 +24,6 @@ const id = { type: 'string', minLength: 1, maxLength: 256 };
 const ids = { type: 'array', items: id, uniqueItems: true, maxItems: 16 };
 const content = { type: 'string', minLength: 1, maxLength: 16_000 };
 const definitions: (ToolSpec & { main?: boolean; control?: boolean })[] = [
-  { ...methodTaskSpec, main: true },
   spawnAgentSpec,
   { name: 'inspect_run', description: 'Read your own or main-managed child run result and paginated tool evidence, even without a context archive. Omit call_id for result and tool-call index; select a returned call_id for actual evidence, or section=acceptance for a bounded outcome summary. Follow next cursors. Does not expose model records, private arguments or arbitrary blobs. completed is not acceptance; tool success is not process exit zero. history.read is for indexed archives; artifact.read is for artifact IDs.', parameters: object({ run_id: id, call_id: id, call_ids: { type: 'array', minItems: 1, maxItems: 8, uniqueItems: true, items: id }, section: { type: 'string', enum: ['result', 'acceptance'] }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 }, content_offset: { type: 'integer', minimum: 0 }, max_chars: { type: 'integer', minimum: 256, maximum: 32000 } }, ['run_id']) },
   { name: 'wait_for_events', control: true, description: 'Durably wait for answers to your question IDs or terminal run IDs, with any/all semantics. Questions and user changes can wake early. Must be last tool and only control call. Returns registration; wake evidence arrives in the next model input.', parameters: object({ question_ids: ids, run_ids: ids, mode: { enum: ['any', 'all'] }, timeout_ms: { type: 'integer', minimum: 1, maximum: 300_000 } }, []) },
@@ -36,24 +31,21 @@ const definitions: (ToolSpec & { main?: boolean; control?: boolean })[] = [
   { name: 'cancel_agent', main: true, description: 'Cancel a child managed by this main agent. Late results cannot reopen it.', parameters: object({ run_id: id }) },
 ];
 const ajv = new Ajv({ allErrors: true });
-const methodTaskSchema = ajv.compile(methodTaskSpec.parameters);
 const schemas = new Map(definitions.map(x => [x.name, ajv.compile(x.parameters)]));
 export const collaborationTool = (name: string): boolean => schemas.has(name);
-export const controlTool = (name: string, args?: Record<string, unknown>): boolean => name === 'task' ? ['wait', 'activate', 'done', 'drop', 'redo', 'resume'].includes(String(args?.action)) : Boolean(definitions.find(x => x.name === name)?.control);
+export const controlTool = (name: string): boolean => Boolean(definitions.find(x => x.name === name)?.control);
 
 export class Mailbox {
   private readonly modelBindings: Record<string, ModelBinding>;
   private readonly bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>;
-  private readonly stageKnowledge?: ProjectKnowledge;
   private readonly globalInstructions: string | false;
   /** Chains discovered by prepareSpawn, recorded when the child is committed. */
   private readonly pendingInstructions = new Map<string, InstructionChain>();
-  constructor(private store: Store, private cancel: (id: string, origin: CancelOrigin) => void, options: { knowledge?: ProjectKnowledge; modelBindings?: Record<string, ModelBinding>; bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>; globalInstructions?: string | false } = {}) {
+  constructor(private store: Store, private cancel: (id: string, origin: CancelOrigin) => void, options: { modelBindings?: Record<string, ModelBinding>; bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>; globalInstructions?: string | false } = {}) {
     validateAgentModelPolicy(options.modelBindings);
     this.globalInstructions = options.globalInstructions ?? false;
     this.modelBindings = structuredClone(options.modelBindings ?? {});
     this.bindingSnapshot = options.bindingSnapshot;
-    this.stageKnowledge = options.knowledge;
   }
   specs(run: Run): ToolSpec[] {
     const session = this.store.session(run.sessionId);
@@ -69,8 +61,7 @@ export class Mailbox {
       }
       return { ...parameters, properties };
     };
-    return definitions.filter(x => (x.name !== 'task' || (session.inlineMethods && !run.parentId)) && roleAllows(run, session, x.name) && (!x.main || !run.parentId)).map(({ name, description, parameters }) => {
-      if (name === 'task' && session.inlineMethods) return methodTaskSpec;
+    return definitions.filter(x => roleAllows(run, session, x.name) && (!x.main || !run.parentId)).map(({ name, description, parameters }) => {
       if (name !== 'spawn_agent') return { name, description, parameters };
       const limits = ` Active child limit: ${session.budget.maxActiveChildren ?? 'unlimited'}; cumulative child limit: ${session.budget.maxChildren ?? 'unlimited'} (an explicit cumulative cap includes finished runs and forks).`;
       return { name, description: description + limits, parameters: modelParameters(parameters) };
@@ -95,16 +86,13 @@ export class Mailbox {
     if (!this.specs(run).some(x => x.name === name)) throw new KodoError('ROLE_DENIED', 'this collaboration operation is not available to a child');
     let args: unknown;
     try { args = JSON.parse(json); } catch { throw new KodoError('TOOL_ARGUMENTS', 'arguments must be complete JSON'); }
-    const active = this.store.session(run.sessionId).inlineMethods && activeMethod(this.store, run.id);
-    if (active && !methodControlTools.includes(name)) throw new KodoError('METHOD_TOOL_INACTIVE', 'this operation is not in the active method contract');
-    const check = name === 'task' && this.store.session(run.sessionId).inlineMethods ? methodTaskSchema : schemas.get(name);
+    const check = schemas.get(name);
     if (check && !check(args)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the ${name} schema: ${schemaErrorText(check.errors)}`);
     return args as Record<string, unknown>;
   }
   execute(run: Run, callId: string, name: string, args: Record<string, unknown>): unknown {
-    if (name === 'task' && this.store.session(run.sessionId).inlineMethods) return executeMethodStage(this.store, run, callId, args, (tool, input) => this.execute(run, callId, tool, input), this.stageKnowledge);
     if (name === 'spawn_agent') return this.spawn(run, args);
-    if (name === 'inspect_run') return inspectRun(this.store, effectiveMethodRun(this.store, run), args as unknown as Parameters<typeof inspectRun>[2]);
+    if (name === 'inspect_run') return inspectRun(this.store, run, args as unknown as Parameters<typeof inspectRun>[2]);
     if (name === 'cancel_agent') {
       const child = this.peer(run, args.run_id as string);
       if (child.parentId !== run.id) throw new KodoError('ROLE_DENIED', 'can only cancel children managed by this main run');
@@ -353,7 +341,6 @@ export class Mailbox {
   }
   onTerminal(runId: string): void {
     const run = this.store.run(runId);
-    endMethod(this.store, run);
     if (run.waitId) {
       const wait = this.store.wait(run.waitId);
       if (wait.status === 'registered') this.store.putWait({ ...wait, status: 'settled', reason: run.status });

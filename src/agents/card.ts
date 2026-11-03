@@ -57,7 +57,6 @@ const validateV2 = new Ajv({ allErrors: true }).compile({
       scope: { type: 'object', additionalProperties: false, properties: { read: strings(4096), write: strings(4096) } }, rules: strings(4096),
     } },
     model: { type: 'object', additionalProperties: false, required: ['role'], properties: { role: { enum: ['fast', 'standard', 'strong'] } } },
-    execution: { type: 'object', additionalProperties: false, required: ['modes'], properties: { modes: { type: 'array', minItems: 1, uniqueItems: true, items: { enum: ['inline', 'child'] } } } },
     derivation: { type: 'object', additionalProperties: false, required: ['allowed'], properties: { allowed: { type: 'boolean' } } },
     members: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'version', 'digest'], properties: {
       id: identity, version, digest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
@@ -75,7 +74,7 @@ type CardMetadata = Omit<Card, 'prompt' | 'digest' | 'tools' | 'skills' | 'mcp' 
   schema_version: 1 | 2;
   capabilities: { tools: string[]; skills?: string[]; mcp?: Card['mcp'] };
 };
-const v2Fields = ['catalog', 'routing', 'inputs', 'report', 'constraints', 'model', 'derivation', 'members', 'execution'] as const;
+const v2Fields = ['catalog', 'routing', 'inputs', 'report', 'constraints', 'model', 'derivation', 'members'] as const;
 
 /** Validate declarations here; resolve variables against host/project values only when freezing a session. */
 function cardScope(scope: FileScope): FileScope {

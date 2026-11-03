@@ -16,13 +16,9 @@ const metadata = () => ({
 const source = (meta: unknown, prompt = 'Private implementation method.'): string => `---\n${stringify(meta)}---\n${prompt}\n`;
 
 describe('agent card schema v2', () => {
-  it('round-trips explicit execution modes and retains legacy absence', () => {
-    const original = parseCard(source(metadata()));
-    expect(original.execution).toBeUndefined();
-    const method = parseCard(source({ ...metadata(), execution: { modes: ['inline', 'child'] } }));
-    expect(parseCard(serializeCard(method)).execution).toEqual({ modes: ['inline', 'child'] });
-    expect(method.digest).not.toBe(original.digest);
-    for (const modes of [[], ['inline', 'inline'], ['automatic']]) expect(() => parseCard(source({ ...metadata(), execution: { modes } }))).toThrow('schema');
+  it('rejects the deleted inline-method execution modes instead of silently dropping them', () => {
+    expect(() => parseCard(source({ ...metadata(), execution: { modes: ['inline', 'child'] } }))).toThrow(expect.objectContaining({ code: 'CARD_SCHEMA' }));
+    expect(serializeCard(parseCard(source(metadata())))).not.toContain('execution');
   });
   it('preserves routing metadata, private methods and structured contracts without requiring installed skills or MCP', () => {
     const card = parseCard(source(metadata()));

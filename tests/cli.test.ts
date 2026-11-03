@@ -284,6 +284,16 @@ describe('built CLI end to end', () => {
     expect(result.out).toBe('');
     expect((await cli(['unknown'])).code).toBe(1);
   });
+  it('no longer accepts the deleted inline-method options or the methods command', async () => {
+    for (const args of [['run', 'task', '--inline-methods'], ['run', 'task', '--method-unloading', 'off'], ['run', 'task', '--method-tool-view', 'stable'], ['inspect', 'id', '--digest', 'd'], ['inspect', 'id', '--disable', 'x']]) {
+      const result = await cli([...args, '--data-dir', temp()]);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('ARGUMENTS');
+    }
+    const methods = await cli(['methods', 'run-id', '--data-dir', temp()]);
+    expect(methods.code).toBe(1);
+    expect(methods.err).toContain('COMMAND');
+  });
   it('rejects misplaced options and malformed numeric limits', async () => {
     for (const args of [['run', 'task', '--follow-up'], ['inspect', 'id', '--model', 'ignored'], ['inspect', 'id', '--protocol', 'responses'], ['run', 'task', '--text', 'ignored'], ['answer', 'question'], ['chat', 'task', '--json'], ['doctor', 'extra'], ['run', 'task', '--unknown'], ['resolve', 'id'], ['resolve', 'id', '--call-id', 'call', '--outcome', 'force', '--evidence', 'checked'], ['resolve', 'id', '--call-id', 'call', '--outcome', 'succeeded', '--evidence', ' '], ['resolve', 'id', '--call-id', 'call', '--outcome', 'not_applied', '--evidence', 'verified file is absent'], ['resolve', 'id', '--call-id', 'call', '--outcome', 'succeeded', '--evidence', 'verified file exists', '--retry'], ['reconcile', 'id', '--evidence', 'ignored'], ['resume', 'id', '--force']]) {
       const result = await cli([...args, '--data-dir', temp()]);

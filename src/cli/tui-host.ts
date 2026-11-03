@@ -9,7 +9,7 @@ import type { CliHostSession } from './host-state.js';
 import { hasModelCredentials } from './config-binding.js';
 
 type Policy = Omit<CliHostSession, 'sessionId' | 'runIds' | 'questionIds' | 'package' | 'tuiApproval'>;
-const keys = ['sandbox', 'tools', 'agents', 'compaction', 'assembly', 'inlineMethods', 'methodUnloading', 'methodToolView', 'memory', 'lazyTools', 'verification'] as const;
+const keys = ['sandbox', 'tools', 'agents', 'compaction', 'assembly', 'memory', 'lazyTools', 'verification'] as const;
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)])) : value;
 

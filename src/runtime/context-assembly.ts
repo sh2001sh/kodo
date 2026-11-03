@@ -5,7 +5,6 @@ import { historyReadPointer, parseHistoryPointer } from './view-pointers.js';
 import type { HistorySnapshot } from './context.js';
 import type { Message, Run } from './types.js';
 import type { Store } from '../storage/index.js';
-import { activeMethodMessages } from './method-context.js';
 
 /** Deterministic evidence assembly: keep focus-relevant tool evidence, hide the rest behind history pointers. */
 export interface AssemblyPolicy { strategy: 'deterministic'; workInputTokens?: number; evidenceInputTokens?: number }
@@ -92,8 +91,7 @@ export function assembleEvidence(input: {
       return Boolean(value.error || value.cancelled || value.outputLimitExceeded || (typeof value.exitCode === 'number' && value.exitCode !== 0));
     } catch { return false; }
   });
-  const activeMethods = activeMethodMessages(store, run, messages);
-  const candidates = toolGroups.filter(group => !recent.has(group) && !unresolved(group) && !group.some(message => activeMethods.has(message)));
+  const candidates = toolGroups.filter(group => !recent.has(group) && !unresolved(group));
   const stable = candidates.map((group, index) => {
     const restoredOffsets: number[] = [];
     const stableGroup = group.map((message): Message => {

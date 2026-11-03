@@ -2,8 +2,7 @@ import type { Run, Session } from './types.js';
 import { isLeanProfile, leanAllows } from './tool-view.js';
 
 /** Freeze profile-specific visibility; legacy E delegates execution, compact-v2 keeps a complete coding loop. */
-export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card' | 'permissions'>>, session: Pick<Session, 'agentFactors' | 'toolProfile'> & Partial<Pick<Session, 'permissions' | 'inlineMethods'>>, name: string): boolean {
-  if (session.inlineMethods && !run.parentId && (name.startsWith('knowledge.') || name === 'artifact.write')) return true;
+export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card' | 'permissions'>>, session: Pick<Session, 'agentFactors' | 'toolProfile'> & Partial<Pick<Session, 'permissions'>>, name: string): boolean {
   if (isLeanProfile(session.toolProfile) && !run.parentId) {
     // The lean main view is frozen by permissions and card: commands, or native file management without them.
     const exec = Boolean(session.permissions?.includes('exec') && (run.permissions ?? session.permissions).includes('exec') && run.card?.tools.includes('shell.exec'));

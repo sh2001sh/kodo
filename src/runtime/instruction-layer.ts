@@ -77,9 +77,8 @@ export function prepareInstructionContext(store: Store, run: Run, session: Sessi
   const factors = normalizeAgentFactors(session.agentFactors);
   const permissions = session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission));
   const base = initialContext(session.workspace, permissions, run.card, run.objective, run, undefined, { factors, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile });
-  // Inline method discovery also needs a budgeted catalog, independently of
-  // child-agent routing. B/C alone still leave instruction allocation unchanged.
-  const enabled = factors.A || !!session.inlineMethods;
+  // B/C alone leave instruction allocation unchanged.
+  const enabled = factors.A;
   const budgetTokens = enabled ? Math.floor(runInstructionCapacity(run, session) / bytesPerToken) : undefined;
   const methodTokens = enabled ? instructionMessageTokens(base[1]) : 0;
   if (budgetTokens !== undefined && methodTokens > budgetTokens) throw new KodoError('CARD_INSTRUCTION_BUDGET', `card method needs ${methodTokens} estimated tokens but the shared instruction allowance is ${budgetTokens}; shorten the card method or select a larger input capacity`);
@@ -91,7 +90,7 @@ export function prepareInstructionContext(store: Store, run: Run, session: Sessi
   const ruleTokens = instructionMessageTokens(block);
   const instructions: RunInstructions = { ...loaded.state, ...(budgetTokens === undefined ? {} : { tokenBudget: budgetTokens, reservedTokens: methodTokens, tokens: ruleTokens }) };
   recordInstructions(store, run.id, options.inherited ? 'inherited' : 'initial', loaded.chain);
-  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, inlineMethods: session.inlineMethods, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
+  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
 }
 
 export function instructionMessage(chain: InstructionChain, trigger?: string): Message | undefined {

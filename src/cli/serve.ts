@@ -13,7 +13,6 @@ import { configuredAgentModels, hasModelCredentials, resolveConfiguredBinding } 
 import { readUserConfig } from './user-config.js';
 
 const help = `kodo serve [--workspace PATH] [--port 0] [--data-dir PATH] [--json]
-  --inline-methods [--method-unloading on|off] [--method-tool-view stable|active]
   --provider NAME --model NAME --base-url URL --api-key-env NAME --protocol chat-completions|responses|anthropic
   --allow-write --allow-exec --sandbox [--allow-network] [--sandbox-resources JSON_FILE]
   --shell-program ABSOLUTE_BASH_PATH --lsp-config JSON_FILE --webfetch [--web-hosts HOST,HOST]
@@ -50,7 +49,6 @@ export async function serveCommand(args: string[]): Promise<void> {
       'sandbox-resources': { type: 'string' }, 'shell-program': { type: 'string' }, 'lsp-config': { type: 'string' }, webfetch: { type: 'boolean' }, 'web-hosts': { type: 'string' },
       compaction: { type: 'string' }, 'compaction-work-tokens': { type: 'string' }, 'compaction-trigger-ratio': { type: 'string' },
       assembly: { type: 'string' }, 'assembly-work-tokens': { type: 'string' }, 'assembly-evidence-tokens': { type: 'string' },
-      'inline-methods': { type: 'boolean' }, 'method-unloading': { type: 'string' }, 'method-tool-view': { type: 'string' },
       'agent-factors': { type: 'string' },
       packages: { type: 'boolean' }, 'package-actions': { type: 'boolean' }, 'npm-cli': { type: 'string' }, package: { type: 'string' },
       'max-tokens': { type: 'string' }, 'max-model-calls': { type: 'string' }, 'max-tool-calls': { type: 'string' }, 'max-context-tokens': { type: 'string' }, 'max-output-tokens': { type: 'string' },
@@ -58,10 +56,6 @@ export async function serveCommand(args: string[]): Promise<void> {
     } });
   } catch { throw new KodoError('ARGUMENTS', 'invalid serve options; use serve --help'); }
   const { values } = parsed;
-  if (values['method-unloading'] !== undefined && (!values['inline-methods'] || !['on', 'off'].includes(values['method-unloading']))) throw new KodoError('ARGUMENTS', '--method-unloading on|off requires --inline-methods');
-  if (values['method-tool-view'] !== undefined && (!values['inline-methods'] || !['stable', 'active'].includes(values['method-tool-view']))) throw new KodoError('ARGUMENTS', '--method-tool-view stable|active requires --inline-methods');
-  const methodToolView = (values['method-tool-view'] ?? 'stable') as 'stable' | 'active';
-  const methodPolicy = values['inline-methods'] ? { inlineMethods: true, methodToolView, methodUnloading: values['method-unloading'] !== 'off' } : {};
   if (values.help) { console.log(help); return; }
   // Package switches are validated before credentials, the runtime store or any activation is touched.
   const actions = values['package-actions'] === true;
@@ -90,7 +84,7 @@ export async function serveCommand(args: string[]): Promise<void> {
     if (!Number.isSafeInteger(value) || value < 1) throw new KodoError('ARGUMENTS', `${flag} must be a positive safe integer`);
     budget[field] = value;
   }
-  const app = new Application(directory, undefined, undefined, { ...tools, ...agents, ...methodPolicy, ...configuredAgentModels(config), ...(sandbox ? { sandbox } : {}), compaction, ...(assembly ? { assembly } : {}) });
+  const app = new Application(directory, undefined, undefined, { ...tools, ...agents, ...configuredAgentModels(config), ...(sandbox ? { sandbox } : {}), compaction, ...(assembly ? { assembly } : {}) });
   const controller = new AbortController(); const interrupt = (): void => controller.abort();
   process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
   let server: Awaited<ReturnType<typeof createLocalServer>> | undefined;
@@ -125,13 +119,12 @@ export async function serveCommand(args: string[]): Promise<void> {
     const matching = (item: CliHostSession): boolean => JSON.stringify(item.package ?? null) === JSON.stringify(hostPackage ?? null)
       && JSON.stringify(item.sandbox) === JSON.stringify(sandbox) && JSON.stringify(item.tools) === JSON.stringify(tools)
       && JSON.stringify(item.agents) === JSON.stringify(agents)
-      && Boolean(item.inlineMethods) === Boolean(methodPolicy.inlineMethods) && item.methodUnloading === methodPolicy.methodUnloading && item.methodToolView === methodPolicy.methodToolView
       && JSON.stringify(item.compaction) === JSON.stringify(compaction) && JSON.stringify(item.assembly) === JSON.stringify(assembly);
     const sessionIds = state.filter(matching).map(item => item.sessionId);
     const persist = (sessionId: string): void => {
       let item = state.find(entry => entry.sessionId === sessionId);
       if (item && !matching(item)) throw new KodoError('CAPABILITY_CHANGED', 'this session requires its original trusted host configuration');
-      if (!item) { item = { ...methodPolicy, sessionId, runIds: [], questionIds: [], ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(tools ? { tools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(hostPackage ? { package: hostPackage } : {}) }; state.push(item); }
+      if (!item) { item = { sessionId, runIds: [], questionIds: [], ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(tools ? { tools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(hostPackage ? { package: hostPackage } : {}) }; state.push(item); }
       item.runIds = app.store.listRuns(sessionId).map(run => run.id);
       item.questionIds = app.coordinator.mailbox.userQuestions(sessionId).map(question => question.id);
       writeHostState(directory, state);

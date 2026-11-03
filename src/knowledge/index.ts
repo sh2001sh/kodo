@@ -1,4 +1,3 @@
-import { effectiveMethodRun } from '../extensions/methods.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
@@ -100,7 +99,7 @@ export class ProjectKnowledge {
 
   /** No database changes: callers can validate before atomically completing a run. */
   prepare(runId: string, finalText: string, observationId?: string): PreparedKnowledge {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     // 1d removed the exploration run field. Older records may still carry it; new
     // observations name their identity explicitly or through the published JSON.
     const exploration = (run as Run & { exploration?: { questionId: string; decisionVersion?: number } }).exploration;
@@ -314,7 +313,7 @@ export class ProjectKnowledge {
   }
 
   validateUse(runId: string, ref: KnowledgeRef): KnowledgeSummary {
-    return this.validateFor(effectiveMethodRun(this.store, this.store.run(runId)), ref);
+    return this.validateFor(this.store.run(runId), ref);
   }
   /** A host may validate before creating a child whose scope is narrower than its parent. */
   validateFor(run: Run, ref: KnowledgeRef): KnowledgeSummary {
@@ -335,7 +334,7 @@ export class ProjectKnowledge {
       for (const use of uses) {
         if (this.store.knowledge.insertUse(project.id, use, runId)) added.push(use);
       }
-      if (added.length) this.store.event(runId, 'knowledge.used', { uses: added, decisionVersion: this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId).decisionVersion ?? 0 });
+      if (added.length) this.store.event(runId, 'knowledge.used', { uses: added, decisionVersion: this.store.session(this.store.run(runId).sessionId).decisionVersion ?? 0 });
     });
   }
   recordUse(runId: string, ref: KnowledgeRef, purpose: string): void { this.adopt(runId, [{ ...ref, purpose }]); }
@@ -347,7 +346,7 @@ export class ProjectKnowledge {
   }
 
   private project(runId: string): Project {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const session = this.store.session(run.sessionId);
     if (!session.permissions.includes('read') || !(run.permissions ?? session.permissions).includes('read')) throw new KodoError('KNOWLEDGE_DENIED', 'current project read permission is required');
     const workspace = realpathSync(session.workspace);
@@ -360,13 +359,13 @@ export class ProjectKnowledge {
     if (parts.some(part => part === '..' || protectedPart(part))) throw new KodoError('KNOWLEDGE_DENIED', 'knowledge source contains protected data');
     const lexical = path.resolve(project.workspace, input);
     const resolved = actualPath(lexical);
-    if (!inside(project.workspace, resolved) || inside(this.store.directory, resolved) || path.relative(project.workspace, resolved).split(path.sep).some(protectedPart) || !canAccessFileScope(effectiveMethodRun(this.store, this.store.run(runId)).scope, 'read', project.workspace, resolved) || !canAccessFileScope(scopeOverride, 'read', project.workspace, resolved)) throw new KodoError('KNOWLEDGE_DENIED', 'knowledge source is outside the current native file authorization');
+    if (!inside(project.workspace, resolved) || inside(this.store.directory, resolved) || path.relative(project.workspace, resolved).split(path.sep).some(protectedPart) || !canAccessFileScope(this.store.run(runId).scope, 'read', project.workspace, resolved) || !canAccessFileScope(scopeOverride, 'read', project.workspace, resolved)) throw new KodoError('KNOWLEDGE_DENIED', 'knowledge source is outside the current native file authorization');
     return { relative: path.relative(project.workspace, lexical).replaceAll('\\', '/'), resolved };
   }
   private visible(runId: string, body: KnowledgeBody): boolean {
     try {
       if (body.project_id !== this.project(runId).id) return false;
-      if (!body.dependencies.length && body.source_session_id !== effectiveMethodRun(this.store, this.store.run(runId)).sessionId) return false;
+      if (!body.dependencies.length && body.source_session_id !== this.store.run(runId).sessionId) return false;
       for (const source of body.dependencies) {
         const current = this.sourcePath(runId, source.path);
         this.sourcePath(runId, source.resolvedPath);
@@ -412,7 +411,7 @@ export class ProjectKnowledge {
     return body;
   }
   private summary(runId: string, body: KnowledgeBody): KnowledgeSummary {
-    const requester = effectiveMethodRun(this.store, this.store.run(runId));
+    const requester = this.store.run(runId);
     return { id: body.id, revision: body.revision, read: { tool: 'knowledge.read', args: { id: body.id, revision: body.revision } }, summary: this.slice(body.summary, 0, 300), scope: body.scope, freshness: this.freshness(runId, body), confirmation: body.confirmation, completeness: body.open_questions.length || !body.claims.length ? 'partial' : 'answered', sourceAvailable: this.sourceAvailable(body), decisionStale: body.source_session_id === requester.sessionId && body.source_decision_version !== (this.store.session(requester.sessionId).decisionVersion ?? 0) };
   }
   private sourceAvailable(body: KnowledgeBody): boolean {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { storageTestConnection } from '../src/storage/test-access.js';
+import type { Run } from '../src/runtime/types.js';
 import { answer, binding, scripted, temp } from './helpers.js';
 
 function caught(action: () => unknown): unknown {
@@ -47,7 +48,7 @@ describe('legacy lean-team session compatibility', () => {
     } finally { await app.shutdown(); }
   });
 
-  it('treats the legacy task-graph size budget as an incompatible marker too', () => {
+  it('treats the legacy task graph size budget as an incompatible marker too', () => {
     const root = temp();
     const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { instructions: { global: false } });
     try {
@@ -89,6 +90,41 @@ describe('legacy lean-team session compatibility', () => {
       const run = app.createRun({ objective: 'Ordinary compact task.', workspace: root, binding });
       expect((await app.run(run.id)).status).toBe('completed');
     } finally { await app.shutdown(); }
+  });
+});
+
+describe('deleted inline-method stage data', () => {
+  const markers: [string, (app: Application, run: Run) => void][] = [
+    ...(['inlineMethods', 'methodUnloading', 'methodTools', 'methodSkills', 'methodToolView', 'methodCards'] as const).map((field): [string, (app: Application, run: Run) => void] => [`session.${field}`, (app, run) => {
+      const session = app.store.session(run.sessionId);
+      app.store.putSession({ ...session, [field]: field === 'methodToolView' ? 'stable' : field === 'methodCards' || field === 'methodTools' || field === 'methodSkills' ? [] : false } as typeof session);
+    }]),
+    ...['method.loaded', 'method.ended', 'context.methods.unloaded'].map((type): [string, (app: Application, run: Run) => void] => [`event ${type}`, (app, run) => { app.store.event(run.id, type, { synthetic: true }); }]),
+    ['run.taskNode', (app, run) => { app.store.putRun({ ...run, taskNode: { ownerId: run.id, id: 'stage' } } as unknown as Run); }],
+  ];
+  it.each(markers)('gates a session carrying %s while read-only evidence stays available', async (_marker, seed) => {
+    const root = temp();
+    const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { instructions: { global: false } });
+    try {
+      const run = app.createRun({ objective: 'Old inline-method task.', workspace: root, binding });
+      seed(app, run);
+      for (const action of [() => app.run(run.id), () => app.recover(run.id), () => app.spawnAgent(run.sessionId, { objective: 'Child of a method session' }), () => app.submitInput(run.id, 'Continue the method session')]) {
+        expect(caught(action)).toMatchObject({ code: 'SESSION_INCOMPATIBLE', message: expect.stringContaining('inline-method stages') });
+      }
+      expect(app.sessions().items.map(item => item.id)).toContain(run.sessionId);
+      expect(app.snapshot(run.id).runs[0]!.id).toBe(run.id);
+      const fresh = app.createRun({ objective: 'New task after the incompatible one.', workspace: root, binding });
+      expect((await app.run(fresh.id)).status).toBe('completed');
+    } finally { await app.shutdown(); }
+  });
+
+  it('never writes method policy into a new session', () => {
+    const root = temp();
+    const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { instructions: { global: false } });
+    try {
+      const session = app.store.session(app.createRun({ objective: 'Ordinary task.', workspace: root, binding }).sessionId);
+      for (const field of ['inlineMethods', 'methodUnloading', 'methodTools', 'methodSkills', 'methodToolView', 'methodCards']) expect(session).not.toHaveProperty(field);
+    } finally { app.close(); }
   });
 });
 

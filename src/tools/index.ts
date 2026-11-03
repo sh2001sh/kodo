@@ -1,4 +1,3 @@
-import { effectiveMethodRun } from '../extensions/methods.js';
 import { Ajv } from 'ajv';
 import type { ValidateFunction } from 'ajv';
 import { lstat, readdir, realpath, rename, stat, writeFile, unlink, mkdir, link } from 'node:fs/promises';
@@ -178,8 +177,8 @@ export class Tools {
   }
   /** Write lock over `roots` of the run's workspace; waits and takeovers become run events. */
   private writeLock(runId: string, roots: string[], signal?: AbortSignal, tryOnly = false): Promise<() => void> {
-    const workspace = this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId).workspace;
-    return acquireWriteLock(workspace, roots, { directory: this.lockDirectory, tryOnly, ...((this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId).taskProtocol ?? 1) >= 2 ? { timeoutMs: 600_000 } : {}), ...(signal ? { signal } : {}), onEvent: event => { if (!this.storageStopped && !this.store.fault) this.store.event(runId, event.type, event.data); } });
+    const workspace = this.store.session(this.store.run(runId).sessionId).workspace;
+    return acquireWriteLock(workspace, roots, { directory: this.lockDirectory, tryOnly, ...((this.store.session(this.store.run(runId).sessionId).taskProtocol ?? 1) >= 2 ? { timeoutMs: 600_000 } : {}), ...(signal ? { signal } : {}), onEvent: event => { if (!this.storageStopped && !this.store.fault) this.store.event(runId, event.type, event.data); } });
   }
   environmentDescription(): string {
     return this.sandbox
@@ -241,7 +240,7 @@ export class Tools {
   backgroundSettled(): Promise<void> { return this.background.settled(); }
   /** Lean commands always keep a readable receipt; other profiles retain oversized output. */
   private processResult(runId: string, output: ProcessOutput | ProcessFacts, command?: string): unknown {
-    const lean = isLeanProfile(this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId).toolProfile);
+    const lean = isLeanProfile(this.store.session(this.store.run(runId).sessionId).toolProfile);
     const tail = lean && command !== undefined && Boolean(parseCheckCommand(command));
     const filtered = lean && command !== undefined && checkOutputFiltered(command);
     const stdout = tail ? boundedTail(output.stdout, leanPage.stdoutChars) : boundedSlice(output.stdout, 0, lean ? leanPage.stdoutChars : 4000);
@@ -277,7 +276,7 @@ export class Tools {
 
   /** Blocks a write whose roots overlap an unresolved effect; without roots, any unresolved effect in the project blocks. */
   assertWriteScope(runId: string, roots?: string[]): void {
-    const session = this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId);
+    const session = this.store.session(this.store.run(runId).sessionId);
     const blocking = this.store.unresolvedWrites(session.workspace, undefined, roots);
     if (blocking.length) throw new KodoError('UNKNOWN_WRITE', `an unresolved effect (${blocking.slice(0, 3).map(call => call.id).join(', ')}) may have changed ${roots ? 'paths this write touches' : 'this project'}; use recovery.inspect for host verification, or continue independent reads and work outside that scope; do not repeat blocked writes`);
   }
@@ -296,7 +295,7 @@ export class Tools {
    * scope of a sandboxed process, otherwise the whole workspace.
    */
   effectRoots(runId: string, name: string, args: Record<string, unknown>): string[] {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const workspace = runWorkspace(this.store, run);
     const canonical = (target: string): string => {
       try { return actualPath(path.resolve(workspace, target)); }
@@ -338,7 +337,7 @@ export class Tools {
   boundResult(runId: string, name: string, result: unknown): unknown {
     if (name === 'image.read') return result;
     const serialized = JSON.stringify(result ?? null);
-    const leanPaged = (name === 'file.read' || name === 'shell.exec') && isLeanProfile(this.store.session(effectiveMethodRun(this.store, this.store.run(runId)).sessionId).toolProfile);
+    const leanPaged = (name === 'file.read' || name === 'shell.exec') && isLeanProfile(this.store.session(this.store.run(runId).sessionId).toolProfile);
     const limit = this.registry.get(name)?.maxResultBytes ?? (leanPaged ? leanPage.resultBytes : 32 * 1024);
     const bytes = Buffer.byteLength(serialized);
     if (bytes <= limit) return result;
@@ -429,7 +428,7 @@ export class Tools {
     if (name !== 'artifact.write') throw new KodoError('TOOL_NOT_ATOMIC', 'this tool requires asynchronous execution');
     signal.throwIfAborted();
     // Artifacts live in the private store, never in workspace files, so an unresolved workspace effect does not block them.
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const session = executionSession(this.store, run);
     this.validate(name, JSON.stringify(args), run.card.tools, { ...session, permissions: session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission)) }, run);
     if (run.stepCallId && (this.store.call(run.stepCallId).decisionVersion ?? 0) !== (session.decisionVersion ?? 0)) throw new KodoError('DECISION_CHANGED', 'user constraints changed before tool execution');
@@ -446,7 +445,7 @@ export class Tools {
   private async executeInner(runId: string, name: string, args: Record<string, unknown>, signal: AbortSignal, onEffectStart: () => void, options: ExecuteOptions): Promise<unknown> {
     this.store.assertWritable();
     if (this.storageStopped) throw new KodoError('STORAGE_UNAVAILABLE', 'tool execution stopped after a persistence failure');
-    let run = effectiveMethodRun(this.store, this.store.run(runId));
+    let run = this.store.run(runId);
     let session = executionSession(this.store, run);
     // Execute the validated snapshot, never a caller-owned object that can change while consent is pending.
     args = this.validate(name, JSON.stringify(args), run.card.tools, { ...session, permissions: session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission)) }, run);
@@ -472,7 +471,7 @@ export class Tools {
       } finally { stopped.dispose(); }
       startSignal.throwIfAborted();
       if (allowed !== true || this.approvalGeneration !== approvalGeneration) throw new KodoError('TOOL_APPROVAL_DENIED', 'not started: the user did not approve this tool call');
-      run = effectiveMethodRun(this.store, this.store.run(runId));
+      run = this.store.run(runId);
       session = executionSession(this.store, run);
       this.validate(name, JSON.stringify(args), run.card.tools, { ...session, permissions: session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission)) }, run);
     }
@@ -506,7 +505,7 @@ export class Tools {
       const perform = async (): Promise<unknown> => {
       this.store.assertWritable();
       signal.throwIfAborted();
-      run = effectiveMethodRun(this.store, this.store.run(runId));
+      run = this.store.run(runId);
       session = executionSession(this.store, run);
       if (effect === 'write' && name !== 'artifact.write') this.assertWriteScope(runId, this.effectRoots(runId, name, args));
       if (effect === 'write' && (name.startsWith('file.') || name === 'workspace.git')) this.assertOwnership(run, this.effectRoots(runId, name, args));
@@ -759,7 +758,7 @@ export class Tools {
       };
       const bounded = this.boundResult(runId, name, await perform());
       // A first whole-suite pass in a lean main run adds one convergence notice beside any repeat hint.
-      const suiteNotice = name === 'shell.exec' && options.callId && !backgroundOwned ? recordSuitePass(this.store, effectiveMethodRun(this.store, this.store.run(runId)), options.callId, args.command as string, bounded) : undefined;
+      const suiteNotice = name === 'shell.exec' && options.callId && !backgroundOwned ? recordSuitePass(this.store, this.store.run(runId), options.callId, args.command as string, bounded) : undefined;
       const hint = [checkHint, suiteNotice].filter(Boolean).join(' ');
       const result = hint && !backgroundOwned && bounded && typeof bounded === 'object' && !Array.isArray(bounded) ? { ...bounded, hint } : bounded;
       if (!backgroundOwned) { callbackCalled = true; options.settle?.({ ok: true, result }); }
@@ -770,12 +769,12 @@ export class Tools {
     } finally { foregroundSettled = true; releaseForeground(); }
   }
   async probeNativeForRecovery(runId: string, call: Call, request: ToolRequest, signal: AbortSignal): Promise<ToolRecoveryCheck> {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const session = executionSession(this.store, run);
     const release = await this.writeLock(runId, [session.workspace], signal);
     try {
       const authorize = (): void => {
-        const current = effectiveMethodRun(this.store, this.store.run(runId));
+        const current = this.store.run(runId);
         const latest = executionSession(this.store, current);
         const permissions = latest.permissions.filter(permission => (current.permissions ?? latest.permissions).includes(permission));
         this.validate(call.name, request.arguments, current.card.tools, { ...latest, permissions }, current);
@@ -784,7 +783,7 @@ export class Tools {
       authorize();
       const result = await probeNativeRecovery(this.store, { run, call, request, signal }, async input => {
         const file = await this.resolvePath(session.workspace, input, true);
-        const current = effectiveMethodRun(this.store, this.store.run(runId));
+        const current = this.store.run(runId);
         assertFileScope(current.scope, 'read', session.workspace, file);
         assertFileScope(current.scope, 'write', session.workspace, file);
         authorize();
@@ -799,7 +798,7 @@ export class Tools {
     const release = await this.writeLock(runId, [], signal);
     try {
       const authorize = (): Session => {
-        const run = effectiveMethodRun(this.store, this.store.run(runId));
+        const run = this.store.run(runId);
         const session = executionSession(this.store, run);
         const permissions = session.permissions.filter(x => (run.permissions ?? session.permissions).includes(x));
         this.validate('file.apply_patch', JSON.stringify(args), run.card.tools, { ...session, permissions }, run);
@@ -809,8 +808,8 @@ export class Tools {
       const session = authorize();
       signal?.throwIfAborted();
       const file = await this.resolvePath(session.workspace, args.path as string, true);
-      assertFileScope(effectiveMethodRun(this.store, this.store.run(runId)).scope, 'read', session.workspace, file);
-      assertFileScope(effectiveMethodRun(this.store, this.store.run(runId)).scope, 'write', session.workspace, file);
+      assertFileScope(this.store.run(runId).scope, 'read', session.workspace, file);
+      assertFileScope(this.store.run(runId).scope, 'write', session.workspace, file);
       if (authorize().workspace !== session.workspace) throw new KodoError('PATH_DENIED', 'workspace changed while verifying file effects');
       try {
         signal?.throwIfAborted();
@@ -826,14 +825,14 @@ export class Tools {
     } finally { release(); }
   }
   private authorizeWrite(runId: string, file: string): void {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const session = executionSession(this.store, run);
     if (!session.permissions.includes('write') || !(run.permissions ?? session.permissions).includes('write') ||
       (run.stepCallId && (this.store.call(run.stepCallId).decisionVersion ?? 0) !== (session.decisionVersion ?? 0))) throw new KodoError('DECISION_CHANGED', 'write stopped before commit because user constraints changed');
     assertFileScope(run.scope, 'write', session.workspace, file);
   }
   private async list(runId: string, file: string, args: Record<string, unknown>, signal: AbortSignal): Promise<unknown> {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const workspace = runWorkspace(this.store, run);
     const entries: { name: string; directory: boolean; link: boolean }[] = [];
     let skipped = 0;
@@ -876,7 +875,7 @@ export class Tools {
     let args: unknown;
     try { args = JSON.parse(rawArgs); } catch { return undefined; }
     if (!args || typeof args !== 'object' || typeof (args as { path?: unknown }).path !== 'string' || (args as { expectedHash?: unknown }).expectedHash === null) return undefined;
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const session = executionSession(this.store, run);
     if (!readable(run, session)) return undefined;
     try {
@@ -927,7 +926,7 @@ export class Tools {
     return resolved;
   }
   private async search(runId: string, start: string, query: string, signal: AbortSignal): Promise<unknown> {
-    const run = effectiveMethodRun(this.store, this.store.run(runId));
+    const run = this.store.run(runId);
     const workspace = runWorkspace(this.store, run);
     const queue = [start];
     const matches: { path: string; line: number; text: string }[] = [];

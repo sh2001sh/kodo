@@ -7,7 +7,6 @@ import type { Budget, CompletionValidator, Permission, Run } from '../runtime/ty
 import { interactive } from './interactive.js';
 import { terminalText } from './terminal.js';
 import type { ReadOnlyCommand } from '../tools/index.js';
-import { methodCatalogDigest } from '../extensions/methods.js';
 import { runWorkspace } from '../runtime/execution-workspace.js';
 import type { FileScope } from '../runtime/types.js';
 import type { TuiActions } from '../tui/types.js';
@@ -21,7 +20,6 @@ const help = `Kodo development preview (collaboration kernel)
   kodo spawn <session-id> --objective "task" [--model-binding ALIAS] [--scope JSON] [--json]
   kodo runs [--json]
   kodo gc [--vacuum] [--older-than-days N]
-  kodo methods <run-id> [--card file | --disable id] [--digest method-catalog-digest]
   kodo inspect <run-id> [--context] [--json]
   kodo context <run-id> [--json]
   kodo context-report <run-id> [--json]  (C0 aggregation across the run's session)
@@ -53,7 +51,6 @@ Options: Model context/output limits are resolved automatically; no budget prese
          --webfetch [--web-hosts HOST,HOST] (explicit host network grant)
          --compaction off|mask|summary|hybrid [--compaction-trigger-ratio 0.5-0.95 | --compaction-work-tokens N] (default: conditional summary at 0.8 of the effective window; persisted for resume)
          --assembly deterministic [--assembly-work-tokens N] [--assembly-evidence-tokens N] (experimental; no extra model call)
-         --inline-methods [--method-unloading on|off] [--method-tool-view stable|active] (card methods via Skills; checkpoint unloading defaults on)
          --agent-factors A,B,C[,D,E]|none
          --tool-profile compact-v2|compact-v1|full|lean-solo --task-protocol 3|2|1 (new sessions; defaults compact-v2 and 3)
          --memory --lazy-tools (optional; disabled by default, persisted for resume)
@@ -108,8 +105,6 @@ async function main(): Promise<void> {
     'sandbox-resources': { type: 'string' }, 'shell-program': { type: 'string' }, 'lsp-config': { type: 'string' }, webfetch: { type: 'boolean' }, 'web-hosts': { type: 'string' },
     compaction: { type: 'string' }, 'compaction-work-tokens': { type: 'string' }, 'compaction-trigger-ratio': { type: 'string' },
     assembly: { type: 'string' }, 'assembly-work-tokens': { type: 'string' }, 'assembly-evidence-tokens': { type: 'string' },
-    digest: { type: 'string' }, disable: { type: 'string', multiple: true },
-    'inline-methods': { type: 'boolean' }, 'method-unloading': { type: 'string' }, 'method-tool-view': { type: 'string' },
     memory: { type: 'boolean' }, 'lazy-tools': { type: 'boolean' }, 'verification-config': { type: 'string' },
     objective: { type: 'string' }, scope: { type: 'string' },
     'agent-factors': { type: 'string' },
@@ -124,7 +119,7 @@ async function main(): Promise<void> {
   const [command, argument] = positionals;
   const useTui = command === 'chat' && tty && !values.json && !values.plain;
   if (values.plain !== undefined && command !== 'chat') throw new KodoError('ARGUMENTS', '--plain is only valid for chat');
-  if (!['run', 'chat', 'spawn', 'methods', 'inspect', 'context', 'context-report', 'knowledge', 'resume', 'reconcile', 'resolve', 'continue', 'input', 'answer', 'cancel', 'interrupt', 'rewind', 'doctor', 'runs', 'list', 'gc'].includes(command!)) throw new KodoError('COMMAND', 'unknown command; use --help');
+  if (!['run', 'chat', 'spawn', 'inspect', 'context', 'context-report', 'knowledge', 'resume', 'reconcile', 'resolve', 'continue', 'input', 'answer', 'cancel', 'interrupt', 'rewind', 'doctor', 'runs', 'list', 'gc'].includes(command!)) throw new KodoError('COMMAND', 'unknown command; use --help');
   if (command === 'spawn') {
     if (!values.objective?.trim()) throw new KodoError('ARGUMENTS', 'spawn requires --objective');
   } else if (['objective', 'scope', 'model-binding'].some(key => values[key as keyof typeof values] !== undefined)) throw new KodoError('ARGUMENTS', '--objective, --scope and --model-binding are only valid for spawn');
@@ -166,9 +161,8 @@ async function main(): Promise<void> {
     if ((values.outcome === 'not_applied') !== Boolean(values.retry)) throw new KodoError('ARGUMENTS', '--retry is required exactly when --outcome is not_applied');
   } else if (values['call-id'] !== undefined || values.outcome !== undefined || (values.evidence !== undefined && !settlingCall) || values.retry !== undefined) throw new KodoError('ARGUMENTS', '--call-id, --outcome and --retry are only valid for resolve; --evidence also supports call reconciliation');
   if (command !== 'gc' && (values.vacuum !== undefined || values['older-than-days'] !== undefined)) throw new KodoError('ARGUMENTS', '--vacuum and --older-than-days are only valid for gc');
-  if (command !== 'methods' && (values.digest !== undefined || values.disable !== undefined)) throw new KodoError('ARGUMENTS', '--digest and --disable apply only to methods');
   const creationFlags = ['input-price', 'output-price', 'verify-command', 'allow-empty-response', 'workspace', 'provider', 'model', 'base-url', 'api-key-env', 'protocol', 'prompt-cache', 'card', 'allow-write', 'allow-exec', 'max-tokens', 'max-model-calls', 'max-tool-calls', 'max-output-tokens', 'max-context-chars', 'max-context-tokens', 'timeout-ms', 'tool-timeout-ms', 'max-children', 'max-active-children', 'max-concurrent-models', 'cache-read-cost-percent'] as const;
-  if (!['run', 'chat'].includes(command!) && creationFlags.some(flag => values[flag] !== undefined && !(command === 'methods' && flag === 'card'))) throw new KodoError('ARGUMENTS', 'model, workspace, permission and budget options are only valid for run or chat');
+  if (!['run', 'chat'].includes(command!) && creationFlags.some(flag => values[flag] !== undefined)) throw new KodoError('ARGUMENTS', 'model, workspace, permission and budget options are only valid for run or chat');
   const userConfig = ['run', 'chat'].includes(command!)
     ? useTui ? await (await import('./config.js')).ensureInteractiveProviderConfig() : readUserConfig()
     : ['spawn', 'resume', 'continue', 'input', 'answer'].includes(command!) ? readUserConfig() : undefined;
@@ -187,7 +181,7 @@ async function main(): Promise<void> {
   ]);
   const directory = cliDataDirectory(values['data-dir']);
   const hostState = readHostState(directory);
-  const persistedHost = command === 'spawn' ? hostState.find(item => item.sessionId === argument) : ['methods', 'inspect', 'context', 'context-report', 'resume', 'continue', 'input', 'answer', 'interrupt', 'rewind'].includes(command!) ? hostState.find(item => item.runIds.includes(argument ?? '') || item.questionIds.includes(argument ?? '')) : undefined;
+  const persistedHost = command === 'spawn' ? hostState.find(item => item.sessionId === argument) : ['inspect', 'context', 'context-report', 'resume', 'continue', 'input', 'answer', 'interrupt', 'rewind'].includes(command!) ? hostState.find(item => item.runIds.includes(argument ?? '') || item.questionIds.includes(argument ?? '')) : undefined;
   const requestedSandbox = cliSandboxPolicy(values);
   const requestedTools = cliToolPolicy(values);
   const requestedCompaction = cliCompactionPolicy(values);
@@ -204,16 +198,6 @@ async function main(): Promise<void> {
   const compaction = persistedHost ? persistedHost.compaction ?? false : requestedCompaction ?? { ...defaultCompactionPolicy };
   if (persistedHost && requestedAssembly && JSON.stringify(requestedAssembly) !== JSON.stringify(persistedHost.assembly)) throw new KodoError('CAPABILITY_CHANGED', 'resume must preserve the original assembly policy');
   const assembly = persistedHost?.assembly ?? requestedAssembly;
-  if (values['method-unloading'] !== undefined && !['on', 'off'].includes(values['method-unloading'])) throw new KodoError('ARGUMENTS', '--method-unloading must be on or off');
-  if (!persistedHost && values['method-unloading'] !== undefined && !values['inline-methods']) throw new KodoError('ARGUMENTS', '--method-unloading requires --inline-methods');
-  if ((values['inline-methods'] !== undefined || values['method-unloading'] !== undefined) && !['run', 'chat'].includes(command!)) throw new KodoError('ARGUMENTS', 'method options apply to run/chat; resume preserves the saved policy');
-  const inlineMethods = persistedHost ? persistedHost.inlineMethods ?? false : values['inline-methods'] ?? false;
-  const methodUnloading = inlineMethods ? persistedHost ? persistedHost.methodUnloading ?? false : values['method-unloading'] !== 'off' : undefined;
-  if (values['method-tool-view'] !== undefined && (!inlineMethods || !['stable', 'active'].includes(values['method-tool-view']))) throw new KodoError('ARGUMENTS', '--method-tool-view stable|active requires --inline-methods');
-  const methodToolView = persistedHost?.methodToolView ?? values['method-tool-view'] as 'stable' | 'active' | undefined ?? 'stable';
-  if (persistedHost && values['method-tool-view'] !== undefined && values['method-tool-view'] !== (persistedHost.methodToolView ?? 'stable')) throw new KodoError('CAPABILITY_CHANGED', 'resume must preserve the saved method tool view');
-  const methodPolicy = inlineMethods ? { inlineMethods, methodUnloading, methodToolView } : {};
-  if (persistedHost && (values['inline-methods'] !== undefined && values['inline-methods'] !== inlineMethods || values['method-unloading'] !== undefined && (values['method-unloading'] === 'on') !== methodUnloading)) throw new KodoError('CAPABILITY_CHANGED', 'resume must preserve the original method policy');
   if (persistedHost && ((values.memory !== undefined && values.memory !== Boolean(persistedHost.memory)) || (values['lazy-tools'] !== undefined && values['lazy-tools'] !== Boolean(persistedHost.lazyTools)) || (requestedVerification !== undefined && JSON.stringify(requestedVerification) !== JSON.stringify(persistedHost.verification)))) throw new KodoError('CAPABILITY_CHANGED', 'resume must preserve the original optional runtime configuration');
   const memory = persistedHost?.memory ?? values.memory;
   const lazyTools = persistedHost?.lazyTools ?? values['lazy-tools'];
@@ -236,7 +220,7 @@ async function main(): Promise<void> {
     if (!currentRun || app.store.run(runId).sessionId !== app.store.run(currentRun).sessionId) return;
     if (values.json) console.log(JSON.stringify({ type: 'text.delta', runId, transient: true, data: { text } }));
     else if (runId === currentRun) process.stderr.write(terminalText(text));
-  }, { readOnlyCommands, ...agents, ...agentModels, ...(toolProfile ? { toolProfile } : {}), ...(taskProtocol ? { taskProtocol: taskProtocol === '3' ? 3 : taskProtocol === '2' ? 2 : 1 } : {}), ...(sandbox ? { sandbox } : {}), ...trustedTools, ...methodPolicy, compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) });
+  }, { readOnlyCommands, ...agents, ...agentModels, ...(toolProfile ? { toolProfile } : {}), ...(taskProtocol ? { taskProtocol: taskProtocol === '3' ? 3 : taskProtocol === '2' ? 2 : 1 } : {}), ...(sandbox ? { sandbox } : {}), ...trustedTools, compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) });
   const interrupt = (): void => {
     if (tui) return; // runTui owns terminal signals while its screen is mounted.
     if (currentRun) app.coordinator.cancel(currentRun); else startup.abort(new KodoError('CANCELLED', 'user cancelled before execution'));
@@ -316,15 +300,6 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(diagnostics, null, 2));
       if (!diagnostics.chineseTrigram || diagnostics.sqlite !== 'ok') process.exitCode = 1;
       if (diagnostics.sandbox && !diagnostics.sandbox.passed) process.exitCode = 1;
-      return;
-    }
-    if (command === 'methods') {
-      const run = app.store.run(argument!);
-      const session = app.store.session(run.sessionId);
-      if (!values.card && !values.disable) { console.log(JSON.stringify({ methods: session.methodCards ?? [], digest: methodCatalogDigest(session.methodCards) }, null, 2)); return; }
-      if (!values.digest) throw new KodoError('ARGUMENTS', 'method publication requires the current --digest shown by kodo methods');
-      const install = values.card ? [app.parseCard(readFileSync(path.resolve(values.card), 'utf8'))] : [];
-      console.log(JSON.stringify(app.updateSessionMethods(run.id, { expectedDigest: values.digest, install, disable: values.disable })));
       return;
     }
     if (command === 'inspect') {
@@ -422,7 +397,7 @@ async function main(): Promise<void> {
             activatePackage: (id, version) => packages.activate(app, id, version, { workspace, deny: runtimeDeny(workspace), stdio: { write: Boolean(values['allow-write']), network: sandbox?.network ?? 'none' }, verifyExamples: verifyToolExamples({ workspace, permissions: explicitPermissions }), reuseVerification: true, signal: startup.signal }),
             activatePackageAt: (id, version, caseWorkspace, signal) => packages.activate(app, id, version, { workspace: caseWorkspace, deny: runtimeDeny(caseWorkspace), stdio: { write: Boolean(values['allow-write']), network: sandbox?.network ?? 'none' }, verifyExamples: verifyToolExamples({ workspace: caseWorkspace, permissions: explicitPermissions }), signal }),
           },
-          policy: { ...methodPolicy, ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) },
+          policy: { ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}) },
           state: hostState, verificationCommand: values['verify-command'], finalResponse: values['allow-empty-response'] ? 'optional' : 'required', stdioWrite: Boolean(values['allow-write']),
           ...(selectedPackage ? { package: { ...selectedPackage, digest: (await packages.inspect(selectedPackage.id, selectedPackage.version)).digest, stdioWrite: Boolean(values['allow-write']), stdioNetwork: sandbox?.network ?? 'none' } } : {}),
           select: id => { currentRun = id; }, attachVerification, onHost: host => { activeHost = host; },
@@ -441,7 +416,7 @@ async function main(): Promise<void> {
         permissions, budget, finalResponse: values['allow-empty-response'] ? 'optional' : 'required', card: packageCard ?? (values.card ? app.parseCard(readFileSync(path.resolve(values.card), 'utf8')) : undefined) }, startup.signal);
       const session = app.store.session(run.sessionId);
       {
-        activeHost = { ...methodPolicy, sessionId: session.id, runIds: [run.id], questionIds: [], ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}), ...(selectedPackage ? { package: { ...selectedPackage, digest: (await packages.inspect(selectedPackage.id, selectedPackage.version)).digest, stdioWrite: permissions.includes('write'), stdioNetwork: sandbox?.network ?? 'none' } } : {}) };
+        activeHost = { sessionId: session.id, runIds: [run.id], questionIds: [], ...(agents ? { agents } : {}), ...(sandbox ? { sandbox } : {}), ...(trustedTools ? { tools: trustedTools } : {}), compaction, ...(assembly ? { assembly } : {}), ...(memory !== undefined ? { memory } : {}), ...(lazyTools !== undefined ? { lazyTools } : {}), ...(verification ? { verification } : {}), ...(selectedPackage ? { package: { ...selectedPackage, digest: (await packages.inspect(selectedPackage.id, selectedPackage.version)).digest, stdioWrite: permissions.includes('write'), stdioNetwork: sandbox?.network ?? 'none' } } : {}) };
         hostState.push(activeHost);
         writeHostState(directory, hostState);
       }

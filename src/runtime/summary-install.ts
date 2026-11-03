@@ -4,7 +4,6 @@ import { stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { buildContext, rebuildSummaryPrefix } from './context.js';
-import { recordMethodUnloading } from './method-context.js';
 import { geometryShares } from './compaction-trigger.js';
 import { contextOutputReserve } from '../providers/model-limits.js';
 import { errorText, KodoError, terminal } from './types.js';
@@ -183,7 +182,6 @@ export async function installSummary(job: SummaryJob, result: SummaryResult): Pr
         store.event(run.id, 'context.summary.discarded', { attemptKey: job.attemptKey, reason: 'cancelled or authoritative prefix/decision changed' }); return false;
       }
       store.updateRun(run.id, { contextRef: store.blob(restoration.messages), ...(prefix.instructions ? { instructions: prefix.instructions.state } : {}) });
-      recordMethodUnloading(store, run.id, rebuilt.methodUnloading);
       if (prefix.instructions) recordInstructions(store, run.id, 'compaction', prefix.instructions.chain);
       rememberSummary(store, run.id, result.text, summaryRef);
       if (rebuilt.archivedRef) store.event(run.id, 'context.compacted', { ...rebuilt, messages: undefined, summaryPlan: undefined, summarySkipped: undefined, targetTokens, targetMet: rebuilt.estimatedInputTokens <= targetTokens });

@@ -1,4 +1,3 @@
-import { activeMethod, effectiveMethodRun, methodCatalogDigest } from '../extensions/methods.js';
 import { attachment, attachmentKind, attachmentKinds, escapeMarkers } from './attachments.js';
 import { deliverableStatus } from './deliverables.js';
 import { effectiveSession } from './step-host.js';
@@ -7,7 +6,6 @@ import type { Store } from '../storage/index.js';
 import { runMemory } from './memory.js';
 import { excerpt } from './tool-result-prune.js';
 import { terminal } from './types.js';
-import { readTaskGraph } from './task-graph.js';
 import type { Call, Message, Run, Session } from './types.js';
 
 /** Unsettled calls shown in the state frame; the rest are only counted. */
@@ -22,7 +20,6 @@ export interface ContextPressure { inputTokens: number; triggerTokens: number; h
 
 /** L4 body: the current workspace, platform, effective permissions, decisions and process boundary. */
 export function environmentBlock(host: StepHost, run: Run, session: Session): Message {
-  run = effectiveMethodRun(host.store, run);
   const memory = runMemory(host.store, run.id);
   const body = [
     `Workspace: ${session.workspace}. Platform: ${process.platform}.`,
@@ -106,7 +103,6 @@ export function stateFrame(host: StepHost, run: Run, session: Session, pressure?
   const knowledge = store.knowledge.usesOf(run.id);
   const state = {
     objective: excerpt(run.objective, 600), step: run.step, decisionVersion: session.decisionVersion ?? 0,
-    ...(session.inlineMethods && !run.parentId ? { method: activeMethod(store, run.id) ?? null, methodCatalog: methodCatalogDigest(session.methodCards), stages: readTaskGraph(store, run.id).nodes.slice(0, 8).map(node => ({ id: node.id, state: node.state, generation: node.generation, ...(node.runId ? { runId: node.runId } : {}), staleDecision: node.resultDecisionVersion !== undefined && node.resultDecisionVersion !== (session.decisionVersion ?? 0) })) } : {}),
     toolTimeoutMs: session.budget.toolTimeoutMs,
     remainingTokens: session.budget.maxTokens === null ? null : Math.max(0, session.budget.maxTokens - session.tokens),
     ...(delivery ? { deliverables: delivery.items.map(item => ({ ...item, deliverable: excerpt(item.deliverable, 160) })), deliverablesObservedAt: delivery.observedAt } : {}),

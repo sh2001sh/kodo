@@ -1,4 +1,3 @@
-import { effectiveMethodRun } from '../extensions/methods.js';
 import { Store } from '../storage/index.js';
 import { KodoError, terminal } from './types.js';
 import type { Message, Run } from './types.js';
@@ -63,7 +62,7 @@ export function authorizedHistoryRuns(store: Store, requester: Run): Run[] {
 }
 
 /** Event types that index an archived history snapshot for this run. */
-export const historyEventTypes = ['context.assembled', 'context.compacted', 'context.archived', 'context.summary.started', 'context.methods.unloaded'] as const;
+export const historyEventTypes = ['context.assembled', 'context.compacted', 'context.archived', 'context.summary.started'] as const;
 
 function scopeAllowsArchive(store: Store, requester: Run, snapshot: HistorySnapshot): boolean {
   if (requester.scope?.read === undefined) return true;
@@ -121,7 +120,7 @@ export function readHistory(store: Store, requesterId: string, options: { ref: s
   next?: { ref: string; offset: number; contentOffset: number };
   source: { availability: 'available'; coverage: 'recorded-messages'; freshness: 'unknown'; offsetUnit: 'UTF-16 code units'; read: HistoryPointer<typeof options> };
 } {
-  const requester = effectiveMethodRun(store, store.run(requesterId));
+  const requester = store.run(requesterId);
   const offset = options.offset ?? 0;
   const limit = options.limit ?? 20;
   const contentOffset = options.contentOffset ?? 0;
@@ -166,7 +165,7 @@ interface SearchScan { requesterId: string; query: string; sources: SearchSource
 
 /** A durable scan snapshot survives new messages, tool results and compaction between pages. */
 export function searchHistory(store: Store, requesterId: string, options: HistorySearch) {
-  const requester = effectiveMethodRun(store, store.run(requesterId));
+  const requester = store.run(requesterId);
   const profile = store.session(requester.sessionId).toolProfile;
   const { query, limit = 5, maxScanChars = 64_000 } = options;
   if (typeof query !== 'string' || !query.length || query.length > 1000 || !Number.isSafeInteger(limit) || limit < 1 || limit > 5 || !Number.isSafeInteger(maxScanChars) || maxScanChars < 256 || maxScanChars > 128_000) throw new KodoError('HISTORY_ARGUMENTS', 'query must be 1-1000 characters, limit 1-5, maxScanChars 256-128000');

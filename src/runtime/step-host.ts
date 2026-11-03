@@ -1,4 +1,3 @@
-import { activeMethod, effectiveMethodRun, methodControlTools } from '../extensions/methods.js';
 import type { Store } from '../storage/index.js';
 import type { Tools } from '../tools/index.js';
 import type { Mailbox } from '../messaging/index.js';
@@ -39,14 +38,11 @@ const ablationCoreTools = ['shell.exec', 'file.read', 'file.list', 'file.search'
 
 /** Every tool the run may call this step: native and extension tools plus collaboration tools. */
 export function toolSpecs(host: StepHost, run: Run, session: Session): ToolSpec[] {
-  if (session.inlineMethods && !run.parentId) {
-    run = session.methodToolView === 'active' ? effectiveMethodRun(host.store, run) : { ...run, card: { ...run.card, tools: [...new Set([...run.card.tools, ...(session.methodTools ?? [])])] } };
-  }
   if (run.toolChoice === 'none') return [];
   const budget = runBudget(run, session);
   const capacity = Math.min(run.modelLimits?.input ?? session.modelLimits?.input ?? Infinity, budget.maxContextTokens - contextOutputReserve(budget));
   const native = host.tools.requestSpecs(run, effectiveSession(run, session), capacity);
-  const collaboration = host.mailbox.specs(run).filter(spec => session.methodToolView !== 'active' || !activeMethod(host.store, run.id) || methodControlTools.includes(spec.name));
+  const collaboration = host.mailbox.specs(run);
   const all = [...native, ...collaboration].filter(spec => roleAllows(run, session, spec.name));
   if (isLeanProfile(session.toolProfile) && !run.parentId) return leanToolSpecs(all, viewExec(run, effectiveSession(run, session)));
   // Benchmark-only ablation (KODO_ABLATION=small-tools): expose just the file and process tools.

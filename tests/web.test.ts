@@ -100,6 +100,9 @@ describe('loopback web workbench', () => {
     expect((await web.get('/api/runs/' + foreign.id + '/snapshot')).status).toBe(404);
     const local = web.app.createRun({ objective: 'local', workspace: web.workspace, binding, card: web.options.card });
     expect((await web.get('/api/runs/' + local.id + '/artifacts/' + artifact)).status).toBe(404);
+    // The deleted session method catalog has no read or publication endpoint.
+    expect((await web.get('/api/runs/' + local.id + '/methods')).status).toBe(404);
+    expect((await web.post('/api/runs/' + local.id + '/methods', { expectedDigest: 'd'.repeat(64) }, 'deleted_methods')).status).toBe(404);
     const privileged = web.app.createRun({ objective: 'privileged', workspace: web.workspace, binding, card: web.options.card, permissions: ['read', 'exec'] });
     expect((await web.post('/api/runs/' + privileged.id + '/cancel', {}, 'no_escalation')).status).toBe(403);
     const list = await (await web.get('/api/runs')).json(); expect(list.items.map((item: { id: string }) => item.id)).not.toContain(foreign.id);
