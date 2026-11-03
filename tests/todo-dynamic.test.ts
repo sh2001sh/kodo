@@ -131,12 +131,11 @@ describe('dynamic task graph protocol 3', () => {
     expect(todoRunReady(app.store, app.store.run(successor))).toBe(true);
   });
 
-  it.each(['started', 'prepared', 'waiting'] as const)('rejects cancelQueued when execution is %s', state => {
+  it.each(['started', 'waiting'] as const)('rejects cancelQueued when execution is %s', state => {
     const { app, runId } = setup();
     write(app, runId, { updates: [task('work')] });
     const child = dispatch(app, runId, 'work');
     if (state === 'started') app.store.updateRun(child, { step: 1 });
-    if (state === 'prepared') app.store.event(child, 'execution.prepared', { synthetic: true });
     if (state === 'waiting') app.store.updateRun(child, { status: 'waiting' });
     expect(() => write(app, runId, { remove: ['work'], cancelQueued: [child] })).toThrow(/may have started/);
     expect(app.store.run(child).cancelRequested).toBe(false);

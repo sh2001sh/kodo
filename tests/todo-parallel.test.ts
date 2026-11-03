@@ -110,22 +110,6 @@ describe('explicit parallel task protocol', () => {
     expect(app.store.wait(wait.waitId).reason).toBe('new_input');
   });
 
-  it('treats an admitted checkout waiting for a model slot as frozen input', () => {
-    const { app, runId } = setup();
-    const items = [task('design', 'main'), task('build', 'agent', ['design'])];
-    write(app, runId, items.map(item => item.id === 'design' ? { ...item, status: 'completed' } : item));
-    const child = dispatch(app, runId, 'build');
-    expect(todoRunReady(app.store, app.store.run(child.id))).toBe(true);
-    // Isolated synthetic admission event: no model executes and no checkout is created here.
-    app.store.event(child.id, 'execution.prepared', { synthetic: true });
-    write(app, runId, items);
-    write(app, runId, items.map(item => item.id === 'design' ? { ...item, status: 'completed' } : item));
-    expect(todoRunReady(app.store, app.store.run(child.id))).toBe(true);
-    expect(app.store.run(child.id).todo?.dependencies).toEqual([{ id: 'design', generation: 1 }]);
-    expect(app.store.events(child.id, { types: ['todo.dependencies.changed'] }).length).toBeGreaterThan(0);
-    expect(todoDependenciesCurrent(app.store, app.store.run(child.id))).toBe(false);
-  });
-
   it('wakes a parent waiting only for a successor whose prerequisite needs a parent decision', () => {
     const { app, runId } = setup();
     write(app, runId, [task('design', 'main'), task('build', 'agent', ['design'])]);

@@ -36,11 +36,10 @@ function succeededAt(store: Store, runId: string, callId: string, command: strin
 }
 
 /**
- * No native content write or integration after the earlier check began. Shell commands and successful
+ * No native content write after the earlier check began. Shell commands and successful
  * commits are left to the workspace version; a changed file still invalidates earlier evidence.
  */
 function quietSince(store: Store, runId: string, after: number, ignore: ReadonlySet<string>): boolean {
-  if (store.hasEvent(runId, { types: ['execution.integrated'], after })) return false;
   return store.events(runId, { types: ['tool.started'], after }).every(event => {
     const callId = event.data.callId;
     if (typeof callId !== 'string') return false;

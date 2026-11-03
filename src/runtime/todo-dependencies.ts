@@ -6,7 +6,7 @@ import { itemGeneration, parallelTasks, readTodoSnapshot } from '../tools/todo.j
 import type { TodoSnapshot } from '../tools/todo.js';
 import { writeScopesOverlap } from './scope.js';
 
-const started = (store: Store, run: Run): boolean => run.step > 0 || store.calls(run.id).some(call => call.kind === 'model') || store.hasEvent(run.id, { types: ['execution.prepared'] });
+const started = (store: Store, run: Run): boolean => run.step > 0 || store.calls(run.id).some(call => call.kind === 'model');
 
 /** Whether an already-started task used the currently accepted prerequisite versions. */
 export function todoDependenciesCurrent(store: Store, run: Run, snapshot?: TodoSnapshot): boolean {
@@ -32,8 +32,8 @@ export function todoRunReady(store: Store, run: Run): boolean {
     return false;
   }
   const session = store.session(run.sessionId);
-  if (!run.execution && !run.executionPending && (run.permissions ?? session.permissions).includes('write') && run.scope?.write?.length !== 0) {
-    const holder = store.listRuns(run.sessionId).some(peer => peer.id !== run.id && peer.parentId === run.parentId && !peer.execution && !peer.executionPending && !terminal(peer.status)
+  if ((run.permissions ?? session.permissions).includes('write') && run.scope?.write?.length !== 0) {
+    const holder = store.listRuns(run.sessionId).some(peer => peer.id !== run.id && peer.parentId === run.parentId && !terminal(peer.status)
       && (peer.status !== 'queued' || ((peer.createdAt < run.createdAt || (peer.createdAt === run.createdAt && peer.id < run.id)) && todoDependenciesSatisfied(store, peer.parentId!, peer.todo)))
       && (peer.permissions ?? session.permissions).includes('write') && peer.scope?.write?.length !== 0 && writeScopesOverlap(peer.scope, run.scope));
     if (holder) return false;

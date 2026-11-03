@@ -124,14 +124,6 @@ export interface Run {
   agentId?: string;
   permissions?: Permission[]; inputCursor?: number; waitId?: string;
   scope?: FileScope;
-  /** Host-created independent checkout; never a model-selected absolute execution root. */
-  execution?: {
-    root: string; baseCommit: string; sourceRoot: string; kind: 'clone';
-    /** Snapshot checkouts only: the persistent `refs/kodo/snapshots/...` ref and node generation; absent on HEAD clones. */
-    snapshotRef?: string; generation?: number;
-  };
-  /** Independent checkout is provisioned at first admission, after prerequisites settle. */
-  executionPending?: { global: string | false };
   /** Explicit parent task association and accepted prerequisite versions. */
   todo?: { id: string; generation: number; dependencies: { id: string; generation: number }[]; ready?: boolean };
   /** Host-created, scoped read-only investigation; result contract is enforced at completion. */
@@ -187,8 +179,6 @@ export interface Call {
   effectOutcome?: 'applied' | 'not_applied' | 'unknown';
   /** Canonical absolute roots this write could touch; absent on legacy calls, which cover the whole workspace. */
   effectRoots?: string[];
-  /** Host side effect (snapshot commit, integration) recorded on a run; never part of the model view. */
-  host?: true;
 }
 export interface Envelope {
   seq: number; id: string; sessionId: string; from: string; to: string;

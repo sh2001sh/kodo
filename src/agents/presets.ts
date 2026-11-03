@@ -87,7 +87,7 @@ export const builtinAgentCards: Card[] = builtinCardsV1.map(card => card.routing
 /** Factor A adds these references to a copy of the main card; the original v1 default remains unchanged. */
 export const defaultMemberReferences: CardReference[] = builtinAgentCards.slice(0, 4).map(({ id, version, digest }) => ({ id, version, digest }));
 
-const compactWriteTools = [...readTools, 'file.patch', 'file.apply_patch', 'shell.exec', 'workspace.commit'];
+const compactWriteTools = [...readTools, 'file.patch', 'file.apply_patch', 'shell.exec'];
 const compactMethods: Record<string, string> = {
   'kodo/explorer': 'Answer only the supplied question, starting at the given files and symbols. Read a supplied contract artifact with artifact.read. Return confirmed findings, their source paths, and unresolved questions. Stop when the question is answered; broaden the search only for a concrete missing dependency or contradiction. Do not edit files or run commands.',
   'kodo/reviewer': 'Review the supplied change against the authoritative contract and specified risk questions. Read contract artifacts with artifact.read. Start from provided diff, changed files and existing check evidence; request a missing diff instead of pretending source reads establish the change. Use verify.run only for approved checks. Do not turn a bounded review into a repository-wide audit. Return concrete findings, inspected scope, check references and unverified items; a short output is not a claim of exhaustive coverage.',
@@ -99,7 +99,7 @@ const compactMethods: Record<string, string> = {
 
 /** Compact rosters are opt-in per persisted session; published 1.0/1.1 cards remain available. */
 export const compactBuiltinAgentCards: Card[] = builtinAgentCards.map(card => parseCard(serializeCard({
-  ...card, version: '1.2.0', prompt: compactMethods[card.id]!,
+  ...card, version: '1.3.0', prompt: compactMethods[card.id]!,
   tools: card.routing?.mode === 'write' ? [...compactWriteTools, ...(card.id === 'kodo/frontend' ? ['image.read'] : [])] : card.tools,
   // The required objective already carries a bounded task. Artifacts are useful for
   // shared contracts, but forcing one for every small task creates needless handoffs.
@@ -109,9 +109,9 @@ export const compactBuiltinAgentCards: Card[] = builtinAgentCards.map(card => pa
 /** New sessions use ordinary task results and recorded calls, without a mandatory report ceremony. */
 export const simpleBuiltinAgentCards: Card[] = compactBuiltinAgentCards.map(card => {
   return parseCard(serializeCard({
-    ...card, version: '1.3.0', report: undefined,
+    ...card, version: '1.4.0', report: undefined,
     tools: card.routing?.mode === 'write'
-      ? [...readTools, 'file.patch', 'file.apply_patch', 'file.mkdir', 'file.rename', 'file.delete', 'shell.exec', 'workspace.commit', ...(card.id === 'kodo/frontend' ? ['image.read'] : [])]
+      ? [...readTools, 'file.patch', 'file.apply_patch', 'file.mkdir', 'file.rename', 'file.delete', 'shell.exec', ...(card.id === 'kodo/frontend' ? ['image.read'] : [])]
       : card.tools,
     prompt: `${card.prompt} Return a concise final result with changed or inspected paths, actual check-call references and unresolved gaps. Reuse existing output when its code, inputs and environment still apply; do not rerun checks just to obtain a summary.`,
   }), { toolNames: hostToolNames });

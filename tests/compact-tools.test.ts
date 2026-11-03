@@ -74,8 +74,8 @@ describe('compact stable tool profile', () => {
     const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], { toolProfile: 'compact-v1', taskProtocol: 2, agentFactors: factors });
     const parent = app.store.run(runId);
     const child = app.spawnAgent(parent.sessionId, { agent: 'kodo/implementer', objective: 'Check the assigned module.', scope: { read: ['.'], write: ['result.txt'] } });
-    expect(child.card.version).toBe('1.2.0');
-    expect(child.card.tools).toEqual(['file.read', 'file.list', 'file.search', 'artifact.read', 'file.patch', 'file.apply_patch', 'shell.exec', 'workspace.commit']);
+    expect(child.card.version).toBe('1.3.0');
+    expect(child.card.tools).toEqual(['file.read', 'file.list', 'file.search', 'artifact.read', 'file.patch', 'file.apply_patch', 'shell.exec']);
     const names = toolSpecs(app.coordinator, child, app.store.session(child.sessionId)).map(tool => tool.name);
     expect(names).toEqual(expect.arrayContaining(['shell.exec', 'process.read', 'artifact.read', 'history.read', 'recovery.inspect', 'send_message', 'wait_for_events', 'report.submit']));
     expect(names).not.toContain('process.exec');
@@ -98,7 +98,7 @@ describe('compact stable tool profile', () => {
     expect(compactDefaultCard.id).not.toBe(defaultCard.id);
     for (const compact of compactBuiltinAgentCards) {
       const prior = builtinAgentCards.find(card => card.id === compact.id)!;
-      expect(compact.version).toBe('1.2.0');
+      expect(compact.version).toBe('1.3.0');
       expect(compact.digest).not.toBe(prior.digest);
       expect(prior.version).toBe(prior.routing?.mode === 'write' ? '1.1.0' : '1.0.0');
     }
@@ -165,7 +165,7 @@ describe('compact stable tool profile', () => {
       await expect(app.coordinator.tools.execute(runId, 'todo.write', { expectedRevision: 0, items }, signal())).resolves.toHaveProperty('revision', 1);
       expect(specs.map(spec => spec.name)).toContain('agent.route');
     }
-    expect(app.store.cards.rosterMember(session.id, 'kodo/implementer')?.card.version).toBe(options.toolProfile === 'compact-v1' ? '1.2.0' : '1.1.0');
+    expect(app.store.cards.rosterMember(session.id, 'kodo/implementer')?.card.version).toBe(options.toolProfile === 'compact-v1' ? '1.3.0' : '1.1.0');
     expect(app.store.run(runId).scope).toEqual(run.scope);
   });
 });

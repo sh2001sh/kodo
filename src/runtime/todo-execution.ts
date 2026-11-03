@@ -24,7 +24,7 @@ export function todoExecutionFeedback(store: Store, run: Run, name: string, effe
       const relative = path.relative(actualPath(left), actualPath(right));
       return !relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
     };
-    const holder = store.listRuns(run.sessionId).find(child => child.parentId === run.id && !child.execution && !child.executionPending && childIsActive(store, child)
+    const holder = store.listRuns(run.sessionId).find(child => child.parentId === run.id && childIsActive(store, child)
       && (child.permissions ?? session.permissions).includes('write') && child.scope?.write?.length !== 0
       && (child.status !== 'queued' || todoDependenciesSatisfied(store, run.id, child.todo))
       && roots.some(target => (child.scope?.write ?? ['.']).some(root => overlaps(path.resolve(session.workspace, root), target) || overlaps(target, path.resolve(session.workspace, root)))));

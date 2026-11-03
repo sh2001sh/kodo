@@ -2,10 +2,8 @@ import type { Run, Session } from './types.js';
 import { isLeanProfile, leanAllows } from './tool-view.js';
 
 /** Freeze profile-specific visibility; legacy E delegates execution, compact-v2 keeps a complete coding loop. */
-export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card' | 'execution' | 'permissions'>>, session: Pick<Session, 'agentFactors' | 'toolProfile'> & Partial<Pick<Session, 'permissions' | 'inlineMethods'>>, name: string): boolean {
+export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card' | 'permissions'>>, session: Pick<Session, 'agentFactors' | 'toolProfile'> & Partial<Pick<Session, 'permissions' | 'inlineMethods'>>, name: string): boolean {
   if (session.inlineMethods && !run.parentId && (name.startsWith('knowledge.') || name === 'artifact.write')) return true;
-  if (name === 'workspace.integrate') return !run.parentId;
-  if (name === 'workspace.commit') return Boolean(run.parentId && run.execution);
   if (isLeanProfile(session.toolProfile) && !run.parentId) {
     // The lean main view is frozen by permissions and card: commands, or native file management without them.
     const exec = Boolean(session.permissions?.includes('exec') && (run.permissions ?? session.permissions).includes('exec') && run.card?.tools.includes('shell.exec'));
@@ -13,7 +11,7 @@ export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card'
   }
   if (session.toolProfile === 'compact-v2') {
     const simpleMain = /^builtin\/general-simple(?:-(?:memory|verify|web|lsp))*(?:-roster-[a-f0-9]{12})?$/u.test(run.card?.id ?? '');
-    const simpleMember = run.card?.version === '1.3.0' && ['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer', 'kodo/frontend', 'kodo/backend'].includes(run.card.id);
+    const simpleMember = run.card?.version === '1.4.0' && ['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer', 'kodo/frontend', 'kodo/backend'].includes(run.card.id);
     if (simpleMain || simpleMember) {
       if (name.startsWith('agent.') || name.startsWith('knowledge.') || ['explore', 'exploration.plan', 'update_progress', 'list_agents', 'history.search', 'artifact.write'].includes(name)) return false;
       // Without exec, native directory/file management remains the complete write path.
@@ -29,7 +27,7 @@ export function roleAllows(run: Pick<Run, 'parentId'> & Partial<Pick<Run, 'card'
   if (session.toolProfile === 'compact-v1' && /^builtin\/general-compact(?:-(?:memory|verify|web|lsp))*(?:-roster-[a-f0-9]{12})?$/u.test(run.card?.id ?? '')) {
     if (name.startsWith('agent.') || name.startsWith('knowledge.') || ['explore', 'exploration.plan', 'update_progress', 'list_agents'].includes(name)) return false;
   }
-  if (session.toolProfile === 'compact-v1' && run.parentId && run.card?.version === '1.2.0' && ['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer', 'kodo/frontend', 'kodo/backend'].includes(run.card.id) && ['list_agents', 'update_progress'].includes(name)) return false;
+  if (session.toolProfile === 'compact-v1' && run.parentId && run.card?.version === '1.3.0' && ['kodo/explorer', 'kodo/tester', 'kodo/reviewer', 'kodo/implementer', 'kodo/frontend', 'kodo/backend'].includes(run.card.id) && ['list_agents', 'update_progress'].includes(name)) return false;
   if (!session.agentFactors?.E || run.parentId) return true;
   return !['shell.exec', 'process.exec', 'process.read', 'image.read', 'web.fetch'].includes(name) && !name.startsWith('lsp.');
 }

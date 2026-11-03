@@ -20,7 +20,7 @@ describe('complete coding loop with a simple tool profile', () => {
     const tools = app.coordinator.tools;
     const specs = () => toolSpecs(app.coordinator, app.store.run(runId), session);
     const before = specs();
-    expect(before).toHaveLength(20);
+    expect(before).toHaveLength(19);
     expect(before.map(spec => spec.name)).toEqual(expect.arrayContaining([
       'shell.exec', 'process.read', 'file.read', 'file.search', 'file.patch', 'file.apply_patch',
       'artifact.read', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
@@ -77,7 +77,7 @@ describe('complete coding loop with a simple tool profile', () => {
     const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], simple);
     const parent = app.store.run(runId);
     const child = app.spawnAgent(parent.sessionId, { agent: 'kodo/implementer', objective: 'Update the assigned file.', permissions: ['read', 'write'], scope: { read: ['.'], write: ['result.txt'] } });
-    expect(child.card.version).toBe('1.3.0');
+    expect(child.card.version).toBe('1.4.0');
     expect(child.card.report).toBeUndefined();
     const names = toolSpecs(app.coordinator, child, app.store.session(child.sessionId)).map(tool => tool.name);
     expect(names).toEqual(expect.arrayContaining(['file.mkdir', 'file.rename', 'file.delete']));
@@ -101,9 +101,9 @@ describe('complete coding loop with a simple tool profile', () => {
     expect(simpleDefaultCard.id).not.toBe(compactDefaultCard.id);
     for (const card of simpleBuiltinAgentCards) {
       const prior = compactBuiltinAgentCards.find(item => item.id === card.id)!;
-      expect(card.version).toBe('1.3.0');
+      expect(card.version).toBe('1.4.0');
       expect(card.report).toBeUndefined();
-      expect(prior.version).toBe('1.2.0');
+      expect(prior.version).toBe('1.3.0');
       expect(prior.report?.length).toBeGreaterThan(0);
       expect(card.digest).not.toBe(prior.digest);
     }
