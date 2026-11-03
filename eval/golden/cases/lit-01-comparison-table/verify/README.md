@@ -22,7 +22,7 @@
 
 所有数值在「摘要」「结果表」「正文」三处互相一致（例：84.7、92.3、91.2 同时出现在 paper-1 摘要与表 2）。
 
-## 3. rubric 结构（`rubric.json`，passThreshold = 0.9）
+## 3. rubric 结构（`rubric.json`，passThreshold = 0.95）
 
 机械检查（checks，参与加权得分）：
 
@@ -43,6 +43,7 @@
 - `R1 citation-sources`：交付物中出现的每个 `materials/...` 路径必须真实存在；中文引号 / 英文双引号内
   ≥ 10 字的原文片段必须能在 `materials/` 某份来源中逐字找到（含标点）。
 - `R2 file-contains`：交付物不得包含 `http://` 或 `https://`（禁止外部链接、编造外部文献）。
+- `R3 protected-unchanged paths=["materials"]`：`materials/` 下任何文件被修改/新增/删除即违规。
 
 `M8` 使用 `case.json.grading.stage`：评分前把 `verify/stage/` 复制到运行工作区的 `_verify/`，
 held-out 脚本只在评分阶段出现，模型运行期间不可见。

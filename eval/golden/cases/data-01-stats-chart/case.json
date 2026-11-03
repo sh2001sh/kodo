@@ -3,7 +3,7 @@
   "id": "data-01-stats-chart",
   "category": "data",
   "title": "区域销售统计、图表与结论",
-  "objective": "你是数据分析师。请基于 materials/sales.csv 完成区域销售统计，并把产物全部写入 deliverables/ 目录。\n\n输入：materials/sales.csv（UTF-8、逗号分隔），表头为 order_id,region,month,sales_amount；region 取值是中文区域名（如华东、华北），sales_amount 列存在少量空值和无法解析为数字的文本（如 N/A）。\n\n任务：\n1. 读取 materials/sales.csv，把 sales_amount 为空或无法解析为数字的行视为无效行并剔除，其余行为有效行。\n2. 按 region 分组统计有效行：销售总额 total_sales、平均销售额 mean_sales、销售额中位数 median_sales、有效订单数 order_count。金额类指标四舍五入保留两位小数，order_count 为整数。\n3. 写 deliverables/summary.csv：表头固定为 region,total_sales,mean_sales,median_sales,order_count，按 region 升序排列，每个区域一行（共 4 行），UTF-8、逗号分隔、不带 BOM，数值直接写数字（不要千分位）。\n4. 写 deliverables/chart.png：用 matplotlib 生成一张按区域销售总额的柱状图或折线图，文件大小不低于 5KB。\n5. 写 deliverables/report.md：200-300 字中文结论，必须写出销售额最高的区域名（与 CSV 中 region 取值一致），并说明区域间的差距。\n\n约束：不需要联网；不要修改 materials/ 下的任何文件；产物路径必须与上面一致。",
+  "objective": "你是数据分析师。请基于 materials/sales.csv 完成区域销售统计，并把产物全部写入 deliverables/ 目录。\n\n输入：materials/sales.csv（UTF-8、逗号分隔），表头为 order_id,region,month,sales_amount；region 取值是中文区域名（如华东、华北），sales_amount 列存在少量空值和无法解析为数字的文本（如 N/A）。\n\n任务：\n1. 读取 materials/sales.csv，把 sales_amount 为空或无法解析为数字的行视为无效行并剔除，其余行为有效行。\n2. 按 region 分组统计有效行：销售总额 total_sales、平均销售额 mean_sales、销售额中位数 median_sales、有效订单数 order_count。金额类指标四舍五入保留两位小数，order_count 为整数。\n3. 写 deliverables/summary.csv：表头固定为 region,total_sales,mean_sales,median_sales,order_count，按 region 升序排列，每个区域一行（共 4 行），UTF-8、逗号分隔、不带 BOM，数值直接写数字（不要千分位）。\n4. 写 deliverables/chart.png：用 matplotlib 生成一张按区域销售总额的柱状图或折线图；必须是真实 PNG 图片，像素宽不小于 600、高不小于 400，文件大小不低于 5KB。\n5. 写 deliverables/report.md：200-300 字（按中文字符计，允许 ±10%）中文结论，必须写出销售额最高的区域名（与 CSV 中 region 取值一致），并说明区域间的差距。\n\n约束：不需要联网；不要修改 materials/ 下的任何文件（评分会比对材料内容，篡改材料直接判不合格）；产物路径必须与上面一致。",
   "limits": {
     "contextTokens": 1048576,
     "outputTokens": 393216,
@@ -17,5 +17,6 @@
   "deliverableDir": "deliverables",
   "smoke": { "minModelCalls": 1, "minToolCalls": 1, "requireEventPrefixes": [] },
   "materialsGlobs": ["materials/**/*"],
-  "notes": "数据类样例：验证 CSV 统计（总额/均值/中位数/计数）、matplotlib 出图、短结论。期望值由 verify/gen-data.py 用 pandas 计算并写入 rubric；chart.png 只检查文件存在与 minBytes，不比对图像内容。"
+  "grading": { "restore": [], "stage": [{ "from": "verify/stage", "to": "_verify" }] },
+  "notes": "数据类样例：验证 CSV 统计（总额/均值/中位数/计数）、matplotlib 出图、短结论。P0 修复：passThreshold=0.95、csv-cell/行数权重 4（单个数字写错即 <0.95）、rules 增加 protected-unchanged(materials)；P1：held-out command verify/stage/check-chart.mjs 校验 PNG 魔数与宽高、report 中文字符区间、最高区域；补 1 条 human 兜底。chart.png 参考解只保证真实 PNG，不比对图像内容。"
 }

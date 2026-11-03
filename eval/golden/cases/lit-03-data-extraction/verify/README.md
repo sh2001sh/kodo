@@ -6,7 +6,7 @@
 抽取为 `workspace/deliverables/extracted.csv`：
 
 - 表头逐字为 `paper,model,dataset,metric,value`（UTF-8、英文逗号分隔）；
-- 每个（模型，数据集，指标）组合一行，共 ≥ 12 行；
+- 每个（模型，数据集，指标）组合一行，共 36 行（每篇论文表 2 的 6 行 × 2 个指标）；
 - `paper` 列填材料文件名（如 `paper-1-retriever-bench.md`）；
 - `model` / `dataset` / `metric` 列逐字照抄表 2 的单元格与指标表头；
 - `value` 只写数值（不带 %、不带单位），精度与论文一致；
@@ -24,7 +24,7 @@
 每篇论文均含标题/作者机构/年份/摘要/方法/数据统计表/表 2 主要结果/消融表/讨论/局限/参考文献/附录，
 表 2 与摘要中的数值一致。
 
-## 3. rubric 结构（`rubric.json`，passThreshold = 0.9）
+## 3. rubric 结构（`rubric.json`，passThreshold = 0.95）
 
 | id | kind | weight | 检查内容 |
 |---|---|---:|---|

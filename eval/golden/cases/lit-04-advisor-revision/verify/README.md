@@ -30,7 +30,7 @@
 | `materials/paper-2-iterwrite.md` | 8,978 | 补引来源（“延迟相对 Hier-RAG 增加 64%”等） |
 | **合计** | **24,376** | 4 份 |
 
-## 4. rubric 结构（`rubric.json`，passThreshold = 0.9）
+## 4. rubric 结构（`rubric.json`，passThreshold = 0.95）
 
 | id | kind | weight | 检查内容 |
 |---|---|---:|---|
@@ -44,7 +44,7 @@
 
 规则：
 
-- `R1 protected-unchanged paths=["materials/draft.md","materials/advisor-comments.md"]`：两份文件被改即违规；
+- `R1 protected-unchanged paths=["materials"]`：`materials/` 下任何文件被修改/新增/删除即违规；
 - `R2 citation-sources allowedRoots=["materials"] requireExcerpt=true`：引用路径必须真实，≥ 10 字引号片段必须逐字可查；
 - `R3 file-contains none=["http://","https://"]`：禁止外部链接。
 

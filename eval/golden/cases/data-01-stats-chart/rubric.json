@@ -1,29 +1,33 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.9,
+  "passThreshold": 0.95,
   "checks": [
     { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/summary.csv", "minBytes": 100 } },
     { "id": "M02", "kind": "csv-columns", "weight": 2, "params": { "path": "deliverables/summary.csv", "required": ["region", "total_sales", "mean_sales", "median_sales", "order_count"] } },
-    { "id": "M03", "kind": "csv-rows", "weight": 2, "params": { "path": "deliverables/summary.csv", "minRows": 4, "maxRows": 4 } },
-    { "id": "M04", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "total_sales": 85528.13 }, "tolerance": 0.01 } },
-    { "id": "M05", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "mean_sales": 1474.62 }, "tolerance": 0.01 } },
-    { "id": "M06", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "median_sales": 1496.62 }, "tolerance": 0.01 } },
-    { "id": "M07", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "order_count": 58 }, "tolerance": 0.01 } },
-    { "id": "M08", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "total_sales": 53777.43 }, "tolerance": 0.01 } },
-    { "id": "M09", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "mean_sales": 995.88 }, "tolerance": 0.01 } },
-    { "id": "M10", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "median_sales": 1061.17 }, "tolerance": 0.01 } },
-    { "id": "M11", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "order_count": 54 }, "tolerance": 0.01 } },
-    { "id": "M12", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "total_sales": 42520.76 }, "tolerance": 0.01 } },
-    { "id": "M13", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "mean_sales": 733.12 }, "tolerance": 0.01 } },
-    { "id": "M14", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "median_sales": 765.51 }, "tolerance": 0.01 } },
-    { "id": "M15", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "order_count": 58 }, "tolerance": 0.01 } },
-    { "id": "M16", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "total_sales": 29994.35 }, "tolerance": 0.01 } },
-    { "id": "M17", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "mean_sales": 535.61 }, "tolerance": 0.01 } },
-    { "id": "M18", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "median_sales": 538.53 }, "tolerance": 0.01 } },
-    { "id": "M19", "kind": "csv-cell", "weight": 2, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "order_count": 56 }, "tolerance": 0.01 } },
+    { "id": "M03", "kind": "csv-rows", "weight": 4, "params": { "path": "deliverables/summary.csv", "minRows": 4, "maxRows": 4 } },
+    { "id": "M04", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "total_sales": 85528.13 }, "tolerance": 0.01 } },
+    { "id": "M05", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "mean_sales": 1474.62 }, "tolerance": 0.01 } },
+    { "id": "M06", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "median_sales": 1496.62 }, "tolerance": 0.01 } },
+    { "id": "M07", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华东" }, "expect": { "order_count": 58 }, "tolerance": 0.01 } },
+    { "id": "M08", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "total_sales": 53777.43 }, "tolerance": 0.01 } },
+    { "id": "M09", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "mean_sales": 995.88 }, "tolerance": 0.01 } },
+    { "id": "M10", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "median_sales": 1061.17 }, "tolerance": 0.01 } },
+    { "id": "M11", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华北" }, "expect": { "order_count": 54 }, "tolerance": 0.01 } },
+    { "id": "M12", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "total_sales": 42520.76 }, "tolerance": 0.01 } },
+    { "id": "M13", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "mean_sales": 733.12 }, "tolerance": 0.01 } },
+    { "id": "M14", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "median_sales": 765.51 }, "tolerance": 0.01 } },
+    { "id": "M15", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "华南" }, "expect": { "order_count": 58 }, "tolerance": 0.01 } },
+    { "id": "M16", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "total_sales": 29994.35 }, "tolerance": 0.01 } },
+    { "id": "M17", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "mean_sales": 535.61 }, "tolerance": 0.01 } },
+    { "id": "M18", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "median_sales": 538.53 }, "tolerance": 0.01 } },
+    { "id": "M19", "kind": "csv-cell", "weight": 4, "params": { "path": "deliverables/summary.csv", "where": { "region": "西部" }, "expect": { "order_count": 56 }, "tolerance": 0.01 } },
     { "id": "M20", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/chart.png", "minBytes": 5000 } },
     { "id": "M21", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/report.md", "minBytes": 400 } },
-    { "id": "M22", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/report.md", "all": ["华东"] } }
+    { "id": "M22", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/report.md", "all": ["华东"] } },
+    { "id": "C01", "kind": "command", "weight": 4, "params": { "program": "node", "args": ["_verify/check-chart.mjs"], "expectExit": 0, "timeoutMs": 120000 } },
+    { "id": "H01", "kind": "human", "weight": 1, "params": { "question": "图表与结论是否与 summary.csv 一致：chart.png 是否为按区域销售总额的柱状图/折线图且可读，report.md 的最高区域与关键数字是否正确、是否存在编造数字？" } }
   ],
-  "rules": []
+  "rules": [
+    { "id": "R01", "kind": "protected-unchanged", "params": { "paths": ["materials"] } }
+  ]
 }

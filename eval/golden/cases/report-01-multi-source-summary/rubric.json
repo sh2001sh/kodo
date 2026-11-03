@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "passThreshold": 0.9,
+  "passThreshold": 0.95,
   "checks": [
     { "id": "M01", "kind": "file-exists", "weight": 1, "params": { "path": "deliverables/summary.md", "minBytes": 3500 } },
     { "id": "M02", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "all": ["结论", "证据", "风险"] } },
@@ -12,9 +12,12 @@
     { "id": "M08", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["知识库"] } },
     { "id": "M09", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["合规"] } },
     { "id": "M10", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["王琳"] } },
-    { "id": "M11", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["陈昊"] } }
+    { "id": "M11", "kind": "file-contains", "weight": 1, "params": { "path": "deliverables/summary.md", "any": ["陈昊"] } },
+    { "id": "C01", "kind": "command", "weight": 4, "params": { "program": "node", "args": ["_verify/check-report.mjs"], "expectExit": 0, "timeoutMs": 120000 } },
+    { "id": "H01", "kind": "human", "weight": 1, "params": { "question": "报告的结论/证据/风险是否与 4 份材料一致（关键数字、访谈引文可逐条核对、无编造），首周/末周数值是否与标签正确对应，来源是否可核对？" } }
   ],
   "rules": [
-    { "id": "R01", "kind": "citation-sources", "params": { "path": "deliverables/summary.md", "allowedRoots": ["materials"], "requireExcerpt": true } }
+    { "id": "R01", "kind": "citation-sources", "params": { "path": "deliverables/summary.md", "allowedRoots": ["materials"], "requireExcerpt": true } },
+    { "id": "R02", "kind": "protected-unchanged", "params": { "paths": ["materials"] } }
   ]
 }

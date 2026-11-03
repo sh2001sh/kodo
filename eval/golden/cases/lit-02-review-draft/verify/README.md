@@ -24,7 +24,7 @@
 | `materials/paper-6-survey.md` | 9,838 | 同主题综述：方法分类、五个中文基准、五个研究空白 |
 | **合计** | **52,042** | 6 篇，数值与摘要/结果表一致 |
 
-## 3. rubric 结构（`rubric.json`，passThreshold = 0.9）
+## 3. rubric 结构（`rubric.json`，passThreshold = 0.95）
 
 | id | kind | weight | 检查内容 |
 |---|---|---:|---|
@@ -42,6 +42,7 @@
 
 - `R1 citation-sources`：`materials/...` 路径必须真实存在；≥ 10 字的引号片段必须能在材料中逐字找到；
 - `R2 file-contains none`：不得出现 `http://` / `https://`。
+- `R3 protected-unchanged paths=["materials"]`：`materials/` 下任何文件被修改/新增/删除即违规。
 
 `M7` 的 held-out 脚本位于 `verify/stage/`，通过 `case.json.grading.stage` 在评分前复制到
 运行工作区的 `_verify/`，模型运行期间不可见。
