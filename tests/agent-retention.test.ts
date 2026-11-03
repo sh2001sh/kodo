@@ -5,7 +5,7 @@ import os from 'node:os';
 import { Store, digest } from '../src/storage/index.js';
 import { AgentRetention, retentionTools } from '../src/agents/retention.js';
 import { parseCard } from '../src/agents/card.js';
-import { submitReport } from '../src/agents/contracts.js';
+import { submitReport } from '../src/runtime/report.js';
 import { defaultBudget } from '../src/runtime/types.js';
 import type { Card, Run, Session } from '../src/runtime/types.js';
 

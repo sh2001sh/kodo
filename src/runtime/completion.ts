@@ -1,6 +1,6 @@
 import { attachment } from './attachments.js';
 import { todoCompletionFeedback } from '../tools/todo.js';
-import { reportCompleteness } from '../agents/contracts.js';
+import { reportCompleteness } from './report.js';
 import { collaborationTool } from '../messaging/index.js';
 import { recoveryHistoryRuns } from './history.js';
 import { workspacesOverlap } from './paths.js';

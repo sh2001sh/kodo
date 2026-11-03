@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Ajv } from 'ajv';
 import { parseCard, serializeCard } from './card.js';
 import { hostPrivateValues, safeOutput } from './authoring.js';
-import { reportCompleteness } from './contracts.js';
+import { reportCompleteness } from '../runtime/report.js';
 import { digest } from '../storage/index.js';
 import type { Store } from '../storage/index.js';
 import { KodoError } from '../runtime/types.js';

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { Application } from '../src/application/index.js';
-import { reportCompleteness } from '../src/agents/contracts.js';
+import { reportCompleteness } from '../src/runtime/report.js';
 import { createVerificationTool } from '../src/tools/verify.js';
 import type { VerificationExecutor } from '../src/tools/verify.js';
 import { answer, binding, call, calls, scripted, temp } from './helpers.js';

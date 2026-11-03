@@ -31,7 +31,8 @@ import { commitExplore, exploreInstructions, exploreReportChars, exploreSpec } f
 import { resolveChildCard } from './child-config.js';
 import { deriveAgent, deriveAgentSpec } from '../agents/derive.js';
 import type { AgentOverlay } from '../agents/derive.js';
-import { hostAcceptanceStatus, reportCompleteness, reportSpecForCard, reportSubmissionSpec, submitReport, validateSlots } from '../agents/contracts.js';
+import { reportSpecForCard, reportSubmissionSpec, validateSlots } from '../agents/contracts.js';
+import { hostAcceptanceStatus, reportCompleteness, submitReport } from '../runtime/report.js';
 
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)): Record<string, unknown> => ({ type: 'object', additionalProperties: false, properties, required });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
