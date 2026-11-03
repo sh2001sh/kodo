@@ -79,6 +79,43 @@ export function assertSummary(summary, label) {
 }
 
 /**
+ * Restrict a summary to one case set (stage-1 gate on an established subset when
+ * a case's baseline is explicitly not established, e.g. coding-01 here).
+ * Throws when a requested case is absent so a typo cannot silently shrink scope.
+ */
+export function scopeSummary(summary, cases) {
+  if (!Array.isArray(cases) || !cases.length || cases.some(entry => !isNonEmptyString(entry))) {
+    throw new GoldenError('COMPARE_SCOPE', '--cases needs a non-empty comma-separated list of case ids');
+  }
+  const known = new Set(Object.keys(summary.cases));
+  const unknown = cases.filter(caseId => !known.has(caseId));
+  if (unknown.length) throw new GoldenError('COMPARE_SCOPE', `--cases names cases that are not in the run: ${unknown.join(', ')}; available: ${[...known].sort().join(', ')}`);
+  const keep = new Set(cases);
+  const plan = summary.plan.filter(key => keep.has(key.split(':')[0]));
+  const matrix = isRecord(summary.matrix)
+    ? {
+      ...summary.matrix,
+      missing: array(summary.matrix.missing).filter(key => keep.has(String(key).split(':')[0])),
+      duplicated: array(summary.matrix.duplicated).filter(key => keep.has(String(key).split(':')[0])),
+      unexpected: array(summary.matrix.unexpected).filter(key => keep.has(String(key).split(':')[0])),
+    }
+    : summary.matrix;
+  const cells = summary.cells.filter(cell => keep.has(cell.caseId));
+  if (cells.length !== plan.length) {
+    throw new GoldenError('COMPARE_SCOPE', `scoped run for cases ${cases.join(',')} has ${cells.length} cells but ${plan.length} planned cells; rerun the same matrix for the scope`);
+  }
+  return {
+    ...summary,
+    plan,
+    cells,
+    cases: Object.fromEntries(Object.entries(summary.cases).filter(([caseId]) => keep.has(caseId))),
+    categories: Object.fromEntries(Object.entries(summary.categories ?? {}).filter(([, bucket]) => cases.some(caseId => summary.cases[caseId]?.category === bucket.category))),
+    matrix,
+    scopedCases: cases,
+  };
+}
+
+/**
  * Load one side from a completed run directory (or directly from its summary.json).
  * A run with progress.json but no summary.json is refused: partial matrices are
  * never compared silently.
@@ -728,7 +765,7 @@ export function renderText(report) {
 const USAGE = `Kodo golden baseline comparison (stage-1 regression gate)
 
   node scripts/golden/compare.mjs --baseline <dir|summary.json> --candidate <dir|summary.json> \\
-      [--out <file>] [--json] [--fail-on-gate]
+      [--out <file>] [--json] [--fail-on-gate] [--cases id1,id2]
 
 Reads two COMPLETED golden runs and reports: per-case passRate/mean deltas,
 PASSED<->FAILED flips, new rule violations, data completeness, and the stage-1
@@ -738,6 +775,8 @@ wallMs regression <= 10%). The JSON report is written to --out (default
 
   --json          print the JSON report to stdout instead of the Markdown summary
   --fail-on-gate  exit 2 unless the gate status is "passed" (inconclusive counts as not passed)
+  --cases         restrict the comparison to the listed case ids (both runs must cover
+                  exactly the same scoped matrix; cases outside the list are excluded)
 
 Exit codes: 0 comparison produced; 2 --fail-on-gate and gate not passed; 1 input/format error.
 `;
@@ -750,6 +789,7 @@ async function main() {
       out: { type: 'string' },
       json: { type: 'boolean', default: false },
       'fail-on-gate': { type: 'boolean', default: false },
+      cases: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
     allowPositionals: false,
@@ -759,9 +799,18 @@ async function main() {
     return;
   }
   if (!values.baseline || !values.candidate) throw new GoldenError('COMPARE_CLI', 'both --baseline and --candidate are required (run with --help for usage)');
-  const baseline = readEvidence(values.baseline);
-  const candidate = readEvidence(values.candidate);
+  let baseline = readEvidence(values.baseline);
+  let candidate = readEvidence(values.candidate);
+  const onlyCases = values.cases ? String(values.cases).split(',').map(entry => entry.trim()).filter(Boolean) : null;
+  if (onlyCases) {
+    baseline = { ...baseline, summary: scopeSummary(baseline.summary, onlyCases) };
+    candidate = { ...candidate, summary: scopeSummary(candidate.summary, onlyCases) };
+  }
   const report = compareGolden(baseline, candidate);
+  if (onlyCases) {
+    report.scope = { cases: onlyCases, note: 'comparison restricted with --cases; cases outside this list are excluded from the gate' };
+    report.notes.push(`scope restricted to cases: ${onlyCases.join(', ')}`);
+  }
   const outFile = values.out
     ? path.resolve(values.out)
     : path.join(repoRoot, '.kodo', 'golden', `compare-${stamp()}.json`);

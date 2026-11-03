@@ -7,7 +7,7 @@ import process from 'node:process';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { analyzePollution } from './pollution.mjs';
-import { assertSummary, buildSide, compareGolden, readEvidence, renderText } from './compare.mjs';
+import { assertSummary, buildSide, compareGolden, readEvidence, renderText, scopeSummary } from './compare.mjs';
 import { GoldenError } from './errors.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -401,4 +401,29 @@ test('pollution analysis and comparison agree on which cells are excluded from m
   assert.ok(Math.abs(side.overall.meanCost - 1_600) < 1e-9);
   const report = compareGolden(baseline, candidate);
   assert.equal(report.gate.status, 'inconclusive');
+});
+
+test('scopeSummary restricts the comparison to the listed cases and rejects unknown ids', () => {
+  const summary = {
+    plan: ['case-a:r1', 'case-a:r2', 'case-b:r1', 'case-b:r2'],
+    cells: [
+      { key: 'case-a:r1', caseId: 'case-a', repeat: 1 },
+      { key: 'case-a:r2', caseId: 'case-a', repeat: 2 },
+      { key: 'case-b:r1', caseId: 'case-b', repeat: 1 },
+      { key: 'case-b:r2', caseId: 'case-b', repeat: 2 },
+    ],
+    cases: { 'case-a': { caseId: 'case-a', category: 'data' }, 'case-b': { caseId: 'case-b', category: 'report' } },
+    categories: { data: { category: 'data' }, report: { category: 'report' } },
+    matrix: { complete: true, missing: [], duplicated: [], unexpected: [] },
+    overall: {},
+  };
+  const scoped = scopeSummary(summary, ['case-a']);
+  assert.deepEqual(scoped.plan, ['case-a:r1', 'case-a:r2']);
+  assert.equal(scoped.cells.length, 2);
+  assert.deepEqual(Object.keys(scoped.cases), ['case-a']);
+  assert.deepEqual(Object.keys(scoped.categories), ['data']);
+  assert.deepEqual(scoped.scopedCases, ['case-a']);
+  assert.throws(() => scopeSummary(summary, ['case-z']), /not in the run/u);
+  assert.throws(() => scopeSummary(summary, []), /non-empty/u);
+  assert.throws(() => scopeSummary({ ...summary, cells: summary.cells.slice(0, 2) }, ['case-a', 'case-b']), /planned cells/u);
 });

@@ -219,7 +219,8 @@ node scripts/golden/run.mjs --rescore .kodo/golden/<stamp>
 
 ```powershell
 node scripts/golden/compare.mjs --baseline .kodo/golden/baseline-<stamp> `
-  --candidate .kodo/golden/<rerun> [--out comparison.json] [--json] [--fail-on-gate]
+  --candidate .kodo/golden/<rerun> [--out comparison.json] [--json] [--fail-on-gate] `
+  [--cases case-a,case-b]
 ```
 
 Both inputs are completed golden run directories (`summary.json` +
@@ -227,6 +228,15 @@ Both inputs are completed golden run directories (`summary.json` +
 that is still running (only `progress.json`), a missing directory or a malformed
 summary is a `GoldenError` with a non-zero exit — partial evidence is never
 compared silently.
+
+`--cases` restricts the comparison to an explicit case subset. Use it only when a
+case's baseline is not established and that is recorded in the phase-0 document
+(currently `coding-01-statemachine`, see
+[docs/kodo-phase0-baseline-20261103.md §4.6](../../docs/kodo-phase0-baseline-20261103.md)).
+Both sides must cover exactly the same scoped matrix, the scoped run must have one
+cell per planned cell, and unknown case ids are rejected. The JSON report gains a
+`scope` field and a note so a scoped comparison can never be mistaken for a full
+one.
 
 The Markdown summary is printed; the JSON report is written to `--out` (default
 `.kodo/golden/compare-<stamp>.json`). `--json` prints exactly one JSON document to
