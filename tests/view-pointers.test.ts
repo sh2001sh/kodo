@@ -74,6 +74,28 @@ describe('history pointers', () => {
     expect(read).toEqual({ tool: 'history.read', args: options });
     expect(hit?.read).toEqual({ tool: 'history.read', args: { ref: archived, offset: 0, contentOffset: 0, limit: 1, maxChars: 4000 } });
   });
+
+  it('searchHistory covers a large archive in one call through the index', () => {
+    const f = fixture();
+    const run = f.app.store.run(f.runId);
+    const filler = '无关的段落内容。'.repeat(1500);
+    const pages: Message[] = Array.from({ length: 60 }, (_, index) => ({ role: 'user', content: `${filler}${index === 47 ? '【备忘】「青岚」归档集群的冷备份保留 42 天。' : ''}${filler}` }));
+    const archived = f.app.store.blob({ version: 1, runId: run.id, sessionId: run.sessionId, messages: [...pages, pages[47]!] } satisfies HistorySnapshot);
+    f.app.store.event(f.runId, 'context.compacted', { archivedRef: archived });
+    const page = searchHistory(f.app.store, f.runId, { query: '青岚 冷备份' });
+    expect(page.totalMatches).toBe(1); // the duplicated message is one record
+    expect(page.next).toBeNull();
+    expect(page.items[0]!.snippet).toContain('保留 42 天');
+    const read = readHistory(f.app.store, f.runId, page.items[0]!.read.args as { ref: string; offset: number; contentOffset: number; maxChars: number });
+    expect(read.fragments[0]!.text).toContain('「青岚」归档集群的冷备份保留 42 天');
+    expect(searchHistory(f.app.store, f.runId, { query: '青岚 热备份' }).items).toEqual([]);
+    for (let index = 0; index < 3; index++) append(f, [{ role: 'user', content: `Repeated MARKER-${index} line` }]);
+    const first = searchHistory(f.app.store, f.runId, { query: 'marker', limit: 2 });
+    expect(first.totalMatches).toBe(3);
+    const second = searchHistory(f.app.store, f.runId, { query: 'marker', limit: 2, cursor: first.next! });
+    expect([...first.items, ...second.items].map(item => item.snippet.match(/MARKER-\d/)![0])).toEqual(['MARKER-0', 'MARKER-1', 'MARKER-2']);
+    expect(second.next).toBeNull();
+  });
 });
 
 describe('assembled evidence pointers', () => {

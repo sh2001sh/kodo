@@ -24,13 +24,13 @@ describe('complete coding loop with the default card', () => {
     const tools = app.coordinator.tools;
     const specs = () => toolSpecs(app.coordinator, app.store.run(runId), session);
     const before = specs();
-    expect(before).toHaveLength(16);
+    expect(before).toHaveLength(17);
     expect(before.map(spec => spec.name)).toEqual(expect.arrayContaining([
       'shell.exec', 'process.read', 'file.read', 'file.search', 'file.patch', 'file.apply_patch',
-      'artifact.read', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
+      'artifact.read', 'history.read', 'history.search', 'recovery.inspect', 'todo.read', 'todo.write',
       'spawn_agent', 'wait_for_events', 'inspect_run', 'ask_user', 'cancel_agent',
     ]));
-    for (const name of ['process.exec', 'file.list', 'file.mkdir', 'file.rename', 'file.delete', 'artifact.write', 'history.search', 'list_agents', 'update_progress', 'agent.derive', 'followup_task', 'send_message', 'interrupt_agent', 'explore']) {
+    for (const name of ['process.exec', 'file.list', 'file.mkdir', 'file.rename', 'file.delete', 'artifact.write', 'list_agents', 'update_progress', 'agent.derive', 'followup_task', 'send_message', 'interrupt_agent', 'explore']) {
       expect(before.map(spec => spec.name)).not.toContain(name);
     }
     const result = await tools.execute(runId, 'shell.exec', { command: 'printf simple-main', background: true }, signal()) as { background: { id: string } };

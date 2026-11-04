@@ -7,10 +7,11 @@ import { answer, binding, scripted, temp } from './helpers.js';
 /**
  * Serialized default tool catalog (the former compact-v2 view); a changed budget must be an explicit, reviewed decision.
  * 1d: re-measured after removing followup_task, send_message and interrupt_agent (was 15_135).
+ * P2.1: history.search joins the default view (was 11_829).
  */
-const DEFAULT_TOOL_SPEC_BYTES = 11_829;
+const DEFAULT_TOOL_SPEC_BYTES = 12_572;
 const DEFAULT_TOOL_NAMES = [
-  'file.read', 'file.list', 'file.search', 'artifact.read', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
+  'file.read', 'file.list', 'file.search', 'artifact.read', 'history.search', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
   'spawn_agent', 'inspect_run', 'wait_for_events', 'ask_user', 'cancel_agent',
 ];
 
