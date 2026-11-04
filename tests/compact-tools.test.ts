@@ -27,12 +27,12 @@ describe('default stable tool view', () => {
       const names = before.map(tool => tool.name);
       expect(names).toEqual(expect.arrayContaining([
         'shell.exec', 'process.read', 'file.read', 'file.search', 'file.apply_patch', 'file.patch',
-        'artifact.read', 'history.read', 'recovery.inspect', 'todo.read', 'todo.write',
+        'artifact.read', 'history.read', 'history.search', 'recovery.inspect', 'todo.read', 'todo.write',
         'spawn_agent', 'wait_for_events', 'inspect_run', 'ask_user', 'cancel_agent',
       ]));
       // With exec, commands replace redundant native CRUD; update_progress, history.search and
       // artifact.write stay hidden in the default view; the 1d collaboration removals are absent everywhere.
-      for (const name of ['file.list', 'file.mkdir', 'file.rename', 'file.delete', 'artifact.write', 'history.search', 'agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain', 'knowledge.browse', 'knowledge.search', 'knowledge.read', 'explore', 'exploration.plan', 'update_progress', 'list_agents', 'followup_task', 'send_message', 'interrupt_agent', 'report.submit']) expect(names).not.toContain(name);
+      for (const name of ['file.list', 'file.mkdir', 'file.rename', 'file.delete', 'artifact.write', 'agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain', 'knowledge.browse', 'knowledge.search', 'knowledge.read', 'explore', 'exploration.plan', 'update_progress', 'list_agents', 'followup_task', 'send_message', 'interrupt_agent', 'report.submit']) expect(names).not.toContain(name);
       expect(names.length).toBeLessThan(view(full).length);
       // Re-measured in 1e against the full-tool test card: 15610 vs 21459 bytes.
       expect(Buffer.byteLength(JSON.stringify(before))).toBeLessThan(Buffer.byteLength(JSON.stringify(view(full))) * 0.9);

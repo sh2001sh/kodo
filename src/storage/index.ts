@@ -6,6 +6,7 @@ import type { Call, Card, Envelope, Run, RuntimeEvent, Session, Wait } from '../
 import { defaultBudget, KodoError } from '../runtime/types.js';
 import { BlobStore } from './blobs.js';
 import { CaseRecords } from './case-records.js';
+import { HistoryIndexRecords } from './history-index.js';
 import { KnowledgeRecords } from './knowledge.js';
 import { WebRequestRecords } from './web-requests.js';
 import { FileStateRecords, fileStateSchema } from './file-states.js';
@@ -51,6 +52,8 @@ export class Store {
   /** Per-run file read state for the stale-write guard. */
   readonly fileStates: FileStateRecords;
   readonly checkpoints: CheckpointRecords;
+  /** Full-text index over retained history, created on first search. */
+  readonly historyIndex: HistoryIndexRecords;
 
   constructor(directory: string, private readonly options: StoreOptions = {}) {
     mkdirSync(directory, { recursive: true });
@@ -127,6 +130,7 @@ export class Store {
       this.webRequests = new WebRequestRecords(this.#db);
       this.fileStates = new FileStateRecords(this.#db);
       this.checkpoints = new CheckpointRecords(this.#db);
+      this.historyIndex = new HistoryIndexRecords(this.#db);
       for (const file of readdirSync(path.join(this.directory, 'blobs'))) if (/^[a-f0-9]{64}(?:\.blob)?\.[0-9a-f-]{36}\.tmp$/.test(file)) unlinkSync(path.join(this.directory, 'blobs', file));
       this.transaction(() => {
         const sessions = (this.#db.prepare('SELECT data FROM sessions').all() as { data: string }[]).map(row => JSON.parse(row.data) as Session);

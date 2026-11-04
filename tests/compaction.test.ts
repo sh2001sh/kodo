@@ -262,7 +262,7 @@ describe('working-context compaction v3: prefix-reusing free-text summary', () =
     let cursor: string | undefined;
     const matches = [];
     do {
-      const page = searchHistory(f.app.store, f.runId, { query: needle, cursor, maxScanChars: 128_000 });
+      const page = searchHistory(f.app.store, f.runId, { query: needle, cursor });
       matches.push(...page.items); cursor = page.next ?? undefined;
     } while (cursor);
     const hit = matches.find(item => item.read.tool === 'history.read');
