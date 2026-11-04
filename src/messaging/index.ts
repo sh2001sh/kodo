@@ -1,7 +1,3 @@
-import type { ProjectKnowledge } from '../knowledge/index.js';
-import { executeMethodStage, methodTaskSpec } from '../runtime/method-stage.js';
-import { activeMethod, effectiveMethodRun, methodControlTools } from '../extensions/methods.js';
-import { endMethod } from '../extensions/methods.js';
 import { roleAllows } from '../runtime/role-view.js';
 import { Ajv } from 'ajv';
 import { executionSession, runWorkspace } from '../runtime/execution-workspace.js';
@@ -13,9 +9,7 @@ import { inspectRun } from '../runtime/inspection.js';
 import { deliverableStatus } from '../runtime/deliverables.js';
 import { normalizeFileScope } from '../runtime/scope.js';
 import { resolveModelLimits } from '../providers/model-limits.js';
-import { initialInstructions, instructionCapacityBytes, instructionMessage, prepareInstructionContext, recordInstructions } from '../runtime/instruction-layer.js';
-import type { InstructionChain } from '../runtime/project-instructions.js';
-import { runBudget } from '../runtime/run-budget.js';
+import { prepareInstructionContext } from '../runtime/instruction-layer.js';
 import { KodoError, terminal } from '../runtime/types.js';
 import type { CancelOrigin, Envelope, FileScope, Message, ModelBinding, Run, ToolSpec, Wait } from '../runtime/types.js';
 import { assertChildCapacity, assertNoWriteConflict, delegationState, spawnAgentSpec, validateAgentModelPolicy } from './spawn-spec.js';
@@ -28,32 +22,26 @@ const id = { type: 'string', minLength: 1, maxLength: 256 };
 const ids = { type: 'array', items: id, uniqueItems: true, maxItems: 16 };
 const content = { type: 'string', minLength: 1, maxLength: 16_000 };
 const definitions: (ToolSpec & { main?: boolean; control?: boolean })[] = [
-  { ...methodTaskSpec, main: true },
   spawnAgentSpec,
   { name: 'inspect_run', description: 'Read your own or main-managed child run result and paginated tool evidence, even without a context archive. Omit call_id for result and tool-call index; select a returned call_id for actual evidence, or section=acceptance for a bounded outcome summary. Follow next cursors. Does not expose model records, private arguments or arbitrary blobs. completed is not acceptance; tool success is not process exit zero. history.read is for indexed archives; artifact.read is for artifact IDs.', parameters: object({ run_id: id, call_id: id, call_ids: { type: 'array', minItems: 1, maxItems: 8, uniqueItems: true, items: id }, section: { type: 'string', enum: ['result', 'acceptance'] }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 100 }, content_offset: { type: 'integer', minimum: 0 }, max_chars: { type: 'integer', minimum: 256, maximum: 32000 } }, ['run_id']) },
-  { name: 'wait_for_events', control: true, description: 'Durably wait for answers to your question IDs or terminal run IDs, with any/all semantics. Questions and user changes can wake early. Must be last tool and only control call. Returns registration; wake evidence arrives in the next model input.', parameters: object({ question_ids: ids, run_ids: ids, mode: { enum: ['any', 'all'] }, timeout_ms: { type: 'integer', minimum: 1, maximum: 300_000 } }, []) },
+  { name: 'wait_for_events', control: true, description: 'Durably wait for answers or terminal run IDs, with any/all semantics. Omit timeout_ms for normal child completion or answer waits: the host renews its internal deadline without another model request. Set timeout_ms only for an intentional timed wake-up; expiry resumes the model even if nothing changed. Questions and user changes can wake early. Must be last tool and only control call. Returns registration; wake evidence arrives in the next model input.', parameters: object({ question_ids: ids, run_ids: ids, mode: { enum: ['any', 'all'] }, timeout_ms: { type: 'integer', minimum: 1, maximum: 300_000, description: 'Optional intentional timed wake-up, in milliseconds. Omit for normal child completion or answer waits; expiry resumes the model even without a new event.' } }, []) },
   { name: 'ask_user', main: true, control: true, description: 'Ask the user a necessary question and durably wait for a reply. Repeating the same unanswered question reuses it. Only main agent. Must be last tool and only control call.', parameters: object({ question: content }) },
   { name: 'cancel_agent', main: true, description: 'Cancel a child managed by this main agent. Late results cannot reopen it.', parameters: object({ run_id: id }) },
 ];
 const ajv = new Ajv({ allErrors: true });
-const methodTaskSchema = ajv.compile(methodTaskSpec.parameters);
 const schemas = new Map(definitions.map(x => [x.name, ajv.compile(x.parameters)]));
 export const collaborationTool = (name: string): boolean => schemas.has(name);
-export const controlTool = (name: string, args?: Record<string, unknown>): boolean => name === 'task' ? ['wait', 'activate', 'done', 'drop', 'redo', 'resume'].includes(String(args?.action)) : Boolean(definitions.find(x => x.name === name)?.control);
+export const controlTool = (name: string): boolean => Boolean(definitions.find(x => x.name === name)?.control);
 
 export class Mailbox {
   private readonly modelBindings: Record<string, ModelBinding>;
   private readonly bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>;
-  private readonly stageKnowledge?: ProjectKnowledge;
   private readonly globalInstructions: string | false;
-  /** Chains discovered by prepareSpawn, recorded when the child is committed. */
-  private readonly pendingInstructions = new Map<string, InstructionChain>();
-  constructor(private store: Store, private cancel: (id: string, origin: CancelOrigin) => void, options: { knowledge?: ProjectKnowledge; modelBindings?: Record<string, ModelBinding>; bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>; globalInstructions?: string | false } = {}) {
+  constructor(private store: Store, private cancel: (id: string, origin: CancelOrigin) => void, options: { modelBindings?: Record<string, ModelBinding>; bindingSnapshot?: (allowed: string[], skillIds?: readonly string[]) => Record<string, string>; globalInstructions?: string | false } = {}) {
     validateAgentModelPolicy(options.modelBindings);
     this.globalInstructions = options.globalInstructions ?? false;
     this.modelBindings = structuredClone(options.modelBindings ?? {});
     this.bindingSnapshot = options.bindingSnapshot;
-    this.stageKnowledge = options.knowledge;
   }
   specs(run: Run): ToolSpec[] {
     const session = this.store.session(run.sessionId);
@@ -69,42 +57,23 @@ export class Mailbox {
       }
       return { ...parameters, properties };
     };
-    return definitions.filter(x => (x.name !== 'task' || (session.inlineMethods && !run.parentId)) && roleAllows(run, session, x.name) && (!x.main || !run.parentId)).map(({ name, description, parameters }) => {
-      if (name === 'task' && session.inlineMethods) return methodTaskSpec;
+    return definitions.filter(x => roleAllows(run, session, x.name) && (!x.main || !run.parentId)).map(({ name, description, parameters }) => {
       if (name !== 'spawn_agent') return { name, description, parameters };
       const limits = ` Active child limit: ${session.budget.maxActiveChildren ?? 'unlimited'}; cumulative child limit: ${session.budget.maxChildren ?? 'unlimited'} (an explicit cumulative cap includes finished runs and forks).`;
       return { name, description: description + limits, parameters: modelParameters(parameters) };
-    }).map(spec => {
-      if ((session.taskProtocol ?? 1) >= 2 && spec.name === 'wait_for_events') {
-        const properties = spec.parameters.properties as Record<string, Record<string, unknown>>;
-        spec = { ...spec,
-          description: 'Durably wait for answers or terminal run IDs, with any/all semantics. Omit timeout_ms for normal child completion or answer waits: the host renews its internal deadline without another model request. Set timeout_ms only for an intentional timed wake-up; expiry resumes the model even if nothing changed. Questions and user changes can wake early. Must be last tool and only control call. Returns registration; wake evidence arrives in the next model input.',
-          parameters: { ...spec.parameters, properties: { ...properties, timeout_ms: { ...properties.timeout_ms, description: 'Optional intentional timed wake-up, in milliseconds. Omit for normal child completion or answer waits; expiry resumes the model even without a new event.' } } },
-        };
-      }
-      if ((session.taskProtocol ?? 1) < 2) {
-        const parameters = structuredClone(spec.parameters);
-        const properties = parameters.properties as Record<string, unknown>;
-        delete properties.todoId;
-        spec = { ...spec, parameters };
-      }
-      return spec;
     });
   }
   validate(run: Run, name: string, json: string): Record<string, unknown> {
     if (!this.specs(run).some(x => x.name === name)) throw new KodoError('ROLE_DENIED', 'this collaboration operation is not available to a child');
     let args: unknown;
     try { args = JSON.parse(json); } catch { throw new KodoError('TOOL_ARGUMENTS', 'arguments must be complete JSON'); }
-    const active = this.store.session(run.sessionId).inlineMethods && activeMethod(this.store, run.id);
-    if (active && !methodControlTools.includes(name)) throw new KodoError('METHOD_TOOL_INACTIVE', 'this operation is not in the active method contract');
-    const check = name === 'task' && this.store.session(run.sessionId).inlineMethods ? methodTaskSchema : schemas.get(name);
+    const check = schemas.get(name);
     if (check && !check(args)) throw new KodoError('TOOL_ARGUMENTS', `arguments do not match the ${name} schema: ${schemaErrorText(check.errors)}`);
     return args as Record<string, unknown>;
   }
   execute(run: Run, callId: string, name: string, args: Record<string, unknown>): unknown {
-    if (name === 'task' && this.store.session(run.sessionId).inlineMethods) return executeMethodStage(this.store, run, callId, args, (tool, input) => this.execute(run, callId, tool, input), this.stageKnowledge);
     if (name === 'spawn_agent') return this.spawn(run, args);
-    if (name === 'inspect_run') return inspectRun(this.store, effectiveMethodRun(this.store, run), args as unknown as Parameters<typeof inspectRun>[2]);
+    if (name === 'inspect_run') return inspectRun(this.store, run, args as unknown as Parameters<typeof inspectRun>[2]);
     if (name === 'cancel_agent') {
       const child = this.peer(run, args.run_id as string);
       if (child.parentId !== run.id) throw new KodoError('ROLE_DENIED', 'can only cancel children managed by this main run');
@@ -117,7 +86,7 @@ export class Mailbox {
       const identities = this.recoveryIdentities(run);
       const existing = this.userQuestions(run.sessionId).find(x => identities.has(x.from) && x.content.trim().replace(/\s+/g, ' ') === normalized);
       const question = existing ?? this.store.putMessage({ id: `question:${callId}`, sessionId: run.sessionId, from: run.id, to: 'user', kind: 'question', content: text });
-      return this.register(run, { question_ids: [question.id], ...((this.store.session(run.sessionId).taskProtocol ?? 1) >= 2 ? {} : { timeout_ms: 300_000 }) });
+      return this.register(run, { question_ids: [question.id], });
     }
     if (name === 'wait_for_events') return this.register(run, args);
     throw new KodoError('TOOL_NOT_FOUND', 'unknown collaboration tool');
@@ -198,34 +167,24 @@ export class Mailbox {
       contextRef = this.store.blob(forkContext(this.store, source, childId, packet, parent.id));
       instructions = source.instructions;
     } else {
-      const capacityBytes = instructionCapacityBytes(runBudget({ ...parent, modelLimits: resolvedLimits }, session), resolvedLimits.input);
-      const factorsEnabled = Boolean(session.agentFactors?.A || session.agentFactors?.B || session.agentFactors?.C);
-      const prepared = factorsEnabled ? undefined : initialInstructions(workspace, { global: this.globalInstructions, capacityBytes, scope, inherited: parent.instructions, cardRules: card.constraints?.rules });
-      if (prepared) this.pendingInstructions.set(childId, prepared.chain);
-      instructions = prepared?.state;
-      contextRef = this.store.blob(initialContext(workspace, permissions, card, packet, { id: childId, parentId: parent.id, scope }, prepared ? instructionMessage(prepared.chain) : undefined, { factors: session.agentFactors, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }));
+      // Project instructions join in commitSpawn, once the child run exists.
+      contextRef = this.store.blob(initialContext(workspace, permissions, card, packet, { id: childId, parentId: parent.id, scope }));
     }
     const child: Run = { id: childId, sessionId: session.id, parentId: parent.id, objective, status: 'queued', card, binding: structuredClone(binding), modelBindingId: alias, modelLimits: resolvedLimits, ...(toolBindings === undefined ? {} : { toolBindings: structuredClone(toolBindings) }), permissions, ...(scope === undefined ? {} : { scope }), contextRef, ...(instructions ? { instructions } : {}), decisionVersion: session.decisionVersion ?? 0, step: 0, cancelRequested: false, createdAt: new Date().toISOString() };
     return child;
   }
   private commitSpawn(parent: Run, child: Run, explicitModel = false): Record<string, unknown> {
     this.store.putRun(child);
-    const session = this.store.session(child.sessionId);
-    if (session.agentFactors?.A || session.agentFactors?.B || session.agentFactors?.C) {
-      if (child.instructions === undefined) {
-        // Fork children keep the source instruction chain: re-rendering would change the prefix.
-        const packet = this.store.readBlob<Message[]>(child.contextRef).find(message => message.role === 'user')?.content ?? child.objective;
-        const prepared = prepareInstructionContext(this.store, { ...child, objective: packet }, executionSession(this.store, child), { global: this.globalInstructions, inherited: parent.instructions });
-        child.contextRef = this.store.blob(prepared.messages);
-        child.instructions = prepared.instructions;
-        this.store.updateRun(child.id, { contextRef: child.contextRef, instructions: child.instructions });
-      }
+    if (child.instructions === undefined) {
+      // Fork children keep the source instruction chain: re-rendering would change the prefix.
+      const packet = this.store.readBlob<Message[]>(child.contextRef).find(message => message.role === 'user')?.content ?? child.objective;
+      const prepared = prepareInstructionContext(this.store, { ...child, objective: packet }, executionSession(this.store, child), { global: this.globalInstructions, inherited: parent.instructions });
+      child.contextRef = this.store.blob(prepared.messages);
+      child.instructions = prepared.instructions;
+      this.store.updateRun(child.id, { contextRef: child.contextRef, instructions: child.instructions });
     }
     this.store.event(child.id, 'run.queued', { parentId: parent.id, objective: child.objective });
     this.store.event(child.id, 'agent.model_selected', { ...(child.modelBindingId ? { alias: child.modelBindingId } : {}), model: child.binding.model, ...(child.binding.provider ? { provider: child.binding.provider } : {}), reason: explicitModel ? 'explicit' : 'inherit' });
-    const chain = this.pendingInstructions.get(child.id);
-    this.pendingInstructions.delete(child.id);
-    if (chain) recordInstructions(this.store, child.id, 'inherited', chain);
     return { id: child.id, status: child.status, card: { id: child.card.id, version: child.card.version, digest: child.card.digest }, model: child.binding.model, modelBinding: child.modelBindingId, scope: child.scope, decisionVersion: child.decisionVersion, delegation: this.delegationState(parent) };
   }
   private delegationState(run: Run) { return delegationState(this.store, run); }
@@ -267,7 +226,7 @@ export class Mailbox {
     return identities;
   }
   waitForRuns(run: Run, runIds: string[]): { waitId: string } {
-    return this.register(run, { run_ids: runIds, mode: 'any', ...((this.store.session(run.sessionId).taskProtocol ?? 1) >= 2 ? {} : { timeout_ms: 300_000 }) }) as { waitId: string };
+    return this.register(run, { run_ids: runIds, mode: 'any', }) as { waitId: string };
   }
   private register(run: Run, args: Record<string, unknown>): unknown {
     const questionIds = args.question_ids as string[] ?? [];
@@ -281,7 +240,7 @@ export class Mailbox {
       const peer = this.peer(run, id);
       if (this.recoveryTarget(peer).id === run.id) throw new KodoError('WAIT_DENIED', 'cannot wait for your own completion');
     }
-    const eventDriven = (this.store.session(run.sessionId).taskProtocol ?? 1) >= 2 && args.timeout_ms === undefined;
+    const eventDriven = args.timeout_ms === undefined;
     const wait: Wait = { id: randomUUID(), runId: run.id, questionIds, runIds, mode: args.mode as 'any' | 'all' ?? 'any', deadline: Date.now() + (args.timeout_ms as number ?? (eventDriven ? 300_000 : 60_000)), status: 'registered', ...(eventDriven ? { eventDriven: true } : {}) };
     this.store.putWait(wait);
     this.store.updateRun(run.id, { waitId: wait.id });
@@ -353,7 +312,6 @@ export class Mailbox {
   }
   onTerminal(runId: string): void {
     const run = this.store.run(runId);
-    endMethod(this.store, run);
     if (run.waitId) {
       const wait = this.store.wait(run.waitId);
       if (wait.status === 'registered') this.store.putWait({ ...wait, status: 'settled', reason: run.status });

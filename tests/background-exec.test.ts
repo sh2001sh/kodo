@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { attachmentKind } from '../src/runtime/attachments.js';
 import type { Message, ModelResponse, Provider } from '../src/runtime/types.js';
-import { answer, binding, call, calls, temp } from './helpers.js';
+import { answer, binding, call, calls, fullToolCard, temp } from './helpers.js';
 
 type Step = ModelResponse | ((messages: Message[]) => ModelResponse | Promise<ModelResponse>);
 
@@ -17,8 +17,8 @@ function setup(steps: Step[]): { app: Application; root: string; runId: string; 
     if (!step) throw new Error('unexpected model request');
     return typeof step === 'function' ? await step(request.messages) : step;
   } };
-  const app = new Application(path.join(root, '.state'), provider, undefined, { toolProfile: 'full', agentFactors: { B: false, D: false, E: false } });
-  const run = app.createRun({ objective: 'Run the program.', workspace: root, binding, permissions: ['read', 'write', 'exec'] });
+  const app = new Application(path.join(root, '.state'), provider);
+  const run = app.createRun({ objective: 'Run the program.', workspace: root, binding, permissions: ['read', 'write', 'exec'], card: fullToolCard });
   return { app, root, runId: run.id, requests };
 }
 const lastTool = (messages: Message[]): Record<string, unknown> => JSON.parse(messages.findLast(message => message.role === 'tool')!.content) as Record<string, unknown>;

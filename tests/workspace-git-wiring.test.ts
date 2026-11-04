@@ -6,12 +6,17 @@ import { RecoveryManager } from '../src/runtime/recovery.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
 import { KodoError } from '../src/runtime/types.js';
 import type { Call, Provider, ToolRequest } from '../src/runtime/types.js';
-import { answer, call, calls, fixture, scripted } from './helpers.js';
+import { parseCard, serializeCard } from '../src/agents/card.js';
+import { hostToolNames } from '../src/tools/catalog.js';
+import { answer, binding, call, calls, fixture, fullToolCard, scripted } from './helpers.js';
 
 const signal = () => new AbortController().signal;
 const git = (root: string, ...args: string[]): string => execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', '-c', 'core.autocrlf=false', ...args], { cwd: root, encoding: 'utf8', windowsHide: true });
+/** A card that declares Git delivery; no card receives workspace.git implicitly. */
+const gitCard = parseCard(serializeCard({ ...fullToolCard, id: 'test/git-delivery', tools: [...fullToolCard.tools, 'workspace.git'] }), { toolNames: hostToolNames });
 function setup(provider?: Provider, permissions: ('read' | 'write' | 'exec')[] = ['read', 'write', 'exec']) {
-  const f = fixture(provider, permissions, { toolProfile: 'lean-solo', taskProtocol: 3, instructions: { global: false } });
+  const base = fixture(provider, permissions, { instructions: { global: false } });
+  const f = { ...base, runId: base.app.createRun({ objective: 'Deliver the requested Git change.', workspace: base.root, binding, permissions, card: gitCard }).id };
   git(f.root, 'init', '-b', 'main');
   writeFileSync(path.join(f.root, 'value.txt'), 'original\n');
   git(f.root, 'add', 'value.txt');
@@ -30,11 +35,11 @@ function uncertain(f: ReturnType<typeof setup>, request: ToolRequest): Call {
   return effect;
 }
 
-describe('Git delivery through lean view and real Tools', () => {
+describe('Git delivery through a declaring card and real Tools', () => {
   it.each([false, true])('classifies a mocked Git execution error with started=%s without assuming delivery succeeded', async started => {
     let head = '';
     const f = setup(scripted(
-      async () => calls(call('job', { action: 'git', git: { action: 'branch', name: 'feature/mock-outcome', expectedHead: head } }, 'mock-git')),
+      async () => calls(call('workspace.git', { action: 'branch', name: 'feature/mock-outcome', expectedHead: head }, 'mock-git')),
       answer('The Git operation reported an error.'),
     ));
     head = f.head;
@@ -60,17 +65,16 @@ describe('Git delivery through lean view and real Tools', () => {
     }
   });
 
-  it('runs main job Git status, branch and commit and records canonical calls beside model aliases', async () => {
+  it('runs main Git status, branch and commit and records each canonical call with its effect', async () => {
     let head = '';
     const f = setup(scripted(
       async request => {
-        expect(request.tools.map(tool => tool.name)).toEqual(['read', 'edit', 'write', 'bash', 'job', 'ask_user']);
-        const job = request.tools.find(tool => tool.name === 'job')!;
-        expect(job.parameters.properties).toHaveProperty('git');
-        return calls(call('job', { action: 'git', git: { action: 'status' } }, 'git-status'));
+        const gitTool = request.tools.find(tool => tool.name === 'workspace.git')!;
+        expect(gitTool.parameters.properties).toHaveProperty('action');
+        return calls(call('workspace.git', { action: 'status' }, 'git-status'));
       },
-      async () => calls(call('job', { action: 'git', git: { action: 'branch', name: 'feature/real-delivery', expectedHead: head } }, 'git-branch')),
-      async () => calls(call('job', { action: 'git', git: { action: 'commit', files: ['value.txt'], message: 'Deliver fixture change', expectedHead: head } }, 'git-commit')),
+      async () => calls(call('workspace.git', { action: 'branch', name: 'feature/real-delivery', expectedHead: head }, 'git-branch')),
+      async () => calls(call('workspace.git', { action: 'commit', files: ['value.txt'], message: 'Deliver fixture change', expectedHead: head }, 'git-commit')),
       answer('Delivered the requested branch and commit.'),
     ));
     head = f.head;
@@ -83,10 +87,7 @@ describe('Git delivery through lean view and real Tools', () => {
     expect(records.map(record => [record.name, record.effect, record.status])).toEqual([
       ['workspace.git', 'read', 'succeeded'], ['workspace.git', 'write', 'succeeded'], ['workspace.git', 'write', 'succeeded'],
     ]);
-    for (const record of records) {
-      expect(f.app.store.readBlob<ToolRequest>(record.requestRef).name).toBe('workspace.git');
-      expect(f.app.store.readBlob<ToolRequest>(record.modelRequestRef!).name).toBe('job');
-    }
+    for (const record of records) expect(f.app.store.readBlob<ToolRequest>(record.requestRef).name).toBe('workspace.git');
   });
 
   it('allows status with read/exec but rejects mutations without write permission', async () => {
@@ -98,11 +99,13 @@ describe('Git delivery through lean view and real Tools', () => {
     expect(git(f.root, 'branch', '--show-current').trim()).toBe('main');
   });
 
-  it('requires shell execution authorization for the implicit main Git capability', async () => {
-    const f = setup(undefined, ['read', 'write']);
+  it('denies Git delivery to a card that does not declare workspace.git', async () => {
+    const f = setup();
     const run = f.app.store.run(f.runId);
-    expect(toolSpecs(f.app.coordinator, run, f.app.store.session(run.sessionId)).map(spec => spec.name)).not.toContain('job');
-    await expect(f.tools.execute(f.runId, 'workspace.git', { action: 'status' }, signal())).rejects.toMatchObject({ code: 'TOOL_DENIED' });
+    expect(toolSpecs(f.app.coordinator, run, f.app.store.session(run.sessionId)).map(spec => spec.name)).toContain('workspace.git');
+    const undeclared = f.app.createRun({ objective: 'No Git delivery.', workspace: f.root, binding, permissions: ['read', 'write', 'exec'], card: fullToolCard });
+    expect(toolSpecs(f.app.coordinator, undeclared, f.app.store.session(undeclared.sessionId)).map(spec => spec.name)).not.toContain('workspace.git');
+    await expect(f.tools.execute(undeclared.id, 'workspace.git', { action: 'status' }, signal())).rejects.toMatchObject({ code: 'TOOL_DENIED' });
   });
 
   it('keeps an uncertain Git effect blocked while permitting status inspection and never uses ordinary file reconciliation', async () => {

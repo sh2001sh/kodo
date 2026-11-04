@@ -41,7 +41,7 @@ async function runBatch(options: { tools?: ToolRegistration[]; cardTools: string
   const root = temp();
   for (const [name, content] of Object.entries(options.files ?? {})) writeFileSync(path.join(root, name), content);
   let seen: Message[] = [];
-  const app = new Application(path.join(root, '.state'), scripted(calls(...options.requests), async request => { seen = request.messages; return answer(); }), undefined, { agentFactors: { B: false, D: false, E: false }, tools: options.tools ?? [], readOnlyCommands: options.readOnlyCommands ?? [] });
+  const app = new Application(path.join(root, '.state'), scripted(calls(...options.requests), async request => { seen = request.messages; return answer(); }), undefined, { tools: options.tools ?? [], readOnlyCommands: options.readOnlyCommands ?? [] });
   try {
     const created = app.createRun({ objective: 'Run the batch.', workspace: root, binding, permissions: options.permissions ?? ['read'], card: app.parseCard(card(options.cardTools)) });
     const run = await app.run(created.id);

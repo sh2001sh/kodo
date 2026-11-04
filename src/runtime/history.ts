@@ -1,4 +1,3 @@
-import { effectiveMethodRun } from '../extensions/methods.js';
 import { Store } from '../storage/index.js';
 import { KodoError, terminal } from './types.js';
 import type { Message, Run } from './types.js';
@@ -63,7 +62,7 @@ export function authorizedHistoryRuns(store: Store, requester: Run): Run[] {
 }
 
 /** Event types that index an archived history snapshot for this run. */
-export const historyEventTypes = ['context.assembled', 'context.compacted', 'context.archived', 'context.summary.started', 'context.methods.unloaded'] as const;
+export const historyEventTypes = ['context.assembled', 'context.compacted', 'context.archived', 'context.summary.started'] as const;
 
 function scopeAllowsArchive(store: Store, requester: Run, snapshot: HistorySnapshot): boolean {
   if (requester.scope?.read === undefined) return true;
@@ -121,7 +120,7 @@ export function readHistory(store: Store, requesterId: string, options: { ref: s
   next?: { ref: string; offset: number; contentOffset: number };
   source: { availability: 'available'; coverage: 'recorded-messages'; freshness: 'unknown'; offsetUnit: 'UTF-16 code units'; read: HistoryPointer<typeof options> };
 } {
-  const requester = effectiveMethodRun(store, store.run(requesterId));
+  const requester = store.run(requesterId);
   const offset = options.offset ?? 0;
   const limit = options.limit ?? 20;
   const contentOffset = options.contentOffset ?? 0;
@@ -157,7 +156,7 @@ export function readHistory(store: Store, requesterId: string, options: { ref: s
     index++;
     position = 0;
   }
-  return { ref: options.ref, runId: owner.id, messages, fragments, offset, ...(index < snapshot.messages.length ? { nextOffset: index, next: { ref: options.ref, offset: index, contentOffset: position } } : {}), total: snapshot.messages.length, ...(snapshot.previousRef ? { previousRef: snapshot.previousRef } : {}), source: { availability: 'available', coverage: 'recorded-messages', freshness: 'unknown', offsetUnit: 'UTF-16 code units', read: historyReadPointer(store.session(requester.sessionId).toolProfile, options) } };
+  return { ref: options.ref, runId: owner.id, messages, fragments, offset, ...(index < snapshot.messages.length ? { nextOffset: index, next: { ref: options.ref, offset: index, contentOffset: position } } : {}), total: snapshot.messages.length, ...(snapshot.previousRef ? { previousRef: snapshot.previousRef } : {}), source: { availability: 'available', coverage: 'recorded-messages', freshness: 'unknown', offsetUnit: 'UTF-16 code units', read: historyReadPointer(options) } };
 }
 
 export interface HistorySearch { query: string; run_id?: string; cursor?: string; limit?: number; maxScanChars?: number }
@@ -166,8 +165,7 @@ interface SearchScan { requesterId: string; query: string; sources: SearchSource
 
 /** A durable scan snapshot survives new messages, tool results and compaction between pages. */
 export function searchHistory(store: Store, requesterId: string, options: HistorySearch) {
-  const requester = effectiveMethodRun(store, store.run(requesterId));
-  const profile = store.session(requester.sessionId).toolProfile;
+  const requester = store.run(requesterId);
   const { query, limit = 5, maxScanChars = 64_000 } = options;
   if (typeof query !== 'string' || !query.length || query.length > 1000 || !Number.isSafeInteger(limit) || limit < 1 || limit > 5 || !Number.isSafeInteger(maxScanChars) || maxScanChars < 256 || maxScanChars > 128_000) throw new KodoError('HISTORY_ARGUMENTS', 'query must be 1-1000 characters, limit 1-5, maxScanChars 256-128000');
   if (maxScanChars < query.length) throw new KodoError('HISTORY_ARGUMENTS', 'maxScanChars must be at least the literal query length');
@@ -232,7 +230,7 @@ export function searchHistory(store: Store, requesterId: string, options: Histor
     if (match >= 0) {
       let start = Math.max(0, match - 120);
       if (start && /[\uD800-\uDBFF]/.test(text[start - 1]!) && /[\uDC00-\uDFFF]/.test(text[start]!)) start--;
-      const read = source.kind === 'history' ? historyReadPointer(profile, { ref: source.ref!, offset: scan.messageIndex, contentOffset: scan.position + start, limit: 1, maxChars: 4000 }) : { tool: 'inspect_run', args: { run_id: source.runId, call_id: source.callId!, content_offset: scan.position + start, max_chars: 4000 } };
+      const read = source.kind === 'history' ? historyReadPointer({ ref: source.ref!, offset: scan.messageIndex, contentOffset: scan.position + start, limit: 1, maxChars: 4000 }) : { tool: 'inspect_run', args: { run_id: source.runId, call_id: source.callId!, content_offset: scan.position + start, max_chars: 4000 } };
       items.push({ snippet: text.slice(start, match + query.length + 200), source, read, availability: 'available', coverage: 'recorded-text', freshness: 'unknown' });
     }
     if (match >= 0 || complete) {

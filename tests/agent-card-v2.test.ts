@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stringify } from 'yaml';
-import { defaultCard, parseCard, serializeCard } from '../src/agents/card.js';
+import { parseCard, serializeCard, simpleDefaultCard } from '../src/agents/card.js';
 import { digest } from '../src/storage/index.js';
 
 const metadata = () => ({
@@ -16,13 +16,9 @@ const metadata = () => ({
 const source = (meta: unknown, prompt = 'Private implementation method.'): string => `---\n${stringify(meta)}---\n${prompt}\n`;
 
 describe('agent card schema v2', () => {
-  it('round-trips explicit execution modes and retains legacy absence', () => {
-    const original = parseCard(source(metadata()));
-    expect(original.execution).toBeUndefined();
-    const method = parseCard(source({ ...metadata(), execution: { modes: ['inline', 'child'] } }));
-    expect(parseCard(serializeCard(method)).execution).toEqual({ modes: ['inline', 'child'] });
-    expect(method.digest).not.toBe(original.digest);
-    for (const modes of [[], ['inline', 'inline'], ['automatic']]) expect(() => parseCard(source({ ...metadata(), execution: { modes } }))).toThrow('schema');
+  it('rejects the deleted inline-method execution modes instead of silently dropping them', () => {
+    expect(() => parseCard(source({ ...metadata(), execution: { modes: ['inline', 'child'] } }))).toThrow(expect.objectContaining({ code: 'CARD_SCHEMA' }));
+    expect(serializeCard(parseCard(source(metadata())))).not.toContain('execution');
   });
   it('preserves routing metadata, private methods and structured contracts without requiring installed skills or MCP', () => {
     const card = parseCard(source(metadata()));
@@ -67,22 +63,23 @@ describe('agent card schema v2', () => {
 });
 
 describe('legacy cards and the single default identity', () => {
-  it('keeps the published general v1 representation unchanged except the 1c tool removal', () => {
-    expect(defaultCard.digest).toBe('6a3d4558e55aaa927e551c9c4bc40115178a73415c8eded062aa9722eceb348d');
-    expect(defaultCard).not.toHaveProperty('schemaVersion');
-    expect(defaultCard).not.toHaveProperty('members');
+  it('keeps the single default card a v1 representation without roster tools', () => {
+    expect(simpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.4.0' });
+    expect(simpleDefaultCard.digest).toBe('1cf0999761c7721d283dcfc7ee9ec158a3178ffa792be40adc4f0c58f19c3006');
+    expect(simpleDefaultCard).not.toHaveProperty('schemaVersion');
+    expect(simpleDefaultCard).not.toHaveProperty('members');
     // The deleted roster/routing tools cannot be referenced by the builtin card.
-    expect(defaultCard.tools.filter(name => name.startsWith('agent.'))).toEqual([]);
+    expect(simpleDefaultCard.tools.filter(name => name.startsWith('agent.'))).toEqual([]);
     const legacy = { schema_version: 1, id: 'test/legacy', version: '1.0.0', name: 'Legacy', description: 'Legacy card.', capabilities: { tools: ['file.read'], skills: ['known/skill'] } };
     expect(() => parseCard(source(legacy))).toThrow('skill');
     expect(parseCard(source(legacy), { skillIds: ['known/skill'] }).skills).toEqual(['known/skill']);
   });
 
-  it('has no builtin specialist roster; delegation tools are gone from every default card', async () => {
-    const { compactDefaultCard, legacySimpleDefaultCard, simpleDefaultCard, leanDefaultCard } = await import('../src/agents/card.js');
-    for (const card of [defaultCard, compactDefaultCard, legacySimpleDefaultCard, simpleDefaultCard, leanDefaultCard]) {
-      expect(card.tools.filter(name => ['agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain'].includes(name))).toEqual([]);
-      expect(card.members).toBeUndefined();
-    }
+  it('has no builtin specialist roster; delegation tools are gone from the default card', async () => {
+    const cards = await import('../src/agents/card.js');
+    // The compact, full and lean default variants are gone; only the simple default remains.
+    expect(Object.keys(cards).filter(name => /DefaultCard$|^defaultCard$/u.test(name))).toEqual(['simpleDefaultCard']);
+    expect(simpleDefaultCard.tools.filter(name => ['agent.search', 'agent.directory', 'agent.route', 'agent.derive', 'agent.propose', 'agent.retain'].includes(name))).toEqual([]);
+    expect(simpleDefaultCard.members).toBeUndefined();
   });
 });

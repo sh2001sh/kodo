@@ -1,6 +1,6 @@
 import { summaryPrefix } from './context.js';
 import type { ModelResponse, Run } from './types.js';
-import { historyReadCall, historySearchName } from './view-pointers.js';
+import { historyReadCall } from './view-pointers.js';
 
 /** Legacy v1 source entry. v1 checkpoints stay readable through history.read summary+source mode. */
 export interface SummarySource {
@@ -56,10 +56,10 @@ export function compactionInstruction(targetTokens: number): string {
  * then the summary text and an exact pointer into the verbatim archive, named
  * for the session's tool view.
  */
-export function summaryMarker(input: { text: string; archivedRef: string; coveredOffsets: number[]; droppedGroups: number; deliveryState?: string; profile?: string }): string {
+export function summaryMarker(input: { text: string; archivedRef: string; coveredOffsets: number[]; droppedGroups: number; deliveryState?: string }): string {
   const first = input.coveredOffsets[0] ?? 0;
   const last = input.coveredOffsets.at(-1) ?? first;
   const dropped = input.droppedGroups ? ` The earliest ${input.droppedGroups} rounds did not fit the summary request and exist only in the archive.` : '';
   const state = input.deliveryState ? `${input.deliveryState}\n\n` : '';
-  return `${summaryPrefix}${state}${input.text}\n\n[Archive] Summarized messages ${first}-${last} remain verbatim: page them with ${historyReadCall(input.profile, input.archivedRef, first)} and use ${historySearchName(input.profile)} to find exact details instead of repeating work.${dropped}`;
+  return `${summaryPrefix}${state}${input.text}\n\n[Archive] Summarized messages ${first}-${last} remain verbatim: page them with ${historyReadCall(input.archivedRef, first)} and use history.search to find exact details instead of repeating work.${dropped}`;
 }

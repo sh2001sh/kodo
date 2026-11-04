@@ -1,4 +1,3 @@
-import { effectiveMethodRun } from '../extensions/methods.js';
 import { Store } from '../storage/index.js';
 import { Tools } from '../tools/index.js';
 import { assertRunCapabilities } from '../tools/bindings.js';
@@ -23,7 +22,6 @@ import type { HookRegistration } from './hooks.js';
 import { turnEndDelivery } from './turn-end.js';
 import type { CompletionValidator, Message, ModelBinding, ModelResponse, Provider, Run, StepOutcome } from './types.js';
 import type { ProjectKnowledge } from '../knowledge/index.js';
-import { taskGraphTerminalCheck } from './task-completion.js';
 
 export { runBudget } from './run-budget.js';
 
@@ -58,7 +56,6 @@ export class RunCoordinator implements StepHost {
     } });
     this.mailbox = new Mailbox(store, (id, origin) => this.cancel(id, origin), {
       modelBindings: options.modelBindings, bindingSnapshot: (allowed, skillIds) => this.tools.bindingSnapshot(allowed, skillIds),
-      knowledge: options.knowledge,
       globalInstructions: options.globalInstructions,
     });
     this.recovery = new RecoveryManager(store, this.tools);
@@ -449,9 +446,6 @@ export class RunCoordinator implements StepHost {
             // Keep the candidate response and re-run acceptance against the latest directory.
             this.store.updateRun(runId, { status: 'queued' });
             this.store.event(runId, 'completion.invalidated', { reason: 'workspace write changed after public acceptance' });
-          } else if (outcome.kind === 'complete' && outcome.taskGraphStamp !== undefined && !taskGraphTerminalCheck(this.store, runId, outcome.taskGraphStamp).valid) {
-            this.store.updateRun(runId, { status: 'queued' });
-            this.store.event(runId, 'completion.invalidated', { reason: 'task graph changed after acceptance' });
           } else if (outcome.kind === 'complete' && children && (children.active.length || children.feedback || JSON.stringify(children.result) !== JSON.stringify(this.store.readBlob<{ children?: unknown }>(outcome.resultRef).children))) {
             // Host dispatch or a child outcome may race an asynchronous validator
             // or stop hook. Recheck before committing the parent's terminal state.
@@ -517,7 +511,6 @@ export class RunCoordinator implements StepHost {
     const run = this.store.run(runId);
     if (!this.knowledge && run.card.tools.some(name => name === 'knowledge.search' || name === 'knowledge.read')) throw new KodoError('RECOVERY_REQUIRED', 'enable project knowledge before resuming this run');
     assertRunCapabilities(run, this.tools);
-    if (this.store.session(run.sessionId).inlineMethods) assertRunCapabilities(effectiveMethodRun(this.store, run), this.tools);
     const failed = await runModelStep(this, runId, signal);
     if (failed) return failed;
     const current = this.store.run(runId);

@@ -25,7 +25,7 @@ describe('completion across overlapping workspaces', () => {
         return writerSteps === 2 ? calls(call('file.apply_patch', { path: file, expectedHash: digest('good'), content: 'bad' })) : answer('written');
       }
       return answer('candidate');
-    } }, undefined, { agentFactors: { D: false, E: false, B: false } });
+    } });
     try {
       const verifier = app.createRun({ objective: 'Verifier', workspace: verifierDirectory === 'parent' ? root : nested, binding });
       const writer = app.createRun({ objective: 'Writer', workspace: verifierDirectory === 'parent' ? nested : root, binding, permissions: ['read', 'write'] });
@@ -72,7 +72,7 @@ describe('completion across overlapping workspaces', () => {
     const sibling = path.join(root, 'left-sibling');
     mkdirSync(left);
     mkdirSync(sibling);
-    const app = new Application(path.join(root, 'state'), { async complete() { return answer('candidate'); } }, undefined, { agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(path.join(root, 'state'), { async complete() { return answer('candidate'); } });
     try {
       const verifier = app.createRun({ objective: 'Verifier', workspace: left, binding });
       const writer = app.createRun({ objective: 'Writer', workspace: sibling, binding });

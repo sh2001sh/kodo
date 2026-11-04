@@ -4,7 +4,6 @@ import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { prepareRunOutput, runOutputDirectory } from '../src/runtime/run-output.js';
 import { prepareSandboxCommand, sandboxEnvironment } from '../src/sandbox/index.js';
-import { checkVersion } from '../src/runtime/check-hint.js';
 import { runProcess } from '../src/tools/index.js';
 import type { ProcessOutput } from '../src/tools/index.js';
 import { binding, fixture, temp } from './helpers.js';
@@ -83,21 +82,20 @@ describe('fixed run output', () => {
     execFileSync('git', ['init', '-q'], { cwd: root, windowsHide: true });
     await writeFile(path.join(root, '.gitignore'), '.state/\n');
     await writeFile(path.join(root, 'source.txt'), 'source');
-    const version = checkVersion(app.store, root);
-    expect(version).not.toBeNull();
+    // Untracked workspace files, as git reports them; output must never add one.
+    const status = (): string => execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8', windowsHide: true });
+    const before = status();
     remember(runOutputDirectory(app.store, runId));
     const execute = (source: string) => app.coordinator.tools.execute(runId, 'process.exec', { program: process.execPath, args: ['-e', source] }, AbortSignal.timeout(30_000)) as Promise<ProcessOutput>;
     const first = await execute('require("node:fs").writeFileSync(process.env.COVERAGE_FILE,"coverage-result")');
     expect(first.exitCode, first.stderr).toBe(0);
-    expect(checkVersion(app.store, root)).toBe(version);
+    expect(status()).toBe(before);
     const second = await execute('require("node:fs").appendFileSync(process.env.COVERAGE_FILE,"-updated"); console.log(require("node:fs").readFileSync(process.env.COVERAGE_FILE,"utf8")); console.log(process.env.KODO_RUN_OUTPUT_DIR)');
     expect(second.exitCode, second.stderr).toBe(0);
     expect(second.stdout).toContain('coverage-result-updated');
     expect(second.stdout).toContain(runOutputDirectory(app.store, runId));
     await expect(readFile(path.join(root, '.coverage'))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(checkVersion(app.store, root)).toBe(version);
-    await writeFile(path.join(root, 'source.txt'), 'changed source');
-    expect(checkVersion(app.store, root)).not.toBe(version);
+    expect(status()).toBe(before);
   });
 
   it('requires a separate output directory without expanding workspace scope', async () => {

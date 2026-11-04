@@ -59,7 +59,7 @@ describe('optimization CLI host commands', () => {
 
   it('rewinds a completed native creation to the initial file state', async () => {
     const workspace = temp(); const directory = path.join(workspace, '.state');
-    const app = new Application(directory, scripted(calls(call('file.apply_patch', { path: 'created.txt', expectedHash: null, content: 'created by native tool' })), answer()), undefined, { agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(directory, scripted(calls(call('file.apply_patch', { path: 'created.txt', expectedHash: null, content: 'created by native tool' })), answer()));
     const run = app.createRun({ objective: 'Create a fixture file', workspace, binding, permissions: ['read', 'write'] });
     const finished = await app.run(run.id);
     expect(finished.status, finished.error).toBe('completed');

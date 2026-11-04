@@ -56,13 +56,13 @@ describe('capability contracts across actual application restart', () => {
     const root = await directory();
     const state = path.join(root, '.state');
     const command = { program: process.execPath, args: ['-e', 'process.stdout.write("approved read-only evidence")'] };
-    const original = track(new Application(state, scripted(), undefined, { readOnlyCommands: [command], agentFactors: { D: false, E: false, B: false } }));
+    const original = track(new Application(state, scripted(), undefined, { readOnlyCommands: [command] }));
     const pending = checkpoint(original, root, 'process.run', command);
     const pinned = original.store.run(pending.id).toolBindings;
     await close(original);
     const complete = vi.fn(async () => answer('Verified the resumed read-only evidence.'));
     const commands = variant === 'missing' ? [] : [variant === 'changed' ? { ...command, args: ['--version'] } : command];
-    const reopened = track(new Application(state, { complete }, undefined, { readOnlyCommands: commands, agentFactors: { D: false, E: false, B: false } }));
+    const reopened = track(new Application(state, { complete }, undefined, { readOnlyCommands: commands }));
     expect(reopened.store.run(pending.id)).toMatchObject({ status: 'interrupted', toolBindings: pinned });
     if (variant === 'same') {
       expect((await reopened.recover(pending.id)).status).toBe('completed');
@@ -81,13 +81,13 @@ describe('capability contracts across actual application restart', () => {
     const root = await directory();
     const state = path.join(root, '.state');
     const originalCallback = vi.fn(() => ({ approved: true }));
-    const original = track(new Application(state, scripted(), undefined, { tools: [customTool('1', originalCallback)], agentFactors: { D: false, E: false, B: false } }));
+    const original = track(new Application(state, scripted(), undefined, { tools: [customTool('1', originalCallback)] }));
     const pending = checkpoint(original, root, 'custom.approved');
     const pinned = original.store.run(pending.id).toolBindings;
     await close(original);
     const callback = vi.fn(() => ({ approved: true }));
     const complete = vi.fn(async () => answer('Resumed the original pending capability.'));
-    const reopened = track(new Application(state, { complete }, undefined, { tools: variant === 'missing' ? [] : [customTool(variant === 'changed' ? '2' : '1', callback)], agentFactors: { D: false, E: false, B: false } }));
+    const reopened = track(new Application(state, { complete }, undefined, { tools: variant === 'missing' ? [] : [customTool(variant === 'changed' ? '2' : '1', callback)] }));
     expect(reopened.store.run(pending.id)).toMatchObject({ status: 'interrupted', toolBindings: pinned });
     expect(originalCallback).not.toHaveBeenCalled();
     if (variant === 'same') {
@@ -114,12 +114,12 @@ describe('capability contracts across actual application restart', () => {
     const content = '---\nname: review\ndescription: Review original evidence\n---\nInspect source evidence before reporting.\n';
     await writeFile(file, content, 'utf8');
     const skill = await loadSkill(file);
-    const original = track(new Application(state, scripted(), undefined, { skills: [skill], agentFactors: { D: false, E: false, B: false } }));
+    const original = track(new Application(state, scripted(), undefined, { skills: [skill] }));
     const pending = checkpoint(original, root, 'skill.load', { id: skill.id }, skill.id);
     await close(original);
     if (changed) await writeFile(file, content + 'Changed instruction requiring a different procedure.\n', 'utf8');
     const complete = vi.fn(async () => answer('Loaded the unchanged approved skill.'));
-    const reopened = track(new Application(state, { complete }, undefined, { skills: [await loadSkill(file)], agentFactors: { D: false, E: false, B: false } }));
+    const reopened = track(new Application(state, { complete }, undefined, { skills: [await loadSkill(file)] }));
     expect(reopened.store.run(pending.id).status).toBe('interrupted');
     if (changed) {
       await expect(Promise.resolve().then(() => reopened.recover(pending.id))).rejects.toMatchObject({ code: 'CAPABILITY_CHANGED' });
@@ -157,12 +157,12 @@ describe('capability contracts across actual application restart', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('missing MCP fixture listener');
     const endpoint = `http://127.0.0.1:${address.port}`;
-    const original = track(new Application(state, scripted(), undefined, { agentFactors: { D: false, E: false, B: false } }));
+    const original = track(new Application(state, scripted(), undefined));
     await original.connectMcp({ id: 'approved', transport: 'http', url: endpoint + '/original', tools: { approved: { permission: 'read', effect: 'read', version: '1' } } });
     const pending = checkpoint(original, root, 'mcp.approved.approved');
     await close(original);
     const complete = vi.fn(async () => answer('Read the original remote evidence once.'));
-    const reopened = track(new Application(state, { complete }, undefined, { agentFactors: { D: false, E: false, B: false } }));
+    const reopened = track(new Application(state, { complete }, undefined));
     await reopened.connectMcp({ id: 'approved', transport: 'http', url: endpoint + (variant === 'endpoint' ? '/different-service' : '/original'), tools: { approved: { permission: 'read', effect: 'read', version: variant === 'policy version' ? '2' : '1' } } });
     expect(reopened.store.run(pending.id).status).toBe('interrupted');
     if (variant === 'same') {

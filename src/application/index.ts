@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { compactDefaultCard, leanDefaultCard, simpleDefaultCard, defaultCard, parseCard, validateCard } from '../agents/card.js';
+import { simpleDefaultCard, parseCard, validateCard } from '../agents/card.js';
 import { RunCoordinator } from '../runtime/coordinator.js';
 import { defaultBudget, KodoError, terminal } from '../runtime/types.js';
 import { resolveModelLimits, validateModelBinding } from '../providers/model-limits.js';
@@ -24,8 +24,6 @@ import { Store, digest } from '../storage/index.js';
 import type { Page, PageOptions, SubscriberError } from '../storage/index.js';
 import { ModelProvider } from '../providers/index.js';
 import { connectMcp, skillTools } from '../extensions/index.js';
-import { methodCatalogDigest, withCardMethods } from '../extensions/methods.js';
-import { roleAllows } from '../runtime/role-view.js';
 import type { McpConfig, McpConnection, Skill } from '../extensions/index.js';
 import { carryRecoveryTodo, todoTools } from '../tools/todo.js';
 import { lspTools } from '../tools/lsp.js';
@@ -47,18 +45,11 @@ import { validateAgentModelPolicy } from '../messaging/spawn-spec.js';
 import type { SpawnAgentRequest } from '../messaging/spawn-spec.js';
 import { prepareInstructionContext } from '../runtime/instruction-layer.js';
 import { attachment } from '../runtime/attachments.js';
-import type { AgentFactors } from '../runtime/agent-factors.js';
 import { runWorkspace } from '../runtime/execution-workspace.js';
-import { isLeanProfile } from '../runtime/tool-view.js';
 import { assertSessionCompatible } from '../runtime/session-compat.js';
 
 export interface CreateRunOptions { objective: string; workspace: string; binding: ModelBinding; permissions?: Permission[]; scope?: FileScope; budget?: Partial<Budget>; card?: Card; finalResponse?: 'required' | 'optional'; toolChoice?: 'none'; deliverables?: Deliverable[]; team?: SpawnAgentRequest[] | ((main: Run) => SpawnAgentRequest[]) }
 export interface ApplicationOptions {
-  agentFactors?: AgentFactors;
-  /** Frozen for new sessions; absent in saved sessions preserves legacy task association. */
-  taskProtocol?: 1 | 2 | 3;
-  /** Default programming tool view; custom cards retain their declared capabilities. */
-  toolProfile?: Session['toolProfile'];
   projectRoots?: Record<string, string[]>;
   modelRoles?: Partial<Record<'fast' | 'standard' | 'strong', string>>;
   /** Conditional capacity protection enabled by default; false explicitly disables model-generated summaries. */
@@ -68,11 +59,6 @@ export interface ApplicationOptions {
   readOnlyCommands?: ReadOnlyCommand[];
   tools?: ToolRegistration[];
   skills?: readonly Skill[];
-  /** Experimental card methods through skill.load, using only existing run capabilities. */
-  inlineMethods?: boolean;
-  /** Disable only for the marking-only ablation; enabled by default with inline methods. */
-  methodUnloading?: boolean;
-  methodToolView?: 'stable' | 'active';
   modelBindings?: Record<string, ModelBinding>;
   modelBindingDescriptions?: Record<string, string>;
   onSubscriberError?: (failure: SubscriberError) => void;
@@ -102,9 +88,6 @@ export interface RunSnapshot {
 export class Application {
   readonly store: Store;
   readonly coordinator: RunCoordinator;
-  private readonly agentFactors: Required<AgentFactors>;
-  private readonly taskProtocol: 1 | 2 | 3;
-  private readonly toolProfile: NonNullable<Session['toolProfile']>;
   private readonly projectRoots: Record<string, string[]>;
   private readonly modelRoles: Partial<Record<'fast' | 'standard' | 'strong', string>>;
   private readonly modelBindings?: Record<string, ModelBinding>;
@@ -112,9 +95,6 @@ export class Application {
   private registeredToolNames = new Set<string>();
   private registeredSkillIds = new Set<string>();
   private readonly skills = new Map<string, Skill>();
-  private readonly inlineMethods: boolean;
-  private readonly methodUnloading: boolean;
-  private readonly methodToolView: 'stable' | 'active';
   private skillDefinitions: ToolRegistration[] = [];
   private mcpConnections = new Set<McpConnection>();
   private readonly packageActivations = new Map<string, { workspace: string; workspaceBound: boolean; context: string; names: string[]; skills: string[]; bindings: Record<string, string> }>();
@@ -123,15 +103,9 @@ export class Application {
   private readonly projectMemory: boolean;
   private readonly lockDirectory?: string | false;
   private readonly optionalTools: string[];
+  /** The single default card, extended with host-enabled optional tools. */
   get defaultCard(): Card {
-    // Builtin cards are gone with the roster; profile selection over the five
-    // immutable default variants remains until 1e converges them.
-    return this.legacyDefaultCard;
-  }
-  private get legacyDefaultCard(): Card {
-    // The knowledge-enabled default keeps the project catalog; compact sessions only
-    // use it when the host enables knowledge. One default identity per profile until 1e.
-    const base = isLeanProfile(this.toolProfile) ? leanDefaultCard : this.toolProfile !== 'full' ? (this.toolProfile === 'compact-v2' ? simpleDefaultCard : compactDefaultCard) : this.coordinator.knowledge ? knowledgeMainCard() : defaultCard;
+    const base = simpleDefaultCard;
     if (!this.optionalTools.length) return base;
     const tools = [...new Set([...base.tools, ...this.optionalTools])];
     return parseCard(`---\nschema_version: 1\nid: ${base.id}-${this.optionalTools.map(name => name.split('.')[0]).join('-')}\nversion: ${base.version}\nname: ${base.name}\ndescription: Host-configured local agent with optional capabilities.\n${base.nudges === undefined ? '' : `nudges: ${base.nudges}\n`}capabilities:\n  tools: ${JSON.stringify(tools)}\n---\n${base.prompt}\nUse verify.run for the host-approved verification command when available. Project memory stores concise reusable decisions, never credentials.`, { toolNames: tools });
@@ -141,18 +115,6 @@ export class Application {
     const compaction = options.compaction === false ? undefined : options.compaction ?? { ...defaultCompactionPolicy };
     validateCompactionPolicy(compaction);
     validateAssemblyPolicy(options.assembly);
-    if (options.taskProtocol !== undefined && ![1, 2, 3].includes(options.taskProtocol)) throw new KodoError('TASK_PROTOCOL', 'taskProtocol must be 1, 2 or 3');
-    if (options.toolProfile !== undefined && !['compact-v1', 'compact-v2', 'full', 'lean-solo'].includes(options.toolProfile)) throw new KodoError('TOOL_PROFILE', 'toolProfile must be compact-v1, compact-v2, full or lean-solo');
-    if (isLeanProfile(options.toolProfile) && options.taskProtocol !== undefined && options.taskProtocol !== 3) throw new KodoError('TASK_PROTOCOL', 'lean profiles require taskProtocol 3');
-    this.taskProtocol = options.taskProtocol ?? 3;
-    this.toolProfile = options.toolProfile ?? 'compact-v2';
-    this.inlineMethods = options.inlineMethods ?? false;
-    this.methodUnloading = options.methodUnloading ?? true;
-    this.methodToolView = options.methodToolView ?? 'stable';
-    if (!['stable', 'active'].includes(this.methodToolView) || options.methodToolView !== undefined && !this.inlineMethods) throw new KodoError('METHOD_CONFIG', 'methodToolView requires inlineMethods and stable or active');
-    if (options.methodUnloading !== undefined && (typeof options.methodUnloading !== 'boolean' || !this.inlineMethods)) throw new KodoError('METHOD_CONFIG', 'methodUnloading requires inlineMethods and a boolean');
-    if (options.inlineMethods !== undefined && typeof options.inlineMethods !== 'boolean' || this.inlineMethods && isLeanProfile(this.toolProfile)) throw new KodoError('METHOD_CONFIG', 'inlineMethods requires a boolean and a Skill-capable full/compact tool profile');
-    if (options.agentFactors !== undefined && (!options.agentFactors || typeof options.agentFactors !== 'object' || Array.isArray(options.agentFactors) || Object.entries(options.agentFactors).some(([key, value]) => !['A', 'B', 'C', 'D', 'E'].includes(key) || typeof value !== 'boolean'))) throw new KodoError('AGENT_FACTORS', 'agentFactors accepts boolean A, B, C, D and E flags');
     if (compaction?.workInputTokens !== undefined && options.assembly?.workInputTokens !== undefined && compaction.workInputTokens !== options.assembly.workInputTokens) throw new KodoError('CONTEXT_POLICY', 'assembly and compaction must use the same explicit workInputTokens');
     validateAgentModelPolicy(options.modelBindings, options.modelBindingDescriptions, options.modelRoles);
     if (options.verification?.backend === 'native' && options.verification.enabled && options.verification.approved && !options.sandbox) throw new KodoError('VERIFY_SANDBOX', 'native verification requires an explicitly configured host OS sandbox');
@@ -162,9 +124,8 @@ export class Application {
     this.projectMemory = options.memory === true;
     this.lockDirectory = options.lockDirectory;
     this.optionalTools = [...(this.projectMemory ? ['memory.write'] : []), ...(options.verification?.enabled && options.verification.approved ? ['verify.run'] : []),
-      ...(this.toolProfile !== 'full' && options.webFetch?.enabled ? ['web.fetch'] : []),
-      ...(this.toolProfile !== 'full' && options.lsp?.servers.length ? ['lsp.hover', 'lsp.definition', 'lsp.references', 'lsp.symbols', 'lsp.diagnostics'] : [])];
-    this.agentFactors = { A: options.agentFactors?.A ?? true, B: options.agentFactors?.B ?? true, C: options.agentFactors?.C ?? true, D: options.agentFactors?.D ?? true, E: options.agentFactors?.E ?? true };
+      ...(options.webFetch?.enabled ? ['web.fetch'] : []),
+      ...(options.lsp?.servers.length ? ['lsp.hover', 'lsp.definition', 'lsp.references', 'lsp.symbols', 'lsp.diagnostics'] : [])];
     this.projectRoots = structuredClone(options.projectRoots ?? {});
     try { for (const roots of Object.values(this.projectRoots)) normalizeFileScope({ write: roots }); }
     catch (error) { this.store.close(); throw error; }
@@ -172,10 +133,10 @@ export class Application {
     this.modelBindings = options.modelBindings === undefined ? undefined : structuredClone(options.modelBindings);
     this.modelBindingDescriptions = options.modelBindingDescriptions === undefined ? undefined : structuredClone(options.modelBindingDescriptions);
     try {
-      const knowledge = options.exploration !== false || this.inlineMethods ? new ProjectKnowledge(this.store, typeof options.exploration === 'object' ? options.exploration : {}) : undefined;
+      const knowledge = options.exploration !== false ? new ProjectKnowledge(this.store, typeof options.exploration === 'object' ? options.exploration : {}) : undefined;
       this.coordinator = new RunCoordinator(this.store, provider, onText, options.readOnlyCommands, { modelBindings: structuredClone(options.modelBindings ?? {}), ...(options.sandbox ? { sandbox: structuredClone(options.sandbox) } : {}), shellProgram: options.shellProgram, knowledge, compaction, assembly: options.assembly, globalInstructions: this.globalInstructions, hooks: options.hooks, lazyTools: options.lazyTools, ...(options.lockDirectory === undefined ? {} : { lockDirectory: options.lockDirectory }) });
       for (const definition of todoTools(this.store)) this.registerTool(definition);
-      if (knowledge) for (const definition of knowledgeTools(knowledge, this.inlineMethods)) this.registerTool(definition);
+      if (knowledge) for (const definition of knowledgeTools(knowledge)) this.registerTool(definition);
       for (const definition of memoryTools(this.store, { enabled: this.projectMemory })) this.registerTool(definition);
       if (options.verification) this.registerTool(createVerificationTool(options.verification, options.verification.backend === 'native' && this.sandboxPolicy ? async (context, invocation, signal) => {
         const workspace = runWorkspace(this.store, context.run);
@@ -195,7 +156,7 @@ export class Application {
       this.registerTool(createWebFetchTool(options.webFetch ?? { enabled: false }));
       for (const definition of lspTools({ servers: [], sandbox: options.sandbox, ...options.lsp, runtimeDirectory: this.store.directory })) this.registerTool(definition);
       for (const definition of options.tools ?? []) this.registerTool(definition);
-      if (options.skills || this.inlineMethods) this.registerSkills(options.skills ?? []);
+      if (options.skills) this.registerSkills(options.skills ?? []);
     }
     catch (error) { this.store.close(); throw error; }
   }
@@ -212,42 +173,8 @@ export class Application {
     this.validateCardRegistration(card);
     this.store.registerCard(card);
   }
-  /** Explicit host publication; registering a global card alone does not change a session. */
-  updateSessionMethods(runId: string, change: { expectedDigest: string; install?: Card[]; disable?: string[] }): { digest: string } {
-    const run = this.store.run(runId), session = this.store.session(run.sessionId);
-    if (!session.inlineMethods || run.parentId) throw new KodoError('METHOD_CONFIG', 'session method installation requires an enabled main run');
-    if (this.store.listRuns(session.id).filter(owner => !owner.parentId).some(owner => this.store.calls(owner.id).some(call => call.status === 'running'))) throw new KodoError('METHOD_BUSY', 'publish methods at a model/tool boundary; interrupt the main run before installing');
-    const before = session.methodCards ?? [];
-    const beforeDigest = methodCatalogDigest(before);
-    if (beforeDigest !== change.expectedDigest) throw new KodoError('ROSTER_CHANGED', 'read the current method catalog digest before publication');
-    const cards = change.install ?? [];
-    if (!cards.length && !change.disable?.length) return { digest: beforeDigest };
-    if (new Set(cards.map(card => card.id)).size !== cards.length) throw new KodoError('METHOD_CONFIG', 'install each card ID at most once');
-    if (change.disable?.some(id => !before.some(ref => ref.id === id) && !cards.some(card => card.id === id))) throw new KodoError('METHOD_CONFIG', 'cannot disable an unknown session method');
-    for (const card of cards) this.validateCardRegistration(card);
-    const tools = [...new Set([...(session.methodTools ?? run.card.tools), ...cards.flatMap(card => [...card.tools, ...(card.mcp ?? []).flatMap(server => server.tools.map(tool => `mcp.${server.server}.${tool}`))])])];
-    const skills = [...new Set([...(session.methodSkills ?? run.card.skills ?? []), ...cards.flatMap(card => card.skills ?? [])])];
-    const bindings = this.coordinator.tools.bindingSnapshot(tools, skills);
-    for (const [name, version] of Object.entries(run.toolBindings ?? {})) if (bindings[name] !== undefined && bindings[name] !== version) throw new KodoError('CAPABILITY_CHANGED', 'existing resource bindings must remain pinned during method installation');
-    const next = before.filter(ref => !cards.some(card => card.id === ref.id) && !change.disable?.includes(ref.id));
-    for (const card of cards) {
-      if (!card.execution?.modes.includes('inline')) throw new KodoError('METHOD_CONFIG', 'session method installation requires inline compatibility');
-      if (!change.disable?.includes(card.id)) next.push({ id: card.id, version: card.version, digest: card.digest });
-    }
-    const nextDigest = methodCatalogDigest(next);
-    this.store.transaction(() => {
-      const current = this.store.session(session.id);
-      if (methodCatalogDigest(current.methodCards) !== change.expectedDigest) throw new KodoError('ROSTER_CHANGED', 'method catalog changed during preparation');
-      for (const card of cards) this.store.registerCard(card);
-      this.store.putSession({ ...current, methodCards: next, methodTools: tools, methodSkills: skills });
-      for (const owner of this.store.listRuns(session.id).filter(owner => !owner.parentId)) this.store.updateRun(owner.id, { toolBindings: { ...owner.toolBindings, ...bindings } });
-      this.store.putMessage({ id: `methods:${session.id}:${nextDigest}`, sessionId: session.id, from: 'runtime', to: run.id, kind: 'notice', content: `Session method catalog revised to ${nextDigest}. Use skill.list to discover the current versions. The active stage remains pinned to its original version.` });
-      this.store.event(run.id, 'agent.methods.revised', { previous: before, digest: nextDigest, installed: cards.map(card => ({ id: card.id, version: card.version, digest: card.digest })), disabled: change.disable ?? [] });
-    });
-    return { digest: nextDigest };
-  }
   private validateCardRegistration(card: Card): void {
-    if (card.schemaVersion === 2 || card.execution) {
+    if (card.schemaVersion === 2) {
       const known = new Set<string>([...builtinToolNames, ...hostToolNames, ...this.registeredToolNames]);
       if (card.tools.some(name => !known.has(name))) throw new KodoError('CARD_SCHEMA', 'card references an unknown tool');
       validateCard(card, { toolNames: [...known], skillIds: [...this.registeredSkillIds] });
@@ -269,7 +196,7 @@ export class Application {
     for (const skill of snapshots) if (this.skills.has(skill.id)) throw new KodoError('SKILL_REGISTERED', 'register each immutable skill ID only once per application');
     if (this.skills.size || this.skillDefinitions.length) return { skills: snapshots, tools: [] };
     const definitions = skillTools([]).map((definition, index): ToolRegistration => ({ ...definition,
-      version: digest(this.inlineMethods ? 'kodo-append-only-skill-catalog/inline-v2' : 'kodo-append-only-skill-catalog/v1'),
+      version: digest('kodo-append-only-skill-catalog/v1'),
       execute: (context, args) => this.skillDefinitions[index]!.execute(context, args),
     }));
     return { skills: snapshots, tools: definitions };
@@ -277,8 +204,7 @@ export class Application {
   private commitSkills(skills: readonly Skill[]): void {
     this.coordinator.tools.registerSkillIdentities(skills);
     for (const skill of skills) { this.skills.set(skill.id, skill); this.registeredSkillIds.add(skill.id); }
-    const definitions = skillTools([...this.skills.values()]);
-    this.skillDefinitions = this.inlineMethods ? withCardMethods(this.store, definitions, (run, session) => this.coordinator.tools.specs([...new Set([...run.card.tools, ...(session.methodTools ?? [])])], { ...session, permissions: run.permissions ?? session.permissions }).filter(tool => roleAllows(run, session, tool.name)).map(tool => tool.name)) : definitions;
+    this.skillDefinitions = skillTools([...this.skills.values()]);
   }
   /** Stage all resources, then commit the complete package after every connection and collision check passes. */
   async activatePackage(installed: InstalledPackage, options: PackageActivationOptions): Promise<Card> {
@@ -444,15 +370,14 @@ export class Application {
     const modeScope = card.routing?.mode === 'read' || card.routing?.mode === 'review' ? { ...cardScope, write: [] } : cardScope;
     const scope = options.scope || modeScope ? normalizeFileScope(options.scope ?? {}, modeScope) : undefined;
     if (card.skills?.some(id => !this.registeredSkillIds.has(id))) throw new KodoError('SKILL_UNAVAILABLE', 'register the required skills before creating this run');
-    const materializedTools = [...new Set([...card.tools, ...(card.mcp ?? []).flatMap(server => server.tools.map(name => `mcp.${server.server}.${name}`)), ...(card.skills?.length || this.inlineMethods ? ['skill.list', 'skill.load'] : []), ...(this.inlineMethods ? ['artifact.write', 'knowledge.browse', 'knowledge.search', 'knowledge.read', 'knowledge.publish'] : [])])];
-    const executableCard = card.schemaVersion === 2 || this.inlineMethods ? { ...card, tools: materializedTools.filter(name => card.routing?.mode === 'read' || card.routing?.mode === 'review' ? this.coordinator.tools.permission(name) === 'read' || (card.routing.mode === 'review' && name === 'verify.run') : true) } : card;
+    const materializedTools = [...new Set([...card.tools, ...(card.mcp ?? []).flatMap(server => server.tools.map(name => `mcp.${server.server}.${name}`)), ...(card.skills?.length ? ['skill.list', 'skill.load'] : [])])];
+    const executableCard = card.schemaVersion === 2 ? { ...card, tools: materializedTools.filter(name => card.routing?.mode === 'read' || card.routing?.mode === 'review' ? this.coordinator.tools.permission(name) === 'read' || (card.routing.mode === 'review' && name === 'verify.run') : true) } : card;
     const toolBindings = this.coordinator.tools.bindingSnapshot(executableCard.tools, executableCard.skills ?? []);
     const run: Run = { id: runId, sessionId, objective: options.objective, status: 'queued', card: executableCard, binding: options.binding, modelLimits, scope, toolBindings, contextRef: this.store.blob([]), step: 0, cancelRequested: false, decisionVersion: 0, finalResponse: options.finalResponse, ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}), ...(deliverables ? { deliverables } : {}), createdAt };
     this.store.transaction(() => {
       this.validateCardRegistration(card);
       this.store.registerCard(card);
-      const session: Session = { id: sessionId, workspace, permissions, budget, modelLimits, agentFactors: this.agentFactors, taskProtocol: this.taskProtocol, toolProfile: this.toolProfile, projectRoots, modelRoles: structuredClone(this.modelRoles), ...(this.modelBindings === undefined ? {} : { modelBindings: structuredClone(this.modelBindings) }), ...(this.modelBindingDescriptions === undefined ? {} : { modelBindingDescriptions: structuredClone(this.modelBindingDescriptions) }), modelBudgetCeilings: { ...(options.budget?.maxContextTokens !== undefined ? { maxContextTokens: options.budget.maxContextTokens } : {}), ...(options.budget?.maxOutputTokens !== undefined ? { maxOutputTokens: options.budget.maxOutputTokens } : {}) }, tokens: 0, modelCalls: 0, toolCalls: 0, usageEstimated: false, decisionVersion: 0, createdAt };
-      if (this.inlineMethods) { session.inlineMethods = true; session.methodUnloading = this.methodUnloading; session.methodToolView = this.methodToolView; session.methodTools = executableCard.tools; session.methodSkills = executableCard.skills ?? []; session.methodCards = []; }
+      const session: Session = { id: sessionId, workspace, permissions, budget, modelLimits, projectRoots, modelRoles: structuredClone(this.modelRoles), ...(this.modelBindings === undefined ? {} : { modelBindings: structuredClone(this.modelBindings) }), ...(this.modelBindingDescriptions === undefined ? {} : { modelBindingDescriptions: structuredClone(this.modelBindingDescriptions) }), modelBudgetCeilings: { ...(options.budget?.maxContextTokens !== undefined ? { maxContextTokens: options.budget.maxContextTokens } : {}), ...(options.budget?.maxOutputTokens !== undefined ? { maxOutputTokens: options.budget.maxOutputTokens } : {}) }, tokens: 0, modelCalls: 0, toolCalls: 0, usageEstimated: false, decisionVersion: 0, createdAt };
       this.store.putSession(session);
       this.store.putRun(run);
       const prepared = prepareInstructionContext(this.store, run, session, { global: this.globalInstructions, memory: this.projectMemory });
@@ -522,7 +447,7 @@ export class Application {
         const permissions = session.permissions.filter(permission => (source.permissions ?? session.permissions).includes(permission));
         const context = this.store.readBlob<Message[]>(source.contextRef);
         context.push(attachment('notice', `Host-verified recovery findings for source run ${source.id}. These findings settle recorded effects; they do not grant permissions or prove task acceptance. Inspect the original calls for full evidence.\n${JSON.stringify(plan.resolutions)}`));
-        const host = initialContext(runWorkspace(this.store, source), permissions, source.card, source.objective, { id, parentId: source.parentId, scope: source.scope, finalResponse: source.finalResponse }, undefined, { factors: session.agentFactors, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile })[0]!;
+        const host = initialContext(runWorkspace(this.store, source), permissions, source.card, source.objective, { id, parentId: source.parentId, scope: source.scope, finalResponse: source.finalResponse })[0]!;
         const continuation: Run = { ...source, id, status: 'queued', resultRef: undefined, error: undefined, cancelRequested: false, waitId: undefined, continuationOf: source.id, contextRef: this.store.blob([host, ...context.slice(1)]), stepCallId: modelId, createdAt: new Date().toISOString(), activeMs: 0 };
         this.store.putRun(continuation);
         // The continuation retains the source task's read evidence, so an audited
@@ -547,7 +472,7 @@ export class Application {
           const session = this.store.session(peer.sessionId);
           const permissions = session.permissions.filter(permission => (peer.permissions ?? session.permissions).includes(permission));
           const context = this.store.readBlob<Message[]>(peer.contextRef);
-          const host = initialContext(runWorkspace(this.store, peer), permissions, peer.card, peer.objective, { id: peer.id, parentId, scope: peer.scope }, undefined, { factors: session.agentFactors, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile })[0]!;
+          const host = initialContext(runWorkspace(this.store, peer), permissions, peer.card, peer.objective, { id: peer.id, parentId, scope: peer.scope })[0]!;
           this.store.updateRun(peer.id, { parentId, contextRef: this.store.blob([host, ...context.slice(1)]) });
           this.store.event(peer.id, 'recovery.reparented', { previousParentId: peer.parentId!, parentId });
         }
@@ -665,22 +590,6 @@ export class Application {
     if (this.mcpConnections.size) throw new KodoError('MCP_ACTIVE', 'await application.shutdown() to close MCP connections before closing the store');
     this.store.close();
   }
-}
-const knowledgeGuidance = 'Search private knowledge only when useful, read an exact revision and inspect its original evidence before relying on it. Current hashes mean freshness, not semantic correctness. A stale or unknown entry needs targeted investigation before use. Open questions remain unresolved.';
-/** The knowledge-enabled default embeds the default card prompt, so a prompt change needs a new immutable version. */
-function knowledgeMainCard(): Card {
-  const tools = [...defaultCard.tools, 'knowledge.browse', 'knowledge.search', 'knowledge.read'];
-  return parseCard(`---
-schema_version: 1
-id: builtin/knowledge-main
-version: 1.0.0
-name: Project knowledge agent
-description: Complete local tasks with the private project knowledge catalog.
-capabilities:
-  tools: ${JSON.stringify(tools)}
----
-${defaultCard.prompt}
-${knowledgeGuidance}`, { toolNames: tools });
 }
 export { ProjectKnowledge } from '../knowledge/index.js';
 export type { KnowledgeRef, KnowledgeSummary, KnowledgeFreshness, KnowledgePage, KnowledgeSearch, KnowledgeRead, KnowledgeUse, KnowledgeNode, KnowledgeBrowse } from '../knowledge/index.js';

@@ -7,14 +7,14 @@ import path from 'node:path';
 import { connectMcp, loadSkill, skillTools } from '../src/extensions/index.js';
 import type { Skill } from '../src/extensions/index.js';
 import { digest } from '../src/storage/index.js';
-import { defaultCard, parseCard } from '../src/agents/card.js';
+import { parseCard } from '../src/agents/card.js';
 import type { ToolExecutionContext } from '../src/tools/registry.js';
 import { Application } from '../src/application/index.js';
-import { answer, binding, call, calls, scripted } from './helpers.js';
+import { answer, binding, call, calls, fullToolCard, scripted } from './helpers.js';
 
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); delete process.env.KODO_TEST_MCP_SECRET; delete process.env.KODO_TEST_MCP_OTHER_SECRET; });
-const context = (skills: string[] = [], signal = new AbortController().signal): ToolExecutionContext => ({ run: { card: { ...defaultCard, skills } }, signal, markEffectStarted() {} } as unknown as ToolExecutionContext);
+const context = (skills: string[] = [], signal = new AbortController().signal): ToolExecutionContext => ({ run: { card: { ...fullToolCard, skills } }, signal, markEffectStarted() {} } as unknown as ToolExecutionContext);
 async function directory(): Promise<string> { const dir = await mkdtemp(path.join(os.tmpdir(), 'kodo-ext-')); cleanup.push(() => rm(dir, { force: true, recursive: true })); return dir; }
 async function listen(server: Server): Promise<string> {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -193,7 +193,7 @@ describe('MCP durable effect integration', () => {
       res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
     });
     const url = await listen(server);
-    const app = new Application(path.join(root, '.state'), scripted(calls(call('mcp.durable.commit', {})), answer('External write requires host reconciliation.')), undefined, { agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(path.join(root, '.state'), scripted(calls(call('mcp.durable.commit', {})), answer('External write requires host reconciliation.')));
     cleanup.push(() => app.shutdown());
     await app.connectMcp({ id: 'durable', transport: 'http', url, tools: { commit: { permission: 'write', effect: 'write' } } });
     const capability = app.parseCard(card('mcp.durable.commit'));

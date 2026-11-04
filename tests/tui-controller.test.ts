@@ -332,9 +332,11 @@ describe('TUI application controller', () => {
   });
 
   it.skipIf(process.platform !== 'win32')('executes the fixed approved verify.run and persists its actual process evidence and effect state', async () => {
-    const env = setup(scripted(answer('done')), {}, {
+    const base = setup(scripted(answer('done')), {}, {
       sandbox: { network: 'none' }, verification: { enabled: true, approved: true, backend: 'native', program: process.execPath, args: ['--version'] },
     });
+    // The application default card is the one that carries the host-configured verify.run.
+    const env = { ...base, runId: base.app.createRun({ objective: 'Verify the project.', workspace: base.root, binding, permissions: ['read', 'write', 'exec'] }).id };
     await env.app.run(env.runId); await open(env);
     await env.controller.submit('/check run verify.run');
     await expect.poll(() => env.controller.snapshot().busy, { timeout: 30_000 }).toBe(false);

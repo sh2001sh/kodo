@@ -70,7 +70,7 @@ describe('endpoint model capability discovery', () => {
     const app = new Application(path.join(root, 'data'), { async complete(request) {
       expect(request.maxOutputTokens).toBe(6000);
       return answer();
-    } }, undefined, { agentFactors: { D: false, E: false, B: false } });
+    } });
     try {
       const run = await app.createRunWithDiscovery({ objective: 'test', workspace: root, binding: custom(baseURL) });
       expect(app.store.session(run.sessionId).modelLimits).toEqual({ context: 24000, output: 6000, source: 'api' });

@@ -19,10 +19,9 @@ afterEach(async () => {
   }
 });
 
-function setup(toolProfile?: 'full') {
+function setup() {
   const complete = vi.fn(async () => answer('Synthetic fixture answer.'));
-  // Exercise Application defaults unless a compatibility case requests full tools.
-  const { app, root, runId } = fixture({ complete }, ['read', 'write'], { toolProfile, taskProtocol: toolProfile === 'full' ? 1 : undefined });
+  const { app, root, runId } = fixture({ complete }, ['read', 'write']);
   const context: AgentCommandContext = {
     app, workspace: root, runId, registry: new PackageRegistry(path.join(root, '.packages')),
     startTask: vi.fn(async () => {}), wake: vi.fn(),
@@ -78,10 +77,10 @@ describe('TUI agent library after the roster removal', () => {
     expect(context.startTask).not.toHaveBeenCalled();
   });
 
-  it('no longer offers roster launch, fill, scope or retention drafts', async () => {
+  it('no longer offers roster launch, fill, scope, retention drafts or session method commands', async () => {
     const { context, app } = setup();
-    for (const command of [['run', 'example/portable', 'Do work'], ['fill', 'token', 'question', 'x'], ['scope', 'token', 'docs'], ['launch', 'token'], ['drafts'], ['drafts', 'show', 'id']]) {
-      await expect(agentCommand(context, command)).rejects.toThrow(/Unsupported agent action|Open an inline-method session/u);
+    for (const command of [['run', 'example/portable', 'Do work'], ['fill', 'token', 'question', 'x'], ['scope', 'token', 'docs'], ['launch', 'token'], ['drafts'], ['drafts', 'show', 'id'], ['methods'], ['install-method', 'method.md', '--digest', 'd'], ['disable-method', 'test/method', '--digest', 'd']]) {
+      await expect(agentCommand(context, command)).rejects.toThrow(/Unsupported agent action/u);
     }
     expect(app.store.listRuns()).toHaveLength(1);
   });

@@ -9,7 +9,7 @@ const LEGACY_EXECUTION_EVENTS = ['execution.snapshot.captured', 'execution.prepa
 const LEGACY_ROSTER_CARD = /-roster(?:-[a-f0-9]{12})?$/u;
 
 /**
- * A lean-team session predates this build: its tool profile and task-graph size
+ * A lean-team session predates this build: its tool profile and task graph size
  * budget only exist in data written by the deleted scheduler. Persisted JSON is
  * intentionally still readable (only old records can carry these fields), so the
  * gate reads the raw record shape instead of the narrowed session type.
@@ -17,6 +17,13 @@ const LEGACY_ROSTER_CARD = /-roster(?:-[a-f0-9]{12})?$/u;
 export function isLegacyLeanSession(session: Session): boolean {
   const legacy = session as unknown as Record<string, unknown>;
   return legacy.toolProfile === LEGACY_PROFILE || legacy.maxTaskNodes !== undefined;
+}
+
+/** Per-session tool profile, task protocol and A–E factor fields predate the single default configuration. */
+const LEGACY_CONFIGURATION_FIELDS = ['toolProfile', 'taskProtocol', 'agentFactors'] as const;
+export function isLegacyConfigurationSession(session: Session): boolean {
+  const legacy = session as unknown as Record<string, unknown>;
+  return LEGACY_CONFIGURATION_FIELDS.some(field => legacy[field] !== undefined);
 }
 
 /**
@@ -101,8 +108,35 @@ export function isLegacyCollaborationSession(store: Store, sessionId: string): b
   return legacy;
 }
 
+/** Session fields written only by the deleted inline-method stages. */
+const LEGACY_METHOD_FIELDS = ['inlineMethods', 'methodUnloading', 'methodTools', 'methodSkills', 'methodToolView', 'methodCards'] as const;
+/** Events only method loading, ending and checkpoint unloading could produce. */
+const LEGACY_METHOD_EVENTS = ['method.loaded', 'method.ended', 'context.methods.unloaded'] as const;
+const methodScans = new WeakMap<Store, Map<string, boolean>>();
+
+function scanLegacyMethods(store: Store, sessionId: string): boolean {
+  for (const run of store.listRuns(sessionId)) {
+    if ((run as unknown as Record<string, unknown>).taskNode !== undefined) return true;
+    if (store.hasEvent(run.id, { types: [...LEGACY_METHOD_EVENTS] })) return true;
+  }
+  return false;
+}
+
+/** Inline-method sessions: the raw session record carries a method policy, or a run used stages. */
+export function isLegacyMethodSession(store: Store, session: Session): boolean {
+  const raw = session as unknown as Record<string, unknown>;
+  if (LEGACY_METHOD_FIELDS.some(field => raw[field] !== undefined)) return true;
+  let scans = methodScans.get(store);
+  if (!scans) { scans = new Map(); methodScans.set(store, scans); }
+  const cached = scans.get(session.id);
+  if (cached !== undefined) return cached;
+  const legacy = scanLegacyMethods(store, session.id);
+  scans.set(session.id, legacy);
+  return legacy;
+}
+
 /**
- * Old isolated-checkout, lean-team, roster and collaboration-era sessions stay visible through
+ * Old isolated-checkout, lean-team, roster, collaboration and inline-method sessions stay visible through
  * read-only APIs but must not execute or create children: silently degrading them
  * to the legacy behavior would change the task's accepted semantics without the
  * author's knowledge. The product is not yet released, so the explicit
@@ -113,13 +147,19 @@ export function assertSessionCompatible(store: Store, session: Session): void {
   const lean = isLegacyLeanSession(session);
   const roster = isLegacyRosterSession(store, session.id);
   const collaboration = isLegacyCollaborationSession(store, session.id);
-  if (!execution && !lean && !roster && !collaboration) return;
+  const methods = isLegacyMethodSession(store, session);
+  const configuration = isLegacyConfigurationSession(session);
+  if (!execution && !lean && !roster && !collaboration && !methods && !configuration) return;
   const reason = execution
     ? 'This session uses the deleted isolated-checkout execution subsystem and is not compatible with this version.'
     : lean
       ? 'This session was created by the deleted lean-team task graph and is not compatible with this version.'
       : roster
         ? 'This session was created by the deleted agent-roster subsystem (roster snapshots, derived agents or retention drafts) and is not compatible with this version.'
-        : 'This session used deleted collaboration tools (explore, exploration plans, followup tasks or todo dispatch) and is not compatible with this version.';
+        : collaboration
+          ? 'This session used deleted collaboration tools (explore, exploration plans, followup tasks or todo dispatch) and is not compatible with this version.'
+          : methods
+            ? 'This session used deleted inline-method stages (card methods, task stages or method unloading) and is not compatible with this version.'
+            : 'This session was created with a per-session tool profile, task protocol or agent factors, which the single default configuration replaced; it is not compatible with this version.';
   throw new KodoError('SESSION_INCOMPATIBLE', `${reason} The product has not shipped; start a new task (use \`kodo inspect\` if the old evidence must be kept).`);
 }

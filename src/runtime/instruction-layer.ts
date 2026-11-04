@@ -9,7 +9,6 @@ import { runBudget } from './run-budget.js';
 import type { Budget, FileScope, Message, Run, Session, ToolRequest } from './types.js';
 import { KodoError } from './types.js';
 import { initialContext } from './context.js';
-import { normalizeAgentFactors } from './agent-factors.js';
 import { estimateTextTokens } from './context-tokens.js';
 import type { DiscoveryInput } from './project-instructions.js';
 import { executionSession } from './execution-workspace.js';
@@ -74,24 +73,20 @@ function discoverWithinTokens(input: DiscoveryInput, tokens?: number, trigger = 
 /** Initial assembly after the session and provisional run have been stored. */
 export function prepareInstructionContext(store: Store, run: Run, session: Session, options: { global: string | false; memory?: boolean; inherited?: RunInstructions }): { messages: Message[]; instructions: RunInstructions } {
   session = executionSession(store, run);
-  const factors = normalizeAgentFactors(session.agentFactors);
   const permissions = session.permissions.filter(permission => (run.permissions ?? session.permissions).includes(permission));
-  const base = initialContext(session.workspace, permissions, run.card, run.objective, run, undefined, { factors, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile });
-  // Inline method discovery also needs a budgeted catalog, independently of
-  // child-agent routing. B/C alone still leave instruction allocation unchanged.
-  const enabled = factors.A || !!session.inlineMethods;
-  const budgetTokens = enabled ? Math.floor(runInstructionCapacity(run, session) / bytesPerToken) : undefined;
-  const methodTokens = enabled ? instructionMessageTokens(base[1]) : 0;
-  if (budgetTokens !== undefined && methodTokens > budgetTokens) throw new KodoError('CARD_INSTRUCTION_BUDGET', `card method needs ${methodTokens} estimated tokens but the shared instruction allowance is ${budgetTokens}; shorten the card method or select a larger input capacity`);
+  const base = initialContext(session.workspace, permissions, run.card, run.objective, run);
+  const budgetTokens = Math.floor(runInstructionCapacity(run, session) / bytesPerToken);
+  const methodTokens = instructionMessageTokens(base[1]);
+  if (methodTokens > budgetTokens) throw new KodoError('CARD_INSTRUCTION_BUDGET', `card method needs ${methodTokens} estimated tokens but the shared instruction allowance is ${budgetTokens}; shorten the card method or select a larger input capacity`);
   // Project/card instructions take priority over optional session method detail. Both
   // share the same allowance with the mandatory method configuration.
   const loaded = initialInstructions(session.workspace, { ...options, capacityBytes: runInstructionCapacity(run, session), scope: run.scope,
-    cardRules: run.card.constraints?.rules ?? [], capacityTokens: budgetTokens === undefined ? undefined : Math.max(0, budgetTokens - methodTokens) });
-  const block = instructionMessage(loaded.chain, enabled ? 'initial' : undefined);
+    cardRules: run.card.constraints?.rules ?? [], capacityTokens: Math.max(0, budgetTokens - methodTokens) });
+  const block = instructionMessage(loaded.chain, 'initial');
   const ruleTokens = instructionMessageTokens(block);
-  const instructions: RunInstructions = { ...loaded.state, ...(budgetTokens === undefined ? {} : { tokenBudget: budgetTokens, reservedTokens: methodTokens, tokens: ruleTokens }) };
+  const instructions: RunInstructions = { ...loaded.state, tokenBudget: budgetTokens, reservedTokens: methodTokens, tokens: ruleTokens };
   recordInstructions(store, run.id, options.inherited ? 'inherited' : 'initial', loaded.chain);
-  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block, { factors, inlineMethods: session.inlineMethods, taskProtocol: session.taskProtocol, toolProfile: session.toolProfile }), instructions };
+  return { messages: initialContext(session.workspace, permissions, run.card, run.objective, run, block), instructions };
 }
 
 export function instructionMessage(chain: InstructionChain, trigger?: string): Message | undefined {

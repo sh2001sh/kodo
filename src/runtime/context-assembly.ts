@@ -5,7 +5,6 @@ import { historyReadPointer, parseHistoryPointer } from './view-pointers.js';
 import type { HistorySnapshot } from './context.js';
 import type { Message, Run } from './types.js';
 import type { Store } from '../storage/index.js';
-import { activeMethodMessages } from './method-context.js';
 
 /** Deterministic evidence assembly: keep focus-relevant tool evidence, hide the rest behind history pointers. */
 export interface AssemblyPolicy { strategy: 'deterministic'; workInputTokens?: number; evidenceInputTokens?: number }
@@ -64,7 +63,6 @@ export function assembleEvidence(input: {
   workInputTokens: number; evidenceInputTokens: number; fits: (messages: Message[]) => boolean; mustReduce: boolean;
 }): { messages: Message[]; assembly: ContextAssembly } | undefined {
   const { store, run, messages, groups, estimate, workInputTokens, fits } = input;
-  const profile = store.session(run.sessionId).toolProfile;
   const userFocus = messages.filter(message => message.role === 'user').slice(-6).map(message => message.content ?? '');
   const focusTerms = assemblyTerms([run.objective, ...userFocus].join('\n'), Infinity);
   if (!focusTerms.length) return;
@@ -92,8 +90,7 @@ export function assembleEvidence(input: {
       return Boolean(value.error || value.cancelled || value.outputLimitExceeded || (typeof value.exitCode === 'number' && value.exitCode !== 0));
     } catch { return false; }
   });
-  const activeMethods = activeMethodMessages(store, run, messages);
-  const candidates = toolGroups.filter(group => !recent.has(group) && !unresolved(group) && !group.some(message => activeMethods.has(message)));
+  const candidates = toolGroups.filter(group => !recent.has(group) && !unresolved(group));
   const stable = candidates.map((group, index) => {
     const restoredOffsets: number[] = [];
     const stableGroup = group.map((message): Message => {
@@ -142,7 +139,7 @@ export function assembleEvidence(input: {
           contextPreview: true,
           originalChars: message.content.length,
           coverage: 'bounded-preview',
-          read: historyReadPointer(profile, { ...read, limit: 1 }),
+          read: historyReadPointer({ ...read, limit: 1 }),
           text: excerpt(message.content, maxChars),
           note: 'Relevant evidence exceeds the current evidence budget. This bounded head/tail preview is historical data; read the original source before relying on omitted content.',
         }) };
@@ -182,7 +179,7 @@ export function assembleEvidence(input: {
         const value = JSON.parse(message.content) as Record<string, unknown>;
         metadata = Object.fromEntries(['path', 'hash', 'offset', 'contentOffset', 'next', 'truncated', 'exitCode'].filter(key => key in value).map(key => [key, value[key]]));
       } catch { /* Full body remains in the immutable archive. */ }
-      const content = JSON.stringify({ contextHidden: true, reason: 'not selected for the current deterministic evidence budget', tool: call?.name ?? (group[0]?.role === 'assistant' ? group[0].tool_calls?.find(item => item.id === message.tool_call_id)?.name : undefined), callId: call?.id ?? message.tool_call_id, status: call?.status ?? 'recorded', ...metadata, originalChars: message.content.length, coverage: 'recorded-message', read: historyReadPointer(profile, { ref: archivedRef, offset: messages.indexOf(message), limit: 1 }), note: 'Evidence left this request projection, not storage. Read the original only when it becomes relevant.' });
+      const content = JSON.stringify({ contextHidden: true, reason: 'not selected for the current deterministic evidence budget', tool: call?.name ?? (group[0]?.role === 'assistant' ? group[0].tool_calls?.find(item => item.id === message.tool_call_id)?.name : undefined), callId: call?.id ?? message.tool_call_id, status: call?.status ?? 'recorded', ...metadata, originalChars: message.content.length, coverage: 'recorded-message', read: historyReadPointer({ ref: archivedRef, offset: messages.indexOf(message), limit: 1 }), note: 'Evidence left this request projection, not storage. Read the original only when it becomes relevant.' });
       if (content.length >= message.content.length) return message;
       hiddenOffsets.push(messages.indexOf(message));
       return { role: 'tool', tool_call_id: message.tool_call_id, content };

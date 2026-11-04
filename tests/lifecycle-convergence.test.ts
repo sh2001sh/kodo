@@ -185,7 +185,7 @@ describe('lifecycle convergence and resumable turns', () => {
       { kind: 'session.start', callback: () => { lifecycle.push('start'); return { note: 'Work on the declared task.' }; } },
       { kind: 'run.stop', callback: () => ++stops === 1 ? { deny: 'Include the verified result.' } : undefined },
       { kind: 'session.end', callback: () => { lifecycle.push('end'); } },
-    ], agentFactors: { D: false, E: false, B: false } });
+    ] });
     try {
       const run = app.createRun({ objective: 'Finish the task.', workspace, binding });
       expect((await app.run(run.id)).status).toBe('completed');
@@ -200,7 +200,7 @@ describe('lifecycle convergence and resumable turns', () => {
     const app = new Application(path.join(workspace, '.state'), { async complete() { modelCalls++; return answer('verified delivery'); } }, undefined, { exploration: false, hooks: [
       { kind: 'run.stop', callback: () => ({ note: 'Formatting completed successfully.' }) },
       { kind: 'session.end', callback: () => ({ note: 'Temporary service stopped.' }) },
-    ], agentFactors: { D: false, E: false, B: false } });
+    ] });
     try {
       const created = app.createRun({ objective: 'Finish the task.', workspace, binding });
       const run = await app.run(created.id);
@@ -219,7 +219,7 @@ describe('lifecycle convergence and resumable turns', () => {
     const workspace = temp();
     const app = new Application(path.join(workspace, '.state'), scripted(answer('child result')), undefined, { exploration: false, hooks: [
       { kind: 'subagent.stop', callback: () => ({ note: 'Child validation completed.' }) },
-    ], agentFactors: { D: false, E: false, B: false } });
+    ] });
     try {
       const parent = app.createRun({ objective: 'Coordinate the task.', workspace, binding });
       app.coordinator.mailbox.execute(parent, 'spawn', 'spawn_agent', { objective: 'Complete the child task.' });

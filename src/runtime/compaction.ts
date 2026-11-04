@@ -12,7 +12,6 @@ import { chargedTokens, failureSettlement } from './usage.js';
 import { installSummary } from './summary-install.js';
 import type { HostHooks } from './hooks.js';
 import { attachment } from './attachments.js';
-import { recordMethodUnloading } from './method-context.js';
 
 export type { SummaryEnvelope, SummaryEnvelopeV1, SummaryEnvelopeV2, SummarySource } from './summary-schema.js';
 
@@ -65,7 +64,6 @@ function preserveHookNotes(input: SummaryInput, notes: string[]): void {
       maxInputTokens: current.modelLimits?.input ?? store.session(current.sessionId).modelLimits?.input,
     });
     store.updateRun(current.id, { contextRef: store.blob(built.messages) });
-    recordMethodUnloading(store, current.id, built.methodUnloading);
     if (built.archivedRef) store.event(current.id, 'context.compacted', { archivedRef: built.archivedRef, strategy: built.strategy, afterTokens: built.estimatedInputTokens });
   });
 }

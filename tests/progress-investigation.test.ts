@@ -5,8 +5,8 @@ import type { Call } from '../src/runtime/types.js';
 import { fixture } from './helpers.js';
 
 // Isolated synthetic call records exercise diagnostics without executing shell commands.
-function evidence(protocol: 1 | 2 | 3 = 3) {
-  const { app, runId } = fixture(undefined, undefined, { taskProtocol: protocol });
+function evidence() {
+  const { app, runId } = fixture();
   let index = 0;
   const record = (command: string, status: Call['status'] = 'succeeded', exitCode = 0) => {
     const call: Call = { id: `read-${index++}`, runId, step: index, kind: 'tool', name: 'shell.exec', status,
@@ -86,14 +86,6 @@ describe('investigation diagnostics for shell-based workflows', () => {
     app.coordinator.mailbox.execute(app.store.run(runId), 'delegate', 'spawn_agent', { objective: 'Synthetic bounded analysis', permissions: ['read'] });
     reads(8);
     expect(nudge()).toBeUndefined();
-  });
-
-  it.each([1, 2] as const)('preserves the legacy threshold for protocol %s', protocol => {
-    const { reads, nudge } = evidence(protocol);
-    reads(29);
-    expect(nudge()).toBeUndefined();
-    reads(1);
-    expect(nudge()?.readCalls).toBe(30);
   });
 
   it('detects repeated compound reads without demanding writes from a read-only task', () => {

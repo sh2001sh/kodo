@@ -15,7 +15,7 @@ async function run(root: string, steps: Step[]): Promise<{ app: Application; run
     requests.push(request.messages);
     return typeof step === 'function' ? step(request.messages) : step;
   }));
-  const app = new Application(path.join(root, '.state'), provider, undefined, { agentFactors: { D: false, E: false, B: false } });
+  const app = new Application(path.join(root, '.state'), provider);
   const created = app.createRun({ objective: 'Edit the files.', workspace: root, binding, permissions: ['read', 'write'] });
   const final = await app.run(created.id);
   expect(final.status, final.error).toBe('completed');

@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { collaborationTool } from '../messaging/index.js';
 import { buildContext } from './context.js';
-import { recordMethodUnloading } from './method-context.js';
 import type { ContextBuild } from './context.js';
 import { recordSkip, summarizeContext } from './compaction.js';
 import { estimateInputTokens } from './context-tokens.js';
@@ -14,11 +13,8 @@ import { contextOutputReserve, validateModelBinding } from '../providers/model-l
 import { handoffFailure } from './progress-advisor.js';
 import { repairResponse } from './response-repair.js';
 import { runBudget } from './run-budget.js';
-import { environmentBlock, leanStateFrame, stateFrame, withEnvironment } from './state-frame.js';
-import { isLeanProfile } from './tool-view.js';
-import { effectiveSession, toolSpecs } from './step-host.js';
-import { canonicalRequest } from './tool-view.js';
-import { timeHint } from './lean-prompt.js';
+import { environmentBlock, stateFrame, withEnvironment } from './state-frame.js';
+import { toolSpecs } from './step-host.js';
 import type { StepHost } from './step-host.js';
 import { chargedTokens, failureSettlement } from './usage.js';
 import { errorText, KodoError, terminal } from './types.js';
@@ -69,9 +65,6 @@ export function prepareContext(host: StepHost, runId: string, force = false): Co
       : attachment(message.from === 'runtime' && message.kind === 'event' ? 'task-notification' : 'mailbox', JSON.stringify(message), { source: message.from === 'runtime' ? 'runtime' : 'peer' }));
     const changedInstructions = refreshInstructions(store, run, session);
     if (changedInstructions) delivered.push(changedInstructions);
-    // A lean main run gets one durable closing hint per crossed time threshold.
-    const hint = isLeanProfile(session.toolProfile) ? timeHint(host, run, session) : undefined;
-    if (hint) delivered.push(hint);
     // L4 joins the frozen prefix once; a changed environment is appended after the new input.
     const context = withEnvironment(delivered, environmentBlock(host, run, session));
     const specs = toolSpecs(host, run, session);
@@ -85,7 +78,6 @@ export function prepareContext(host: StepHost, runId: string, force = false): Co
     const stateTokens = estimateInputTokens(store, run, [state], specs) - estimateInputTokens(store, run, [], specs);
     const built = buildContext(store, next, budget.maxContextChars === null ? null : Math.max(0, budget.maxContextChars - JSON.stringify(state).length - 1), specs, { maxContextTokens: budget.maxContextTokens, maxOutputTokens: contextOutputReserve(budget), maxInputTokens: Math.max(0, capacity - stateTokens), compaction, assembly: host.assembly, force });
     store.updateRun(runId, { contextRef: store.blob(built.messages), inputCursor: pending.at(-1)?.seq ?? run.inputCursor ?? 0, decisionVersion: session.decisionVersion ?? 0, waitId: undefined });
-    recordMethodUnloading(store, runId, built.methodUnloading);
     if (built.archivedRef) {
       store.event(runId, 'context.compacted', { archivedRef: built.archivedRef, previousRef: built.previousRef, originalChars: built.originalChars, compactedChars: built.compactedChars, omittedMessages: built.omittedMessages, prunedMessages: built.prunedMessages ?? 0, strategy: built.strategy, beforeTokens: built.originalInputTokens, afterTokens: built.estimatedInputTokens, workInputTokens: built.workInputTokens, triggerRatio: built.geometry?.triggerRatio, targetTokens: built.targetTokens, targetMet: built.targetMet, ...(built.hardTargetTokens ? { hardTargetTokens: built.hardTargetTokens } : {}), ...(force ? { forced: true } : {}) });
     }
@@ -115,8 +107,7 @@ async function buildRequest(host: StepHost, runId: string, signal: AbortSignal, 
   const stored = store.readBlob<Message[]>(run.contextRef);
   const hardCapacityTokens = Math.min(run.modelLimits?.input ?? session.modelLimits?.input ?? Infinity, budget.maxContextTokens - contextOutputReserve(budget));
   // Benchmark-only ablation (KODO_ABLATION=no-state): send requests without the L7 frame.
-  const lean = isLeanProfile(session.toolProfile) && !run.parentId;
-  const frame = (pressure?: Parameters<typeof stateFrame>[3]): Message | undefined => lean ? leanStateFrame(host, run, session, pressure) : stateFrame(host, run, session, pressure);
+  const frame = (pressure?: Parameters<typeof stateFrame>[3]): Message | undefined => stateFrame(host, run, session, pressure);
   const withoutState = process.env.KODO_ABLATION === 'no-state';
   let state = withoutState ? undefined : frame();
   const messages = state ? [...stored, state] : [...stored];
@@ -208,20 +199,17 @@ function recordFailure(host: StepHost, run: Run, modelCall: Call, error: unknown
 
 function recordSuccess(host: StepHost, run: Run, modelCall: Call, response: ModelResponse): void {
   const { store } = host;
-  // A renamed view call is recorded by its canonical kernel request; the model's own call is kept beside it.
-  const session = effectiveSession(run, store.session(run.sessionId));
-  const calls = (response.message.tool_calls ?? []).map(call => ({ model: call, kernel: canonicalRequest(run, session, call).request }));
+  const calls = response.message.tool_calls ?? [];
   const responseRef = store.blob(response);
-  const callRefs = calls.map(call => store.blob(call.kernel));
+  const callRefs = calls.map(call => store.blob(call));
   store.transaction(() => {
     const latest = store.session(run.sessionId);
     const measured = response.usage ? chargedTokens(response.usage, latest.budget) : modelCall.reservedTokens;
     store.putSession({ ...latest, tokens: latest.tokens - modelCall.reservedTokens + measured, usageEstimated: latest.usageEstimated || !response.usage });
     store.putCall({ ...modelCall, status: 'succeeded', resultRef: responseRef });
-    for (const [index, { model, kernel: call }] of calls.entries()) store.putCall({
+    for (const [index, call] of calls.entries()) store.putCall({
       id: `${modelCall.id}:${call.id}`, runId: run.id, step: run.step, kind: 'tool', name: call.name,
       status: 'planned', effect: host.tools.effect(call.name), effectState: 'not_started', requestRef: callRefs[index]!, reservedTokens: 0,
-      ...(model !== call ? { modelRequestRef: store.blob(model) } : {}),
       ...(!collaborationTool(call.name) ? { evidencePermission: host.tools.permission(call.name) } : {}),
       decisionVersion: modelCall.decisionVersion ?? 0,
     });

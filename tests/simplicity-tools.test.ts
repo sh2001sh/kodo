@@ -2,19 +2,24 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Application } from '../src/application/index.js';
-import { compactDefaultCard, defaultCard, simpleDefaultCard } from '../src/agents/card.js';
-import { parallelMainGuidance } from '../src/runtime/agent-factors.js';
+import { simpleDefaultCard } from '../src/agents/card.js';
+import { mainGuidance } from '../src/runtime/main-guidance.js';
 import { roleAllows } from '../src/runtime/role-view.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
-import { answer, binding, fixture, scripted, temp } from './helpers.js';
+import type { Permission } from '../src/runtime/types.js';
+import { answer, binding, fixture, fullToolCard, scripted, temp } from './helpers.js';
 
-const factors = { A: true, B: true, C: true, D: true, E: true };
 const signal = () => new AbortController().signal;
-const simple = { taskProtocol: 3 as const, toolProfile: 'compact-v2' as const, agentFactors: factors, instructions: { global: false as const } };
+/** A run on the application's single default card (the shared fixture run uses the full test card). */
+function defaultRun(permissions: Permission[]): { app: Application; root: string; runId: string } {
+  const { app, root } = fixture(undefined, permissions, { instructions: { global: false } });
+  const run = app.createRun({ objective: 'Inspect the project and provide evidence.', workspace: root, binding, permissions });
+  return { app, root, runId: run.id };
+}
 
-describe('complete coding loop with a simple tool profile', () => {
+describe('complete coding loop with the default card', () => {
   it('runs a command and collects its managed result on the main agent without delegation', async () => {
-    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], simple);
+    const { app, runId } = defaultRun(['read', 'write', 'exec']);
     const run = app.store.run(runId), session = app.store.session(run.sessionId);
     const tools = app.coordinator.tools;
     const specs = () => toolSpecs(app.coordinator, app.store.run(runId), session);
@@ -44,7 +49,7 @@ describe('complete coding loop with a simple tool profile', () => {
   });
 
   it('keeps localized edits usable beyond the whole-file replacement limit', async () => {
-    const { app, root, runId } = fixture(undefined, ['read', 'write', 'exec'], simple);
+    const { app, root, runId } = defaultRun(['read', 'write', 'exec']);
     const original = `replace-this\n${'ordinary fixture\n'.repeat(5000)}`;
     writeFileSync(path.join(root, 'large.txt'), original);
     const execute = (name: string, args: Record<string, unknown>) => app.coordinator.tools.execute(runId, name, args, signal());
@@ -56,7 +61,7 @@ describe('complete coding loop with a simple tool profile', () => {
   });
 
   it('retains native directory, rename and deletion operations when execution is unavailable', async () => {
-    const { app, root, runId } = fixture(undefined, ['read', 'write'], simple);
+    const { app, root, runId } = defaultRun(['read', 'write']);
     const run = app.store.run(runId), session = app.store.session(run.sessionId);
     const names = toolSpecs(app.coordinator, run, session).map(tool => tool.name);
     expect(names).toEqual(expect.arrayContaining(['file.list', 'file.mkdir', 'file.rename', 'file.delete']));
@@ -73,7 +78,7 @@ describe('complete coding loop with a simple tool profile', () => {
   });
 
   it('narrows a child with no exec without losing its inherited native file operations', () => {
-    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], simple);
+    const { app, runId } = defaultRun(['read', 'write', 'exec']);
     const parent = app.store.run(runId);
     const child = app.spawnAgent(parent.sessionId, { objective: 'Update the assigned file.', permissions: ['read', 'write'], scope: { read: ['.'], write: ['result.txt'] } });
     expect(child.card.digest).toBe(parent.card.digest);
@@ -86,8 +91,8 @@ describe('complete coding loop with a simple tool profile', () => {
   });
 
   it('keeps explicitly configured specialist and custom-card capabilities', () => {
-    const custom = { card: { ...defaultCard, id: 'custom/member' }, permissions: ['read', 'write', 'exec'] as const };
-    const session = { toolProfile: 'compact-v2' as const, agentFactors: factors, permissions: ['read', 'write', 'exec'] as const };
+    const custom = { card: { ...fullToolCard, id: 'custom/member' }, permissions: ['read', 'write', 'exec'] as const };
+    const session = { permissions: ['read', 'write', 'exec'] as const };
     for (const name of ['shell.exec', 'file.list', 'artifact.write', 'history.search', 'web.fetch', 'lsp.references', 'agent.route']) {
       expect(roleAllows({ ...custom, permissions: [...custom.permissions] }, { ...session, permissions: [...session.permissions] }, name)).toBe(true);
     }
@@ -97,30 +102,25 @@ describe('complete coding loop with a simple tool profile', () => {
     expect(roleAllows(configured, { ...session, permissions: [...session.permissions] }, 'update_progress')).toBe(false);
   });
 
-  it('keeps the compact and simple identities distinct', () => {
-    expect(simpleDefaultCard.id).not.toBe(compactDefaultCard.id);
-    expect(compactDefaultCard.version).toBe('1.2.0');
+  it('keeps the single default identity and complete-loop main guidance', () => {
+    expect(simpleDefaultCard.id).toBe('builtin/general-simple');
     expect(simpleDefaultCard.version).toBe('1.4.0');
-    expect(roleAllows({ card: compactDefaultCard }, { toolProfile: 'compact-v1', agentFactors: factors }, 'shell.exec')).toBe(false);
-    for (const taskProtocol of [1, 2, 3] as const) {
-      const guidance = parallelMainGuidance(factors, taskProtocol, 'compact-v2');
-      expect(guidance).toContain('Do not create a child solely to run a command');
-      expect(guidance).not.toContain('Command and specialist tools are assigned');
-      // 1d: the todo paragraph is the same plain checklist for every task protocol.
-      expect(guidance).toContain('Independent items may be in_progress together.');
-      for (const removed of ['keep only one item in_progress', 'dependsOn', 'todoId']) expect(guidance).not.toContain(removed);
-    }
+    expect(roleAllows({ card: simpleDefaultCard }, { permissions: ['read', 'write', 'exec'] }, 'shell.exec')).toBe(true);
+    expect(mainGuidance).toContain('Do not create a child solely to run a command');
+    expect(mainGuidance).not.toContain('Command and specialist tools are assigned');
+    // 1d: the todo paragraph is a plain checklist.
+    expect(mainGuidance).toContain('Independent items may be in_progress together.');
+    for (const removed of ['keep only one item in_progress', 'dependsOn', 'todoId']) expect(mainGuidance).not.toContain(removed);
   });
 
-  it('persists the new default tool view across reopening with legacy host defaults', async () => {
+  it('persists the default tool view across reopening', async () => {
     const root = temp(), directory = path.join(root, '.state');
     const app = new Application(directory, scripted(answer()), undefined, { instructions: { global: false } });
     const run = app.createRun({ objective: 'Preserve a complete coding loop.', workspace: root, binding, permissions: ['read', 'write', 'exec'] });
     const session = app.store.session(run.sessionId);
     const before = toolSpecs(app.coordinator, run, session);
-    expect(session).toMatchObject({ taskProtocol: 3, toolProfile: 'compact-v2' });
     await app.shutdown();
-    const reopened = new Application(directory, scripted(answer()), undefined, { taskProtocol: 1, toolProfile: 'full', instructions: { global: false } });
+    const reopened = new Application(directory, scripted(answer()), undefined, { instructions: { global: false } });
     try {
       const restored = reopened.store.run(run.id);
       expect(toolSpecs(reopened.coordinator, restored, reopened.store.session(session.id))).toEqual(before);

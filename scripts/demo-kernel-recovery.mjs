@@ -65,7 +65,7 @@ capabilities:
 Read the evidence files, then retrieve the original identifier through history.read after compaction.
 `);
   // This stage exercises deterministic archive retrieval; it does not script a summary model.
-  app = new Application(dataDir, contextProvider(), undefined, { compaction: false, agentFactors: { D: false, E: false } });
+  app = new Application(dataDir, contextProvider(), undefined, { compaction: false });
   const contextRun = app.createRun({ objective: 'Read nine evidence files and retrieve the original evidence from compacted history.', workspace, binding, card, budget: { maxTokens: 300_000, maxModelCalls: 30 } });
   const contextSession = app.store.session(contextRun.sessionId);
   const tools = [...app.coordinator.tools.specs(card.tools, contextSession), ...app.coordinator.mailbox.specs(contextRun)];
@@ -90,8 +90,20 @@ Read the evidence files, then retrieve the original identifier through history.r
     if (modelCalls === 2) return answer('The external effect needs independent verification before completion.');
     expect(JSON.stringify(request.messages).includes('Verified external-effect.txt'), 'continuation did not receive verified recovery evidence');
     return answer('External effect verified; completed without replay.');
-  } }, undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { B: false, D: false, E: false } });
-  const external = app.createRun({ objective: 'Apply one external effect and report.', workspace, binding, permissions: ['read', 'exec'], budget: { maxTokens: 200_000 } });
+  } });
+  // The default card has no process.exec; this stage declares the managed process tool explicitly.
+  const execCard = parseCard(`---
+schema_version: 1
+id: demo/external-effect
+version: 0.1.0
+name: External effect demonstration
+description: Apply one managed external effect.
+capabilities:
+  tools: [file.read, process.exec]
+---
+Apply the requested external effect once and report its verified outcome.
+`);
+  const external = app.createRun({ objective: 'Apply one external effect and report.', workspace, binding, card: execCard, permissions: ['read', 'exec'], budget: { maxTokens: 200_000 } });
   const execute = app.coordinator.tools.execute.bind(app.coordinator.tools);
   app.coordinator.tools.execute = async (...args) => {
     // Preserve effect-start evidence while withholding the normal result commit.
@@ -131,7 +143,7 @@ Read the evidence files, then retrieve the original identifier through history.r
     if (patchModels++ === 0) return call('file.apply_patch', { path: 'patch-effect.txt', expectedHash: null, content: 'verified patch effect' });
     if (patchModels === 2) return answer('The native file effect needs hash verification before completion.');
     return answer('Patch hash verified; completed without replay.');
-  } }, undefined, { agentFactors: { B: false, D: false, E: false } });
+  } });
   const patch = app.createRun({ objective: 'Create one patch and report.', workspace, binding, permissions: ['read', 'write'], budget: { maxTokens: 200_000 } });
   const patchExecute = app.coordinator.tools.execute.bind(app.coordinator.tools);
   app.coordinator.tools.execute = async (...args) => {

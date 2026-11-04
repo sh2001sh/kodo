@@ -2,7 +2,6 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { KodoError } from '../runtime/types.js';
-import type { AgentFactors } from '../runtime/agent-factors.js';
 import { validateAssemblyPolicy, validateCompactionPolicy } from '../runtime/context.js';
 import type { AssemblyPolicy, CompactionPolicy } from '../runtime/context.js';
 import type { SandboxPolicy } from '../sandbox/index.js';
@@ -16,27 +15,6 @@ import type { VerificationPolicy } from '../tools/verify.js';
 
 export interface CliToolPolicy { shellProgram?: string; webFetch?: WebFetchPolicy; lsp?: LspOptions }
 
-export interface CliAgentPolicy {
-  agentFactors?: AgentFactors;
-}
-
-export function validateAgentPolicy(policy: CliAgentPolicy | undefined): void {
-  if (policy === undefined) return;
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy) || Object.keys(policy).some(key => !['agentFactors'].includes(key))) throw new KodoError('CLI_HOST_STATE', 'invalid agent policy');
-  if (policy.agentFactors !== undefined && (!policy.agentFactors || typeof policy.agentFactors !== 'object' || Array.isArray(policy.agentFactors) || Object.entries(policy.agentFactors).some(([key, value]) => !['A', 'B', 'C', 'D', 'E'].includes(key) || typeof value !== 'boolean'))) throw new KodoError('ARGUMENTS', 'agent factors must contain boolean A, B, C, D and E values');
-}
-
-export function cliAgentPolicy(values: Record<string, unknown>): CliAgentPolicy | undefined {
-  const policy: CliAgentPolicy = {};
-  if (values['agent-factors'] !== undefined) {
-    const factors = values['agent-factors'];
-    if (typeof factors !== 'string' || !/^(?:none|[ABCDE](?:,[ABCDE])*)$/.test(factors)) throw new KodoError('ARGUMENTS', '--agent-factors must be none or comma-separated A,B,C,D,E');
-    policy.agentFactors = { A: factors.split(',').includes('A'), B: factors.split(',').includes('B'), C: factors.split(',').includes('C'), D: factors.split(',').includes('D'), E: factors.split(',').includes('E') };
-  }
-  validateAgentPolicy(policy);
-  return Object.keys(policy).length ? policy : undefined;
-}
-
 export interface CliHostSession {
   sessionId: string;
   runIds: string[];
@@ -47,20 +25,23 @@ export interface CliHostSession {
   tools?: CliToolPolicy;
   compaction?: CompactionPolicy | false;
   assembly?: AssemblyPolicy;
-  inlineMethods?: boolean;
-  methodUnloading?: boolean; methodToolView?: 'stable' | 'active';
   memory?: boolean;
   lazyTools?: boolean;
   verification?: VerificationPolicy;
-  agents?: CliAgentPolicy;
   package?: { id: string; version: string; digest: string; stdioWrite: boolean; stdioNetwork: 'none' | 'allow' };
 }
+const legacyMethodFields = ['inlineMethods', 'methodUnloading', 'methodToolView'];
+/** Agent factor, retention and project-root policies belonged to deleted subsystems. */
+const legacyAgentField = 'agents';
 /** Local host bindings are deliberately kept out of portable package contents. */
 export function readHostState(directory: string): CliHostSession[] {
   let parsed: unknown;
   try { parsed = JSON.parse(readFileSync(path.join(directory, 'cli-host.json'), 'utf8')); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw new KodoError('CLI_HOST_STATE', 'cannot read local execution bindings'); }
-  const fields = new Set(['sessionId', 'runIds', 'questionIds', 'tuiApproval', 'sandbox', 'tools', 'compaction', 'assembly', 'inlineMethods', 'methodUnloading', 'methodToolView', 'memory', 'lazyTools', 'verification', 'agents', 'package']);
+  // Sessions saved with the deleted inline-method policy cannot resume under this build.
+  if (Array.isArray(parsed) && parsed.some(item => item && typeof item === 'object' && legacyMethodFields.some(key => key in item))) throw new KodoError('CLI_HOST_STATE', 'saved inline-method policy (inlineMethods, methodUnloading, methodToolView) belongs to deleted method stages; start a new task');
+  if (Array.isArray(parsed) && parsed.some(item => item && typeof item === 'object' && legacyAgentField in item)) throw new KodoError('CLI_HOST_STATE', 'saved agent policy (agent factors, retention or project roots) belongs to deleted subsystems; start a new task, or use kodo inspect to read the old session');
+  const fields = new Set(['sessionId', 'runIds', 'questionIds', 'tuiApproval', 'sandbox', 'tools', 'compaction', 'assembly', 'memory', 'lazyTools', 'verification', 'package']);
   if (!Array.isArray(parsed) || parsed.some(item => !item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some(key => !fields.has(key)) || typeof item.sessionId !== 'string' || !Array.isArray(item.runIds) || item.runIds.some((id: unknown) => typeof id !== 'string') || !Array.isArray(item.questionIds) || item.questionIds.some((id: unknown) => typeof id !== 'string') || (item.sandbox && !['none', 'allow'].includes(item.sandbox.network)) || (item.package && (typeof item.package.id !== 'string' || typeof item.package.version !== 'string' || !/^[a-f0-9]{64}$/.test(item.package.digest) || typeof item.package.stdioWrite !== 'boolean' || !['none', 'allow'].includes(item.package.stdioNetwork))))) throw new KodoError('CLI_HOST_STATE', 'invalid local execution bindings');
   for (const item of parsed as CliHostSession[]) {
     if (item.tuiApproval !== undefined && typeof item.tuiApproval !== 'boolean') throw new KodoError('CLI_HOST_STATE', 'tuiApproval must be a boolean');
@@ -71,19 +52,8 @@ export function readHostState(directory: string): CliHostSession[] {
     validateToolPolicy(item.tools);
     validateCompactionPolicy(item.compaction === false ? undefined : item.compaction);
     validateAssemblyPolicy(item.assembly);
-    if (item.methodToolView !== undefined && (!item.inlineMethods || !['stable', 'active'].includes(item.methodToolView))) throw new KodoError('CLI_HOST_STATE', 'invalid method tool view');
-    if (item.inlineMethods !== undefined && typeof item.inlineMethods !== 'boolean' || item.methodUnloading !== undefined && (typeof item.methodUnloading !== 'boolean' || !item.inlineMethods)) throw new KodoError('CLI_HOST_STATE', 'invalid method loading policy');
     if ((item.memory !== undefined && typeof item.memory !== 'boolean') || (item.lazyTools !== undefined && typeof item.lazyTools !== 'boolean')) throw new KodoError('CLI_HOST_STATE', 'memory and lazyTools must be booleans');
     validateVerificationPolicy(item.verification);
-    // Older host-state files may still carry the deleted agentRetention and
-    // projectRoots policy fields. They are read-only history: drop them silently
-    // instead of rejecting an otherwise resumable session.
-    if (item.agents !== undefined) {
-      const { agentRetention: _retention, projectRoots: _roots, ...remaining } = item.agents as CliAgentPolicy & Record<string, unknown>;
-      void _retention; void _roots;
-      validateAgentPolicy(remaining);
-      item.agents = remaining;
-    } else validateAgentPolicy(item.agents);
   }
   return parsed as CliHostSession[];
 }

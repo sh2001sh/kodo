@@ -1,28 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
-import { methodCatalogDigest, methodSkillId, sessionMethodCards } from '../src/extensions/methods.js';
-import { parseCard } from '../src/agents/card.js';
 import { storageTestConnection } from '../src/storage/test-access.js';
 import { answer, binding, call, calls, fixture, scripted, temp } from './helpers.js';
 
 function caught(action: () => unknown): unknown {
   try { void action(); return undefined; } catch (error) { return error; }
 }
-
-const inlineCard = (id = 'test/method') => parseCard(`---
-schema_version: 2
-id: ${id}
-version: 1.0.0
-name: Method fixture
-description: Inspect the supplied material.
-catalog: {path: tests/method}
-routing: {use_when: [Inspect material], mode: read}
-capabilities: {tools: [file.read]}
-execution: {modes: [inline]}
----
-Inspect the supplied material and report observed facts.
-`);
 
 describe('batch 1c guarantee: children inherit the parent card and a permission subset', () => {
   it('inherits the parent card, narrows permissions only, and rejects removed card selectors', () => {
@@ -61,42 +45,6 @@ describe('batch 1c guarantee: same-response spawn write scopes are validated as 
       expect(result.error).toContain('WRITE_SCOPE_CONFLICT');
       expect(result.error).toContain('no child was created');
     }
-  });
-});
-
-describe('batch 1c guarantee: the method catalog is session-scoped', () => {
-  it('publishes into session.methodCards and keeps Card.execution.modes as the compatibility gate', async () => {
-    const root = temp();
-    const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { inlineMethods: true, instructions: { global: false } });
-    try {
-      const method = inlineCard();
-      app.registerCard(method);
-      const run = app.createRun({ objective: 'Inspect figures.', workspace: root, binding });
-      const session = app.store.session(run.sessionId);
-      expect(session.methodCards).toEqual([]);
-      expect(methodCatalogDigest(session.methodCards)).toBe(methodCatalogDigest([]));
-      const revised = app.updateSessionMethods(run.id, { expectedDigest: methodCatalogDigest(session.methodCards), install: [method] });
-      const updated = app.store.session(run.sessionId);
-      expect(updated.methodCards).toEqual([{ id: method.id, version: method.version, digest: method.digest }]);
-      expect(revised.digest).toBe(methodCatalogDigest(updated.methodCards));
-      expect(sessionMethodCards(app.store, updated)).toMatchObject([{ card: { id: method.id, digest: method.digest } }]);
-      expect(methodSkillId(method)).toContain('card-method/');
-      // A card without inline execution cannot enter the session method catalog.
-      const childOnly = parseCard(`---
-schema_version: 2
-id: test/child-only
-version: 1.0.0
-name: Child only
-description: Runs as a child.
-catalog: {path: tests/child}
-routing: {use_when: [Implement], mode: write}
-capabilities: {tools: [file.read]}
-execution: {modes: [child]}
----
-Implement the assigned change.
-`);
-      expect(caught(() => app.updateSessionMethods(run.id, { expectedDigest: revised.digest, install: [childOnly] }))).toMatchObject({ code: 'METHOD_CONFIG' });
-    } finally { await app.shutdown(); }
   });
 });
 

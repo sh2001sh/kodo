@@ -6,7 +6,7 @@ import { ChatCompletionsProvider } from '../src/providers/openai.js';
 import { ResponsesProvider } from '../src/providers/responses.js';
 import { AnthropicProvider } from '../src/providers/anthropic.js';
 import { delta, mockServer, sendStream } from './http-server.js';
-import { temp } from './helpers.js';
+import { fullToolCard, temp } from './helpers.js';
 
 afterEach(() => { delete process.env.KODO_HTTP_TEST_KEY; });
 const binding = (baseURL: string) => ({ limits: { context: 256_000, output: 8192 }, baseURL, model: 'test-model', apiKeyEnv: 'KODO_HTTP_TEST_KEY' });
@@ -64,9 +64,9 @@ describe('Chat Completions SDK adapter', () => {
     });
     const root = temp();
     let visibleText = '';
-    const app = new Application(path.join(root, 'state'), new ChatCompletionsProvider(), (_id, text) => { visibleText += text; }, { toolProfile: 'full', taskProtocol: 2 });
+    const app = new Application(path.join(root, 'state'), new ChatCompletionsProvider(), (_id, text) => { visibleText += text; });
     try {
-      const run = app.createRun({ objective: 'test', workspace: root, binding: binding(url), permissions: ['read', 'write'] });
+      const run = app.createRun({ objective: 'test', workspace: root, binding: binding(url), permissions: ['read', 'write'], card: fullToolCard });
       const result = await app.coordinator.wake(run.id);
       expect(result.status).toBe('completed');
       expect(rounds).toBe(2);

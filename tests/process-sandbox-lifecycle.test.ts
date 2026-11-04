@@ -5,7 +5,7 @@ import { Application } from '../src/application/index.js';
 import { runProcess } from '../src/tools/index.js';
 import { KodoError } from '../src/runtime/types.js';
 import type { SandboxOptions } from '../src/sandbox/index.js';
-import { answer, binding, call, calls, fixture, scripted, temp } from './helpers.js';
+import { answer, binding, call, calls, fixture, fullToolCard, scripted, temp } from './helpers.js';
 
 const state = vi.hoisted(() => ({ prepareError: undefined as Error | undefined, cleanupError: undefined as Error | undefined, cleaned: 0, preparations: [] as SandboxOptions[] }));
 // This fixture exercises lifecycle ordering; native enforcement has its own live tests.
@@ -47,9 +47,9 @@ describe('process sandbox lifecycle', () => {
   });
   it('preserves a write as unknown when sandbox cleanup fails after it happened', async () => {
     const workspace = temp();
-    const app = new Application(temp(), scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').writeFileSync('marker','applied')"] })), answer()), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false, B: false }, sandbox: {} });
+    const app = new Application(temp(), scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').writeFileSync('marker','applied')"] })), answer()), undefined, { sandbox: {} });
     try {
-      const run = app.createRun({ objective: 'write marker', workspace, binding, permissions: ['read', 'write', 'exec'] });
+      const run = app.createRun({ objective: 'write marker', workspace, binding, permissions: ['read', 'write', 'exec'], card: fullToolCard });
       state.cleanupError = new KodoError('SANDBOX_CLEANUP', 'test recovery journal retained');
       expect((await app.run(run.id)).error).toContain('UNKNOWN_WRITE');
       expect(readFileSync(path.join(workspace, 'marker'), 'utf8')).toBe('applied');
@@ -59,9 +59,9 @@ describe('process sandbox lifecycle', () => {
     } finally { await app.shutdown(); }
   });
   it('keeps the store open while an actual native write process is still running', async () => {
-    const workspace = temp(); const app = new Application(temp(), undefined, undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
+    const workspace = temp(); const app = new Application(temp());
     try {
-      const run = app.createRun({ objective: 'native lifecycle', workspace, binding, permissions: ['read', 'write', 'exec'] });
+      const run = app.createRun({ objective: 'native lifecycle', workspace, binding, permissions: ['read', 'write', 'exec'], card: fullToolCard });
       const pending = app.coordinator.tools.execute(run.id, 'process.exec', { program: process.execPath, args: ['-e', 'setTimeout(()=>{},200)'] }, new AbortController().signal);
       await vi.waitFor(() => expect(app.coordinator.tools.hasPendingEffects()).toBe(true));
       expect(() => app.close()).toThrow('still running');

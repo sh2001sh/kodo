@@ -9,7 +9,7 @@ import type { CliHostSession } from './host-state.js';
 import { hasModelCredentials } from './config-binding.js';
 
 type Policy = Omit<CliHostSession, 'sessionId' | 'runIds' | 'questionIds' | 'package' | 'tuiApproval'>;
-const keys = ['sandbox', 'tools', 'agents', 'compaction', 'assembly', 'inlineMethods', 'methodUnloading', 'methodToolView', 'memory', 'lazyTools', 'verification'] as const;
+const keys = ['sandbox', 'tools', 'compaction', 'assembly', 'memory', 'lazyTools', 'verification'] as const;
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)])) : value;
 
@@ -79,7 +79,7 @@ export function createCliTuiOptions(input: {
       const session = app.store.session(run.sessionId);
       if (path.resolve(session.workspace) !== path.resolve(options.workspace)) throw new KodoError('CAPABILITY_CHANGED', 'This session belongs to another workspace. Restart with its original --workspace.');
       const saved = state.find(item => item.sessionId === run.sessionId);
-      if (!saved || !matchingTuiPolicy(saved, policy)) throw new KodoError('CAPABILITY_CHANGED', 'Resume requires the original host configuration. Restart with the same sandbox, tools, agents and compaction settings.');
+      if (!saved || !matchingTuiPolicy(saved, policy)) throw new KodoError('CAPABILITY_CHANGED', 'Resume requires the original host configuration. Restart with the same sandbox, tools and compaction settings.');
       if (saved.package) {
         if (!activate) throw new KodoError('CAPABILITY_CHANGED', 'This host cannot reattach the original capability package.');
         if (saved.package.stdioWrite !== (input.stdioWrite ?? false) || saved.package.stdioNetwork !== (policy.sandbox?.network ?? 'none')) throw new KodoError('CAPABILITY_CHANGED', 'Resume requires the original package stdio permissions. Restart with the same --allow-write and sandbox network settings.');

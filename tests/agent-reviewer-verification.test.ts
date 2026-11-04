@@ -32,7 +32,6 @@ describe('reviewer host-approved verification', () => {
       },
     ), undefined, {
       exploration: false, lockDirectory: false, lazyTools: false,
-      toolProfile: 'compact-v1', taskProtocol: 2,
       instructions: { global: false }, sandbox: { network: 'none' },
       verification: {
         enabled: true, approved: true, backend: 'native', program: process.execPath,

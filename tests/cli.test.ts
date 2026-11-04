@@ -5,12 +5,12 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { Application } from '../src/application/index.js';
 import { delta, mockServer, sendStream } from './http-server.js';
-import { answer, call, calls, scripted, temp } from './helpers.js';
+import { answer, call, calls, fullToolCard, scripted, temp } from './helpers.js';
 
 const entry = fileURLToPath(new URL('../dist/cli/index.js', import.meta.url));
 function fixtureLimits(args: string[]): string[] {
-  // Scripted tool sequences use the explicit pre-handoff baseline; default-policy tests opt out.
-  return [...(args.includes('--max-context-tokens') ? [] : ['--max-context-tokens', '256000']), ...(args.includes('--max-output-tokens') ? [] : ['--max-output-tokens', '8192']), ...(args.includes('--agent-factors') ? [] : ['--agent-factors', 'A,B,C']), ...(args.includes('--tool-profile') ? [] : ['--tool-profile', 'full']), ...(args.includes('--task-protocol') ? [] : ['--task-protocol', '1'])];
+  // Scripted fixtures declare explicit model limits; the single default configuration has no other selectors.
+  return [...(args.includes('--max-context-tokens') ? [] : ['--max-context-tokens', '256000']), ...(args.includes('--max-output-tokens') ? [] : ['--max-output-tokens', '8192'])];
 }
 function chat(args: string[], env: Record<string, string> = {}) {
   args = [...args, ...fixtureLimits(args)];
@@ -45,25 +45,26 @@ async function cli(args: string[], env: Record<string, string> = {}, declareFixt
   });
 }
 describe('built CLI end to end', () => {
-  it('rejects the removed lean-team tool profile before creating runtime state', async () => {
-    const result = await cli(['run', 'Inspect the fixture.', '--tool-profile', 'lean-team']);
-    expect(result.code).not.toBe(0);
-    expect(result.err).toContain('--tool-profile must be compact-v1, compact-v2, full or lean-solo');
+  it('no longer accepts the removed tool-profile, task-protocol and agent-factors options', async () => {
+    for (const option of [['--tool-profile', 'full'], ['--tool-profile', 'lean-team'], ['--task-protocol', '1'], ['--agent-factors', 'A,B,C']]) {
+      const result = await cli(['run', 'Inspect the fixture.', ...option, '--data-dir', temp()]);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('ARGUMENTS');
+    }
   });
 
-  it.each([undefined, 'A,B,C'])('persists default or explicitly selected role factors (%s)', async factors => {
+  it('persists no per-session tool profile, task protocol or agent factors', async () => {
     const root = temp();
     const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'Configuration recorded.' }), delta({}, 'stop')]));
     const data = path.join(root, 'state');
     const result = await cli(['run', 'Record the selected configuration.', '--json', '--workspace', root, '--data-dir', data,
-      '--model', 'test', '--base-url', url, '--max-context-tokens', '256000', '--max-output-tokens', '8192',
-      ...(factors === undefined ? [] : ['--agent-factors', factors])], { KODO_API_KEY: 'fixture' }, false);
+      '--model', 'test', '--base-url', url, '--max-context-tokens', '256000', '--max-output-tokens', '8192'], { KODO_API_KEY: 'fixture' }, false);
     expect(result.code, result.err).toBe(0);
     const app = new Application(data);
     try {
       const run = app.store.listRuns()[0]!;
-      expect(app.store.session(run.sessionId).agentFactors).toEqual({ A: true, B: true, C: true, D: factors === undefined, E: factors === undefined });
-      expect(app.store.session(run.sessionId)).toMatchObject({ taskProtocol: 3, toolProfile: 'compact-v2' });
+      for (const field of ['toolProfile', 'taskProtocol', 'agentFactors']) expect(app.store.session(run.sessionId)).not.toHaveProperty(field);
+      expect(run.card).toMatchObject({ id: 'builtin/general-simple', version: '1.4.0' });
     } finally { await app.shutdown(); }
   });
 
@@ -228,7 +229,7 @@ describe('built CLI end to end', () => {
     const app = new Application(root);
     try {
       const run = app.store.listRuns()[0]!;
-      expect(app.store.session(run.sessionId).agentFactors).toMatchObject({ D: true, E: true });
+      expect(app.store.session(run.sessionId)).not.toHaveProperty('agentFactors');
     } finally { await app.shutdown(); }
   });
 
@@ -283,6 +284,16 @@ describe('built CLI end to end', () => {
     expect(result.err).toContain('MODEL_CREDENTIAL');
     expect(result.out).toBe('');
     expect((await cli(['unknown'])).code).toBe(1);
+  });
+  it('no longer accepts the deleted inline-method options or the methods command', async () => {
+    for (const args of [['run', 'task', '--inline-methods'], ['run', 'task', '--method-unloading', 'off'], ['run', 'task', '--method-tool-view', 'stable'], ['inspect', 'id', '--digest', 'd'], ['inspect', 'id', '--disable', 'x']]) {
+      const result = await cli([...args, '--data-dir', temp()]);
+      expect(result.code).toBe(1);
+      expect(result.err).toContain('ARGUMENTS');
+    }
+    const methods = await cli(['methods', 'run-id', '--data-dir', temp()]);
+    expect(methods.code).toBe(1);
+    expect(methods.err).toContain('COMMAND');
   });
   it('rejects misplaced options and malformed numeric limits', async () => {
     for (const args of [['run', 'task', '--follow-up'], ['inspect', 'id', '--model', 'ignored'], ['inspect', 'id', '--protocol', 'responses'], ['run', 'task', '--text', 'ignored'], ['answer', 'question'], ['chat', 'task', '--json'], ['doctor', 'extra'], ['run', 'task', '--unknown'], ['resolve', 'id'], ['resolve', 'id', '--call-id', 'call', '--outcome', 'force', '--evidence', 'checked'], ['resolve', 'id', '--call-id', 'call', '--outcome', 'succeeded', '--evidence', ' '], ['resolve', 'id', '--call-id', 'call', '--outcome', 'not_applied', '--evidence', 'verified file is absent'], ['resolve', 'id', '--call-id', 'call', '--outcome', 'succeeded', '--evidence', 'verified file exists', '--retry'], ['reconcile', 'id', '--evidence', 'ignored'], ['resume', 'id', '--force']]) {
@@ -452,7 +463,7 @@ describe('built CLI end to end', () => {
     const url = await mockServer((_body, response) => {
       requests++;
       sendStream(response, requests === 1 ? [
-        delta({ tool_calls: [{ index: 0, id: 'report-call', function: { name: 'artifact_write', arguments: '{"name":"report","content":"actual tool evidence"}' } }] }),
+        delta({ tool_calls: [{ index: 0, id: 'report-call', function: { name: 'file_apply_patch', arguments: '{"path":"report.md","expectedHash":null,"content":"actual tool evidence"}' } }] }),
         delta({}, 'tool_calls'),
       ] : [delta({ content: 'done from local protocol fixture' }), delta({}, 'stop')]);
     });
@@ -469,6 +480,7 @@ describe('built CLI end to end', () => {
     const inspection = await cli(['inspect', events[0]!.runId, '--json', '--data-dir', path.join(root, 'state')]);
     expect(inspection.code).toBe(0);
     expect(JSON.parse(inspection.out)).toMatchObject({ run: { status: 'completed' } });
+    expect(readFileSync(path.join(root, 'report.md'), 'utf8')).toBe('actual tool evidence');
     expect(requests).toBe(2);
   });
   it('exits with failure on an incomplete provider stream', async () => {
@@ -521,8 +533,8 @@ describe('built CLI end to end', () => {
     });
     const root = temp();
     const data = path.join(root, 'state');
-    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('effect.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
-    const run = app.createRun({ objective: 'append exactly once and report evidence', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 } });
+    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('effect.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), );
+    const run = app.createRun({ objective: 'append exactly once and report evidence', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 }, card: fullToolCard });
     await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Append the controlled effect once and verify its result', status: 'in_progress' }] }, new AbortController().signal);
     const session = app.store.session(run.sessionId);
     app.store.putSession({ ...session, verificationCommand: { program: process.execPath, args: ['-e', 'console.log("recovery verification")'] } });
@@ -572,8 +584,8 @@ describe('built CLI end to end', () => {
     const url = await mockServer((_body, response) => sendStream(response, [delta({ content: 'controlled retry completed' }), delta({}, 'stop')]));
     const root = temp();
     const data = path.join(root, 'state');
-    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('retry.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false } });
-    const run = app.createRun({ objective: 'apply controlled effect', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 } });
+    const app = new Application(data, scripted(calls(call('process.exec', { program: process.execPath, args: ['-e', "require('node:fs').appendFileSync('retry.txt','once\\n')"] })), answer('The external effect needs independent verification before completion.')), );
+    const run = app.createRun({ objective: 'apply controlled effect', workspace: root, permissions: ['read', 'exec'], binding: { model: 'fixture', baseURL: url, apiKeyEnv: 'KODO_API_KEY', limits: { context: 256000, output: 8192 } }, budget: { maxTokens: 200_000 }, card: fullToolCard });
     await app.coordinator.tools.execute(run.id, 'todo.write', { expectedRevision: 0, items: [{ id: 'effect', content: 'Apply the controlled effect only after verification or explicit retry authorization', status: 'in_progress' }] }, new AbortController().signal);
     let uncertainCall: string;
     try {

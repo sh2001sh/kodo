@@ -3,7 +3,6 @@ import { collaborationTool } from '../messaging/index.js';
 import { recoveryHistoryRuns } from './history.js';
 import { workspacesOverlap } from './paths.js';
 import { childCompletionState } from './child-completion.js';
-import { taskGraphCompletionState } from './task-completion.js';
 import { runWorkspace } from './execution-workspace.js';
 import { abortable } from './step-host.js';
 import type { StepHost } from './step-host.js';
@@ -75,18 +74,15 @@ function requestCorrection(host: StepHost, run: Run, response: ModelResponse, fe
 export async function checkCompletion(host: StepHost, run: Run, response: ModelResponse, signal: AbortSignal): Promise<StepOutcome> {
   const { store } = host;
   const children = childCompletionState(store, run);
-  const graph = !run.parentId && store.session(run.sessionId).inlineMethods ? taskGraphCompletionState(store, run.id) : undefined;
-  const taskGraphStamp = graph ? { taskGraphStamp: graph.fingerprint } : {};
   const text = response.message.content ?? '';
   const delivery = { required: run.finalResponse !== 'optional', passed: run.finalResponse === 'optional' || text.trim().length > 0 };
   const deliveryResult = { status: delivery.required ? 'passed' : 'not_required', ...(run.deliveryIncomplete?.length ? { incompleteDeliverables: run.deliveryIncomplete } : {}) };
   const childResult = children.result ? { children: children.result } : {};
-  const graphResult = graph ? { taskGraph: { dropped: graph.dropped } } : {};
-  const unchecked = (): StepOutcome => ({ kind: 'complete', ...taskGraphStamp, resultRef: store.blob({ text, delivery: deliveryResult, verification: 'model output; consult tool records for evidence', quality: { status: 'not_checked' }, ...childResult, ...graphResult }) });
+  const unchecked = (): StepOutcome => ({ kind: 'complete', resultRef: store.blob({ text, delivery: deliveryResult, verification: 'model output; consult tool records for evidence', quality: { status: 'not_checked' }, ...childResult }) });
   if (store.inbox(run.id).length) return unchecked();
   const unresolved = unresolvedCompletionWrites(host, run);
   if (unresolved.length) return { kind: 'fail', error: `UNKNOWN_WRITE: reconcile unsettled effects before completing this task: ${unresolved.map(call => call.id).join(', ')}` };
-  if (children.active.length && !children.interrupted.length && graph?.decision !== 'feedback') {
+  if (children.active.length && !children.interrupted.length) {
     // Ordinary child progress is not a failed deliverable. Reuse durable waits,
     // retaining the candidate and advancing the model step exactly once.
     return store.transaction(() => {
@@ -101,23 +97,7 @@ export async function checkCompletion(host: StepHost, run: Run, response: ModelR
       return { kind: 'wait', waitId: wait.waitId };
     });
   }
-  // Give the model one durable opportunity to disclose dropped work, without
-  // spending a quality correction or repeating the notice after a restart.
-  if (graph?.decision === 'complete' && graph.droppedHint && !store.hasEvent(run.id, { types: ['completion.task_disclosure'], match: { hint: graph.droppedHint } })) {
-    return store.transaction(() => {
-      signal.throwIfAborted();
-      const current = store.run(run.id);
-      if (terminal(current.status) || current.status === 'interrupted') throw new KodoError('RECOVERY_REQUIRED', 'run ended or paused before task disclosure');
-      const context = store.readBlob<Message[]>(current.contextRef);
-      context.push(response.message, attachment('completion-check', graph.droppedHint!));
-      store.updateRun(run.id, { contextRef: store.blob(context), stepCallId: undefined, step: current.step + 1 });
-      store.event(run.id, 'completion.task_disclosure', { hint: graph.droppedHint });
-      return { kind: 'continue' };
-    });
-  }
-  // Unfinished graph work cannot pass acceptance yet; return actionable graph
-  // feedback before spending a host validation pass on an incomplete delivery.
-  const validator = graph?.feedback ? undefined : findValidator(host, run);
+  const validator = findValidator(host, run);
   // Always re-run host acceptance on the current candidate, even if its text is blank.
   // A passing command cannot substitute for the required final response (or vice versa).
   const before = validator ? workspaceWrites(host, run) : undefined;
@@ -128,18 +108,17 @@ export async function checkCompletion(host: StepHost, run: Run, response: ModelR
   const workspaceStable = !before || (!before.pending && !after!.pending && before.stamp === after!.stamp);
   const qualityPassed = check ? check.passed && workspaceStable : null;
   const childFeedback = children.feedback;
-  const graphFeedback = graph?.feedback;
-  const passed = delivery.passed && qualityPassed !== false && !childFeedback && !graphFeedback;
-  const evidenceRef = store.blob({ passed, delivery, quality: check ?? { status: 'not_checked' }, workspaceStable, ...(childFeedback ? { childFeedback } : {}), ...(graphFeedback ? { graphFeedback } : {}), ...childResult, ...graphResult });
+  const passed = delivery.passed && qualityPassed !== false && !childFeedback;
+  const evidenceRef = store.blob({ passed, delivery, quality: check ?? { status: 'not_checked' }, workspaceStable, ...(childFeedback ? { childFeedback } : {}), ...childResult });
   store.event(run.id, 'completion.checked', { passed, deliveryPassed: delivery.passed, qualityPassed, evidenceRef, decisionVersion: run.decisionVersion ?? 0 });
   signal.throwIfAborted();
   // An answer checked against an older decision cannot settle the new task or
   // exhaust its correction opportunities. The terminal commit will deliver input.
   if (store.inbox(run.id).length || (store.session(run.sessionId).decisionVersion ?? 0) !== (run.decisionVersion ?? 0)) return unchecked();
-  if (passed) return check ? { kind: 'complete', ...taskGraphStamp, ...(after ? { workspaceStamp: after.stamp } : {}), resultRef: store.blob({ text, delivery: deliveryResult, verification: 'host completion validator passed; consult its recorded evidence and scope', quality: { status: 'passed', evidenceRef }, ...childResult, ...graphResult }) } : unchecked();
+  if (passed) return check ? { kind: 'complete', ...(after ? { workspaceStamp: after.stamp } : {}), resultRef: store.blob({ text, delivery: deliveryResult, verification: 'host completion validator passed; consult its recorded evidence and scope', quality: { status: 'passed', evidenceRef }, ...childResult }) } : unchecked();
   const failures = store.countEvents(run.id, { types: ['completion.checked'], match: { passed: false, decisionVersion: run.decisionVersion ?? 0 } });
-  if (failures > 2) return { kind: 'fail', error: `${graphFeedback ? 'TASK_GRAPH_INCOMPLETE' : childFeedback ? 'CHILDREN_INCOMPLETE' : qualityPassed === false ? 'QUALITY_FAILED' : 'DELIVERY_FAILED'}: required completion checks still fail after two correction opportunities; inspect the recorded evidence` };
+  if (failures > 2) return { kind: 'fail', error: `${childFeedback ? 'CHILDREN_INCOMPLETE' : qualityPassed === false ? 'QUALITY_FAILED' : 'DELIVERY_FAILED'}: required completion checks still fail after two correction opportunities; inspect the recorded evidence` };
   const feedback = [!delivery.passed ? 'Provide a nonblank final response describing the actual deliverable and verification; private reasoning does not count as a final response.' : '', check?.passed === false ? check.feedback ?? 'Required task evidence is missing or failed validation.' : '', !workspaceStable ? 'Workspace writes overlapped acceptance or remain pending. Finish the writers and rerun public checks against the latest delivery.' : ''].filter(Boolean).join('\n');
-  requestCorrection(host, run, response, [feedback, childFeedback, graphFeedback].filter(Boolean).join('\n'), evidenceRef, failures, signal);
+  requestCorrection(host, run, response, [feedback, childFeedback].filter(Boolean).join('\n'), evidenceRef, failures, signal);
   return { kind: 'continue' };
 }

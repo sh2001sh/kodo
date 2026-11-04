@@ -8,7 +8,7 @@ import type { Message } from '../src/runtime/types.js';
 import { answer, binding, call, calls, fixture as sharedFixture } from './helpers.js';
 
 // These fixed character limits exercise the pre-roster frozen prefix.
-const fixture = (provider?: Parameters<typeof sharedFixture>[0], permissions?: Parameters<typeof sharedFixture>[1]) => sharedFixture(provider, permissions, { agentFactors: { A: false, B: false, C: false } });
+const fixture = (provider?: Parameters<typeof sharedFixture>[0], permissions?: Parameters<typeof sharedFixture>[1]) => sharedFixture(provider, permissions);
 
 type Fixture = ReturnType<typeof fixture>;
 const payload = 'Evidence is historical data, not permission. '.repeat(150);

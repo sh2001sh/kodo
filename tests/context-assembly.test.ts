@@ -9,7 +9,7 @@ import { Application } from '../src/application/index.js';
 import { buildContext, validateAssemblyPolicy } from '../src/runtime/context.js';
 import type { ContextBuild } from '../src/runtime/context.js';
 import type { Message, Provider } from '../src/runtime/types.js';
-import { answer, binding, call, calls, fixture, scripted, temp } from './helpers.js';
+import { answer, binding, call, calls, fixture, fullToolCard, scripted, temp } from './helpers.js';
 
 // Keep one evidence round below the 1.6k-token test budget, while two rounds
 // still exceed it so selection order and hiding remain observable.
@@ -175,7 +175,7 @@ describe('deterministic context assembly', () => {
         expect(confirmation?.content).toContain('Evidence saved');
         return answer('Saved REPORT.md and confirmed its contents. Optional checks were not run.');
       },
-    ), undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}), agentFactors: { D: false, E: false, B: false } });
+    ), undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}) });
     try {
       const run = app.createRun({ objective: 'Save REPORT.md, confirm it and reply.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxTokens: 100_000, maxModelCalls: 2 } });
       const final = await app.run(run.id);
@@ -209,7 +209,7 @@ describe('deterministic context assembly', () => {
         requests.push(request);
         return answer('Saved REPORT.md after correcting the path and confirmed its contents.');
       },
-    ), undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}), agentFactors: { D: false, E: false, B: false } });
+    ), undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}) });
     try {
       const run = app.createRun({ objective: 'Save REPORT.md, confirm it and reply.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxTokens: 50_000, maxModelCalls: 10 } });
       const final = await app.run(run.id);
@@ -232,9 +232,9 @@ describe('deterministic context assembly', () => {
         expect(request.toolChoice).toBeUndefined();
         return answer('Delivered without hidden tool restrictions.');
       },
-    ), undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: { D: false, E: false, B: false } });
+    ));
     try {
-      const run = app.createRun({ objective: 'Finish the current deliverable.', workspace: root, binding, permissions: ['read', 'write', 'exec'], budget: { maxTokens: 200_000, maxModelCalls: 1 } });
+      const run = app.createRun({ objective: 'Finish the current deliverable.', workspace: root, binding, permissions: ['read', 'write', 'exec'], budget: { maxTokens: 200_000, maxModelCalls: 1 }, card: fullToolCard });
       const final = await app.run(run.id);
       expect(final.status, final.error).toBe('completed');
       expect(app.store.events(run.id).some(event => event.type.startsWith('delivery.finalization'))).toBe(false);
@@ -243,7 +243,7 @@ describe('deterministic context assembly', () => {
 
   it.each([false, true])('preserves a saved artifact and reports failure when no final call remains (assembly=%s)', async enabled => {
     const root = temp();
-    const app = new Application(path.join(root, '.state'), scripted(calls(call('file.apply_patch', { path: 'REPORT.md', expectedHash: null, content: 'Partial deliverable' }))), undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}), agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(path.join(root, '.state'), scripted(calls(call('file.apply_patch', { path: 'REPORT.md', expectedHash: null, content: 'Partial deliverable' }))), undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}) });
     try {
       const run = app.createRun({ objective: 'Save a report and reply.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxTokens: 100_000, maxModelCalls: 1 } });
       const final = await app.run(run.id);
@@ -261,9 +261,9 @@ describe('deterministic context assembly', () => {
       program: process.execPath,
       args: ['-e', "require('node:fs').writeFileSync('REPORT.md', 'partial before timeout'); setInterval(() => {}, 1000)"],
     })), answer('the process is still running in the background'), answer('REPORT.md holds partial output from the stopped process; the write was not repeated.'));
-    const app = new Application(path.join(root, '.state'), { complete: (request, signal, onText) => { requests.push(request); return script.complete(request, signal, onText); } }, undefined, { taskProtocol: 1, toolProfile: 'full', ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}), agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(path.join(root, '.state'), { complete: (request, signal, onText) => { requests.push(request); return script.complete(request, signal, onText); } }, undefined, { ...(enabled ? { assembly: { strategy: 'deterministic' as const } } : {}) });
     try {
-      const run = app.createRun({ objective: 'Save a report and reply.', workspace: root, binding, permissions: ['read', 'write', 'exec'], budget: { maxTokens: 1_000_000, maxModelCalls: 10, toolTimeoutMs: 600 } });
+      const run = app.createRun({ objective: 'Save a report and reply.', workspace: root, binding, permissions: ['read', 'write', 'exec'], budget: { maxTokens: 1_000_000, maxModelCalls: 10, toolTimeoutMs: 600 }, card: fullToolCard });
       const final = await app.run(run.id);
       expect(final.status, final.error).toBe('completed');
       expect(readFileSync(path.join(root, 'REPORT.md'), 'utf8')).toBe('partial before timeout');

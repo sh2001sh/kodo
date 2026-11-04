@@ -88,9 +88,10 @@ describe('durable storage', () => {
     expect(readFileSync(path.join(root, 'owner.lock'), 'utf8')).toContain('-1');
   });
   it('pins immutable card versions', () => {
-    const { app } = fixture();
-    expect(() => app.store.registerCard({ ...app.defaultCard, digest: 'different' })).toThrow('different content');
-    app.store.registerCard(app.defaultCard);
+    const { app, runId } = fixture();
+    const card = app.store.run(runId).card;
+    expect(() => app.store.registerCard({ ...card, digest: 'different' })).toThrow('different content');
+    app.store.registerCard(card);
   });
   it('rejects malformed cards and unsupported executable resources', () => {
     expect(() => parseCard('not a card')).toThrow('front matter');
