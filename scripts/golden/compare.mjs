@@ -9,7 +9,7 @@
 // applies the stage-1 gate:
 //   (a) passRate not below the baseline (3 runs per case; equal is allowed),
 //   (b) no new rule violations (new cell+rule pairs),
-//   (c) median matched-cell cost and wallMs ratio <= 1.10 (means reported only;
+//   (c) median cost and wallMs ratio of candidate cells to their case's baseline median <= 1.10 (means reported only;
 //       docs/kodo-phase1-status-20261103.md explains why three-run means are noise),
 // and lets same-code rechecks (--recheck) clear regressions they do not reproduce.
 // A baseline mean of 0/null (or a blocked cost basis) makes that criterion
@@ -552,21 +552,26 @@ const median = values => {
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-/** Per-cell candidate/baseline ratios for cells eligible (usageComplete && !polluted) on both sides. */
+/**
+ * Each eligible candidate cell against the median of the same case's eligible
+ * baseline cells. Repeat indexes are independent samples, so pairing r1 with r1
+ * would only add noise; the case median is the reference (1f finding).
+ */
 function matchedRatios(baselineSide, candidateSide, field) {
   const eligible = cell => cell.usageComplete && !cell.polluted && isFiniteNumber(cell[field]);
-  const candidateByKey = new Map(candidateSide.cells.filter(eligible).map(cell => [cell.key, cell]));
+  const byCase = new Map();
+  for (const cell of baselineSide.cells.filter(eligible)) (byCase.get(cell.caseId) ?? byCase.set(cell.caseId, []).get(cell.caseId)).push(cell[field]);
   const ratios = [];
-  for (const base of baselineSide.cells.filter(eligible)) {
-    const next = candidateByKey.get(base.key);
-    if (next && base[field] > 0) ratios.push(next[field] / base[field]);
+  for (const cell of candidateSide.cells.filter(eligible)) {
+    const reference = byCase.has(cell.caseId) ? median(byCase.get(cell.caseId)) : null;
+    if (reference > 0) ratios.push(cell[field] / reference);
   }
   return ratios;
 }
 
 /**
  * Phase-1 cost/wall criterion (docs/kodo-phase1-status-20261103.md): the median
- * of matched-cell ratios must stay <= 1.10. Three-run means swing 0.97–1.14 on
+ * of candidate-cell-to-baseline-case-median ratios must stay <= 1.10. Three-run means swing 0.97–1.14 on
  * the same code, so the mean is reported (with its ratio) but does not decide.
  */
 function judgeMedianRatio({ id, name, baseline, candidate, ratios, kind }) {
@@ -587,7 +592,7 @@ function judgeMedianRatio({ id, name, baseline, candidate, ratios, kind }) {
       meanRatio: round(meanRatio),
       meanDeltaPct: round((meanRatio - 1) * 100, 2),
       ratioRange: [round(Math.min(...ratios)), round(Math.max(...ratios))],
-      reason: `median of matched-cell ${kind === 'cost' ? 'cost' : 'wallMs'} ratios decides; the mean ratio is informational`,
+      reason: `median of candidate ${kind === 'cost' ? 'cost' : 'wallMs'} over the baseline case median decides; the mean ratio is informational`,
     },
   };
 }
@@ -679,11 +684,11 @@ function judgeGate({ completeness, cases, violations, means, costBasisComparable
       reason: !violations.comparable ? 'some cells have no report.json; violations cannot be compared' : 'a new rule violation is a new cell+rule instance',
     },
   });
-  const costName = `median matched-cell cost ratio <= ${LIMIT_RATIO.toFixed(2)}`;
+  const costName = `median cost ratio to the baseline case median <= ${LIMIT_RATIO.toFixed(2)}`;
   criteria.push(costBasisComparable
     ? judgeMedianRatio({ id: 'costRegression', name: costName, baseline: means.baseline.meanCost, candidate: means.candidate.meanCost, ratios: ratios.cost, kind: 'cost' })
     : { id: 'costRegression', name: costName, status: 'undetermined', detail: { reason: 'baseline and candidate use different cost bases' } });
-  criteria.push(judgeMedianRatio({ id: 'wallRegression', name: `median matched-cell wallMs ratio <= ${LIMIT_RATIO.toFixed(2)}`, baseline: means.baseline.meanWallMs, candidate: means.candidate.meanWallMs, ratios: ratios.wall, kind: 'wall' }));
+  criteria.push(judgeMedianRatio({ id: 'wallRegression', name: `median wallMs ratio to the baseline case median <= ${LIMIT_RATIO.toFixed(2)}`, baseline: means.baseline.meanWallMs, candidate: means.candidate.meanWallMs, ratios: ratios.wall, kind: 'wall' }));
 
   const failed = criteria.filter(entry => entry.status === 'failed');
   const undetermined = criteria.filter(entry => entry.status === 'undetermined');
@@ -776,7 +781,7 @@ export function compareGolden(baselineEvidence, candidateEvidence, { rechecks = 
     notes: [
       'means include only cells with usageComplete=true and polluted=false; eligibleRuns is the denominator',
       'passRate gate compares passed counts per case (3 runs, equal allowed) and the overall count',
-      'cost/wall gate: median of matched-cell candidate/baseline ratios <= 1.10 (means reported, not decisive); a 0/null baseline mean is undetermined, never a pass',
+      'cost/wall gate: median of candidate-cell / baseline-case-median ratios <= 1.10 (means reported, not decisive); a 0/null baseline mean is undetermined, never a pass',
       ...(rechecks.length ? [`rechecks: ${rechecks.map(recheck => recheck.directory).join(', ')}; a regression or new violation reproduced nowhere in >= ${MIN_RECHECK_RUNS} recheck runs is cleared as same-code noise`] : []),
       'any data-completeness reason makes the gate inconclusive: do not use it as a stage-1 conclusion',
     ],
@@ -902,7 +907,7 @@ const USAGE = `Kodo golden baseline comparison (stage-1 regression gate)
 
 Reads two COMPLETED golden runs and reports: per-case passRate/mean deltas,
 PASSED<->FAILED flips, new rule violations, data completeness, and the stage-1
-gate (passRate not below baseline; no new rule violations; median matched-cell
+gate (passRate not below baseline; no new rule violations; median candidate-cell to baseline-case-median
 cost and wallMs ratio <= 1.10, means reported). The JSON report is written to --out (default
 .kodo/golden/compare-<stamp>.json) and the Markdown summary is printed.
 

@@ -444,7 +444,7 @@ test('a usage gap explained by recorded provider failures does not block the gat
   assert.equal(blocked.gate.status, 'inconclusive');
 });
 
-test('cost and wall gates use the median matched-cell ratio, not the mean', () => {
+test('cost and wall gates use the median ratio to the baseline case median, not the mean', () => {
   const tokens = value => ({ totalTokens: value, cost: { basis: 'tokens', value, certain: true } });
   const baseline = evidence('/runs/baseline', [1, 2, 3].map(repeat => makeReport({ repeat, metrics: tokens(1_000) })));
   // One outlier cell triples; the median cell is unchanged, so the gate passes while the mean ratio is ~1.67.
