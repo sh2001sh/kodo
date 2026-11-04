@@ -156,7 +156,7 @@ async function trial({ task, arm, directory, cli, credentials }) {
   const started = Date.now();
   try {
     const budget = { maxContextTokens: WINDOW_TOKENS, maxOutputTokens: OUTPUT_TOKENS, maxModelCalls: 60, maxTokens: 6_000_000, maxDurationMs: 2_400_000 };
-    const phase1 = app.createRun({ objective: '你已经读完 materials/ 下的全部材料。不要再读取文件，直接只回复 READY。', workspace, binding, permissions: ['read'], budget });
+    const phase1 = app.createRun({ objective: 'materials/ 下的全部材料已经读完。请只回复 READY。', workspace, binding, permissions: ['read'], budget });
     const initial = app.store.readBlob(phase1.contextRef);
     app.store.updateRun(phase1.id, { contextRef: app.store.blob([...initial.slice(0, -1), ...seedHistory(task.pages), initial.at(-1)]) });
     const first = await app.run(phase1.id).catch(error => ({ status: 'failed', error: errorText(error) }));
