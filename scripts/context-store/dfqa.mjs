@@ -11,10 +11,13 @@
 // 16 questions in the same conversation:
 //   closed  the answer step cannot call tools (only the compacted context);
 //   open    the answer step keeps every default tool (history.read/search,
-//           file.read/search over the still-present workspace).
+//           file.read/search over the still-present workspace);
+//   archive same as open, but the material files are removed before phase 2,
+//           so only the run's own archived history can answer (the lossless-
+//           pointer property of the context store).
 // A context-store change is judged by running `open` on its branch: accuracy
 // >= 90% of `open` on the reference and phase-2 input <= 2x `closed` (§2.5).
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
@@ -164,6 +167,7 @@ async function trial({ task, arm, directory, cli, credentials }) {
     const compactions = app.store.events(phase1.id).filter(event => event.type.startsWith('context.')).map(event => event.type);
     if (first.status !== 'completed') return { arm, status: 'phase1_failed', error: first.error ?? first.status, phase1: phase1Usage, compactions };
     // Phase 2 continues the same conversation: the compacted terminal context plus the questions.
+    if (arm === 'archive') rmSync(path.join(workspace, 'materials'), { recursive: true, force: true });
     const qa = app.submitInput(phase1.id, qaText(task.questions), { mode: 'follow_up' });
     const projection = app.store.readBlob(app.store.run(phase1.id).contextRef);
     app.store.updateRun(qa.id, { contextRef: app.store.blob([...projection, { role: 'user', content: qaText(task.questions) }]), step: 1, inputCursor: app.store.inbox(qa.id).at(-1)?.seq ?? 0, ...(arm === 'closed' ? { toolChoice: 'none' } : {}) });
@@ -188,7 +192,7 @@ async function main() {
   writeFileSync(path.join(out, 'task.json'), JSON.stringify({ corpusCommit: CORPUS_COMMIT, seedTokens: task.tokens, pages: task.pages.length, questions: task.questions.map(({ fact, ...rest }) => ({ ...rest, fact })) }, null, 2));
   const credentials = cli.run ? await resolveCredentials({ providerConfig: cli['provider-config'], provider: cli.provider }) : null;
   const arms = cli.arms;
-  if (arms.some(arm => !['closed', 'open'].includes(arm))) throw new Error('--arms accepts closed and open');
+  if (arms.some(arm => !['closed', 'open', 'archive'].includes(arm))) throw new Error('--arms accepts closed, open and archive');
   const results = [];
   for (let repeat = 1; repeat <= cli.repeat; repeat++) for (const arm of repeat % 2 ? arms : [...arms].reverse()) {
     const directory = path.join(out, 'trials', `${arm}-r${repeat}`);
@@ -200,7 +204,7 @@ async function main() {
   const summary = Object.fromEntries(arms.map(arm => {
     const rows = results.filter(row => row.arm === arm && row.score);
     const sum = key => rows.reduce((total, row) => total + key(row), 0);
-    return [arm, { trials: rows.length, accuracy: rows.length ? Number((sum(row => row.score.passed) / sum(row => row.score.total)).toFixed(4)) : null, meanPhase2Input: rows.length ? Math.round(sum(row => row.phase2.input) / rows.length) : null, meanPhase2Calls: rows.length ? Number((sum(row => row.phase2.calls) / rows.length).toFixed(2)) : null, failed: results.filter(row => row.arm === arm && !row.score).length }];
+    return [arm, { trials: rows.length, accuracy: rows.length ? Number((sum(row => row.score.passed) / sum(row => row.score.total)).toFixed(4)) : null, meanPhase2Input: rows.length ? Math.round(sum(row => row.phase2.input) / rows.length) : null, meanPhase2Uncached: rows.length ? Math.round(sum(row => row.phase2.input - row.phase2.cacheRead) / rows.length) : null, meanPhase2Calls: rows.length ? Number((sum(row => row.phase2.calls) / rows.length).toFixed(2)) : null, failed: results.filter(row => row.arm === arm && !row.score).length }];
   }));
   await writeJson(path.join(out, 'summary.json'), { generatedAt: new Date().toISOString(), mode: cli.run ? 'paid' : 'dry', model: cli.model, seedTokens: task.tokens, windowTokens: WINDOW_TOKENS, summary, results: results.map(row => ({ ...row, answer: undefined })) }, credentials?.key);
   console.log(JSON.stringify({ out, summary }, null, 2));
