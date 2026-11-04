@@ -19,7 +19,7 @@ async function setup(provider: Provider) {
   const root = mkdtempSync(path.join(tmpdir(), 'kodo-web-collab-'));
   const workspace = path.join(root, 'workspace');
   mkdirSync(workspace);
-  const app = new Application(path.join(root, 'data'), provider, undefined, { agentFactors: { D: false, E: false, B: false } });
+  const app = new Application(path.join(root, 'data'), provider);
   const card: Card = { id: 'test/web-collab', version: '1.0.0', name: 'Web collaboration test', digest: 'web-collab-test', prompt: 'Complete the task.', tools: [] };
   const options: LocalServerOptions = { workspace, binding, permissions: ['read'], card };
   let server = await createLocalServer(app, options);

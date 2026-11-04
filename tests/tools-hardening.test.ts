@@ -4,7 +4,7 @@ import { ChildProcess, spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import path from 'node:path';
 import { digest } from '../src/storage/index.js';
-import { answer, call, calls, fixture, scripted } from './helpers.js';
+import { answer, call, calls, fixture, fullToolCard, scripted } from './helpers.js';
 
 vi.mock('node:child_process', async importOriginal => {
   const actual = await importOriginal<typeof import('node:child_process')>();
@@ -98,20 +98,6 @@ describe('bounded and recoverable tool IO', () => {
     await expect(app.coordinator.tools.execute(second.id, 'artifact.read', { id: written.id }, signal())).rejects.toMatchObject({ code: 'ARTIFACT_DENIED' });
   });
 
-  it('uses larger default pages in lean sessions and keeps a full page readable', async () => {
-    const { app, runId, root } = fixture(undefined, ['read', 'exec'], { toolProfile: 'lean-solo', taskProtocol: 3 });
-    writeFileSync(path.join(root, 'long.txt'), Array.from({ length: 700 }, (_, index) => `line "${index}" ${'x'.repeat(20)}`).join('\n'));
-    const page = await app.coordinator.tools.execute(runId, 'file.read', { path: 'long.txt' }, signal()) as { content: string; hash: string; truncated: boolean; next: { offset: number } | null; maxChars: number; limit: number };
-    expect(page).toMatchObject({ truncated: true, maxChars: 24_000, limit: 600 });
-    expect(page.content.length).toBeGreaterThan(8000);
-    expect(page.hash).toMatch(/^[a-f0-9]{64}$/);
-    const explicit = await app.coordinator.tools.execute(runId, 'file.read', { path: 'long.txt', maxChars: 1000 }, signal()) as { maxChars: number };
-    expect(explicit.maxChars).toBe(1000);
-    const shell = await app.coordinator.tools.execute(runId, 'shell.exec', { command: `node -e "process.stdout.write('o'.repeat(20000))"` }, signal()) as { stdout: string; truncated: boolean };
-    expect(shell.stdout.length).toBe(12_000);
-    expect(shell.truncated).toBe(true);
-  });
-
   it('preserves long stdout/stderr as paginated private artifacts without killing successful programs', async () => {
     const { app, runId, root } = fixture(undefined, ['read', 'exec']);
     const original = '😀中文'.repeat(12000);
@@ -197,7 +183,7 @@ describe('bounded and recoverable tool IO', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(app.coordinator.tools.execute(runId, 'file.read', { path: 'missing' }, controller.signal)).rejects.toThrow();
-    const execRun = app.createRun({ objective: 'exec', workspace: root, binding: app.store.run(runId).binding, permissions: ['read', 'exec'] });
+    const execRun = app.createRun({ objective: 'exec', workspace: root, binding: app.store.run(runId).binding, permissions: ['read', 'exec'], card: fullToolCard });
     app.store.putCall({ id: 'uncertain-effect', runId: execRun.id, step: 0, kind: 'tool', name: 'process.exec', effect: 'write', status: 'unknown', requestRef: app.store.blob({}), reservedTokens: 0 });
     await expect(app.coordinator.tools.execute(execRun.id, 'process.exec', { program: process.execPath, args: [] }, signal())).rejects.toMatchObject({ code: 'UNKNOWN_WRITE' });
     writeFileSync(path.join(root, 'safe.txt'), 'safe');

@@ -69,7 +69,7 @@ describe('current environment and durable task plan', () => {
     const app = new Application(path.join(root, '.state'), scripted(async request => {
       observed = request.messages.filter(message => message.role === 'system' || attachmentKind(message) === 'environment').map(message => message.content).join('\n');
       return answer();
-    }), undefined, { agentFactors: { D: false, E: false, B: false }, ...(enabled ? { sandbox: { network: 'none' as const } } : {}) });
+    }), undefined, { ...(enabled ? { sandbox: { network: 'none' as const } } : {}) });
     try {
       const run = app.createRun({ objective: 'Inspect environment.', workspace: root, binding, permissions: ['read', 'exec'], scope: { read: ['allowed'], write: [] } });
       expect((await app.run(run.id)).status).toBe('completed');

@@ -36,7 +36,7 @@ async function serve(handler: RequestListener): Promise<string> {
 }
 function fetcher(policy: WebFetchPolicy = { enabled: true, allowPrivate: true, allowedHosts: ['127.0.0.1'] }) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'kodo-webfetch-'));
-  const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { webFetch: policy, agentFactors: { D: false, E: false } });
+  const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { webFetch: policy });
   apps.push({ app, root });
   const card = app.parseCard('---\nschema_version: 1\nid: fixture/webfetch\nversion: 1.0.0\nname: Web fetch fixture\ndescription: Exercise the explicitly declared host web service.\ncapabilities: { tools: [web.fetch] }\n---\nRead a page only under the host network policy.');
   const runId = app.createRun({ objective: 'Read a page with host authorization.', workspace: root, binding, permissions: ['read'], card }).id;

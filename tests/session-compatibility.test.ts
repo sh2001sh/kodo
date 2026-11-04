@@ -39,8 +39,8 @@ describe('legacy lean-team session compatibility', () => {
 
       // Read-only evidence stays available: listing, snapshots and raw records do not execute the session.
       expect(app.sessions().items.map(item => item.id)).toContain(run.sessionId);
-      expect(app.snapshot(run.id).session.toolProfile as string).toBe('lean-team');
-      expect(app.store.session(run.sessionId).toolProfile as string).toBe('lean-team');
+      expect((app.snapshot(run.id).session as unknown as Record<string, unknown>).toolProfile).toBe('lean-team');
+      expect((app.store.session(run.sessionId) as unknown as Record<string, unknown>).toolProfile).toBe('lean-team');
 
       // A new session in the same application is unaffected.
       const fresh = app.createRun({ objective: 'New task after the incompatible one.', workspace: root, binding });
@@ -124,6 +124,35 @@ describe('deleted inline-method stage data', () => {
     try {
       const session = app.store.session(app.createRun({ objective: 'Ordinary task.', workspace: root, binding }).sessionId);
       for (const field of ['inlineMethods', 'methodUnloading', 'methodTools', 'methodSkills', 'methodToolView', 'methodCards']) expect(session).not.toHaveProperty(field);
+    } finally { app.close(); }
+  });
+});
+
+describe('deleted per-session tool profile, task protocol and agent factors', () => {
+  const fields: [string, unknown][] = [['toolProfile', 'compact-v2'], ['taskProtocol', 3], ['agentFactors', { A: true, B: true, C: true, D: true, E: true }]];
+  it.each(fields)('gates a session record carrying %s while read-only evidence stays available', async (field, value) => {
+    const root = temp();
+    const app = new Application(path.join(root, '.state'), scripted(answer('new task completed')), undefined, { instructions: { global: false } });
+    try {
+      const run = app.createRun({ objective: 'Old configured task.', workspace: root, binding });
+      const session = app.store.session(run.sessionId);
+      app.store.putSession({ ...session, [field]: value } as typeof session);
+      for (const action of [() => app.run(run.id), () => app.recover(run.id), () => app.spawnAgent(run.sessionId, { objective: 'Child of a configured session' }), () => app.submitInput(run.id, 'Continue the configured session')]) {
+        expect(caught(action)).toMatchObject({ code: 'SESSION_INCOMPATIBLE', message: expect.stringContaining('tool profile, task protocol or agent factors') });
+      }
+      expect(app.sessions().items.map(item => item.id)).toContain(run.sessionId);
+      expect((app.snapshot(run.id).session as unknown as Record<string, unknown>)[field]).toEqual(value);
+      const fresh = app.createRun({ objective: 'New task after the incompatible one.', workspace: root, binding });
+      expect((await app.run(fresh.id)).status).toBe('completed');
+    } finally { await app.shutdown(); }
+  });
+
+  it('never writes a tool profile, task protocol or agent factors into a new session', () => {
+    const root = temp();
+    const app = new Application(path.join(root, '.state'), scripted(answer()), undefined, { instructions: { global: false } });
+    try {
+      const session = app.store.session(app.createRun({ objective: 'Ordinary task.', workspace: root, binding }).sessionId);
+      for (const [field] of fields) expect(session).not.toHaveProperty(field);
     } finally { app.close(); }
   });
 });

@@ -17,7 +17,7 @@ describe('optimization execution integration', () => {
         expect(JSON.stringify(request.messages)).toContain('Host inspected this ordinary test operation');
         return answer('The independent output remains saved; the host verified that the first operation produced no output.');
       },
-    ), undefined, { agentFactors: { D: false, E: false, B: false }, exploration: false, lockDirectory: false, hooks: [{ kind: 'tool.failed', callback: ({ data }) => {
+    ), undefined, { exploration: false, lockDirectory: false, hooks: [{ kind: 'tool.failed', callback: ({ data }) => {
       if (data.name === 'probe.write') expect(app.store.call(String(data.callId)).status).toBe('unknown');
     } }], tools: [{
       name: 'probe.write', description: 'A host operation with uncertain completion.', permission: 'write', effect: 'write',
@@ -57,7 +57,7 @@ describe('optimization execution integration', () => {
         expect(request.messages.some(message => message.content?.includes('Write the report in plain text.'))).toBe(true);
         return calls(call('file.apply_patch', { path: 'sub/report.txt', expectedHash: null, content: 'replanned' }, 'after-instructions'));
       }, answer(),
-    ), undefined, { agentFactors: { D: false, E: false, B: false }, exploration: false, lockDirectory: false });
+    ), undefined, { exploration: false, lockDirectory: false });
     try {
       const run = app.createRun({ workspace: root, objective: 'Save a report.', binding, permissions: ['read', 'write'] });
       expect((await app.run(run.id)).status).toBe('completed');
@@ -78,7 +78,7 @@ describe('optimization execution integration', () => {
     }), undefined, { exploration: false, lockDirectory: false, hooks: [
       { kind: 'tool.before', callback: () => { observed.push('before'); return { note: 'Host before note' }; } },
       { kind: 'tool.after', callback: () => { observed.push('after'); return { note: 'Host after note' }; } },
-    ], agentFactors: { D: false, E: false, B: false } });
+    ] });
     try {
       const run = app.createRun({ workspace: root, objective: 'Read once.', binding, permissions: ['read'] });
       expect((await app.run(run.id)).status).toBe('completed');

@@ -68,7 +68,7 @@ describe('model capabilities without task budget presets', () => {
       request = input;
       estimatedInput = estimateInputTokens(app.store, app.store.listRuns()[0]!, input.messages, input.tools);
       return answer();
-    } }, undefined, { agentFactors: { D: false, E: false, B: false } });
+    } });
     try {
       // Some catalogs advertise output equal to context. It must still leave input room.
       const run = app.createRun({ objective: 'finish', workspace: root, card: budgetCard, binding: { ...binding, limits: { context: 50_000, output: 50_000 } }, budget: { maxTokens: cap } });
@@ -83,7 +83,7 @@ describe('model capabilities without task budget presets', () => {
   it('honors a separate provider input limit even when the total context fits', async () => {
     const root = temp();
     let requested = false;
-    const app = new Application(path.join(root, 'data'), { async complete() { requested = true; return answer(); } }, undefined, { agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(path.join(root, 'data'), { async complete() { requested = true; return answer(); } });
     try {
       const run = app.createRun({ objective: 'test', workspace: root, card: budgetCard, binding: { ...binding, limits: { context: 100_000, output: 20_000, input: 1_000 } } });
       expect((await app.run(run.id)).error).toContain('CONTEXT_LIMIT');
@@ -94,7 +94,7 @@ describe('model capabilities without task budget presets', () => {
   it('bounds child output by the remaining explicit token cap instead of a main reserve', async () => {
     const root = temp();
     const outputs: number[] = [];
-    const app = new Application(path.join(root, 'data'), { async complete(request) { outputs.push(request.maxOutputTokens); return answer(); } }, undefined, { agentFactors: { D: false, E: false, B: false } });
+    const app = new Application(path.join(root, 'data'), { async complete(request) { outputs.push(request.maxOutputTokens); return answer(); } });
     try {
       const main = app.createRun({ objective: 'main', workspace: root, card: budgetCard, binding: { ...binding, limits: { context: 50_000, output: 50_000 } }, budget: { maxTokens: 35_000 } });
       const child = app.store.transaction(() => app.coordinator.mailbox.execute(main, 'spawn', 'spawn_agent', app.coordinator.mailbox.validate(main, 'spawn_agent', JSON.stringify({ objective: 'child' })))) as { id: string };

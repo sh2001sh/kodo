@@ -20,7 +20,7 @@ function recordedInspection(app: Application, runId: string, childId: string, ar
 
 describe('completion owns every directly managed child', () => {
   it.each(['queued', 'running', 'waiting'] as const)('durably waits for an unlinked %s child without exhausting correction attempts', async status => {
-    const { app, runId } = fixture(scripted(), undefined, { agentFactors: { B: true } });
+    const { app, runId } = fixture(scripted());
     const child = spawn(app, runId);
     app.store.updateRun(child.id, { status });
     for (let attempt = 0; attempt < 4; attempt++) {

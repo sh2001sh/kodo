@@ -163,7 +163,7 @@ describe('TUI CLI host integration', () => {
   it('compares configuration values independently of object key order and preserves old off defaults', () => {
     expect(matchingTuiPolicy({}, { compaction: false, memory: false })).toBe(true);
     expect(matchingTuiPolicy({ compaction: false }, { compaction: { strategy: 'summary' } })).toBe(false);
-    expect(matchingTuiPolicy({ agents: { agentFactors: { A: true, B: false } } }, { agents: { agentFactors: { B: false, A: true } } })).toBe(true);
+    expect(matchingTuiPolicy({ sandbox: { network: 'none', networkAllowlist: [] } }, { sandbox: { networkAllowlist: [], network: 'none' } })).toBe(true);
   });
 
   it('rejects malformed verification configuration before creating a session', () => {

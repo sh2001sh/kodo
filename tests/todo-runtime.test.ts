@@ -16,7 +16,7 @@ describe('todo execution ownership in the model loop', () => {
       },
       answer('Child completed.'),
       answer('Unlinked task completed.'),
-    ), undefined, { agentFactors: { B: true } });
+    ));
     expect((await app.coordinator.wake(runId)).status).toBe('waiting');
     const child = app.store.listRuns(app.store.run(runId).sessionId).find(run => run.parentId === runId)!;
     expect(child).toBeDefined();
@@ -52,7 +52,7 @@ describe('todo execution ownership in the model loop', () => {
         expect(request.messages.findLast(message => message.role === 'tool')?.content).not.toContain('TODO_PLAN_REQUIRED');
         return answer('The small change is ready.');
       },
-    ), undefined, { agentFactors: { B: true } });
+    ));
     expect((await app.run(runId)).status).toBe('completed');
     expect(readFileSync(path.join(root, 'direct.txt'), 'utf8')).toBe('child evidence');
   });
@@ -64,7 +64,7 @@ describe('todo execution ownership in the model loop', () => {
         expect(request.messages.findLast(message => message.role === 'tool')?.content).not.toContain('TODO_');
         return answer('The change is ready; the remaining plan item is out of scope.');
       },
-    ), undefined, { agentFactors: { B: true } });
+    ));
     expect((await app.run(runId)).status).toBe('completed');
     expect(readFileSync(path.join(root, 'free.txt'), 'utf8')).toBe('child evidence');
     expect(app.store.events(runId, { types: ['todo.dispatched'] })).toHaveLength(0);

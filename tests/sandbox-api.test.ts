@@ -3,7 +3,7 @@ import { linkSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Application, PackageRegistry, createSandbox, exportPackage, verifyToolExamples } from '../src/application/index.js';
 import { prepareSandboxCommand, sandboxEnvironment } from '../src/sandbox/index.js';
-import { binding, temp } from './helpers.js';
+import { binding, fullToolCard, temp } from './helpers.js';
 
 describe('sandbox API configuration', () => {
   it('rejects malformed resources and executable scope escapes before launch', async () => {
@@ -34,9 +34,9 @@ describe.skipIf(process.platform !== 'win32')('real sandbox through kernel proce
     writeFileSync(path.join(workspace, '.env'), 'credential');
     writeFileSync(path.join(outside, 'secret'), 'outside');
     linkSync(path.join(outside, 'secret'), path.join(workspace, 'allowed', 'hardlink'));
-    const app = new Application(path.join(workspace, '.private-state'), undefined, undefined, { sandbox: {}, toolProfile: 'full', taskProtocol: 1, agentFactors: { D: false, E: false } });
+    const app = new Application(path.join(workspace, '.private-state'), undefined, undefined, { sandbox: {} });
     try {
-      const run = app.createRun({ objective: 'Scoped test', workspace, binding, permissions: ['read', 'write', 'exec'], scope: { read: ['allowed'], write: ['allowed'] } });
+      const run = app.createRun({ objective: 'Scoped test', workspace, binding, permissions: ['read', 'write', 'exec'], scope: { read: ['allowed'], write: ['allowed'] }, card: fullToolCard });
       const output = await app.coordinator.tools.execute(run.id, 'process.exec', { program: process.execPath, args: ['-e', `
         const f=require('node:fs'); const denied=p=>{try{f.readFileSync(p);return false}catch{return true}};
         f.writeFileSync('allowed/result','ok');
@@ -54,9 +54,9 @@ describe.skipIf(process.platform !== 'win32')('real sandbox through kernel proce
   }, 30000);
   it('requires a write grant even when execution is authorized', async () => {
     const workspace = temp();
-    const app = new Application(temp(), undefined, undefined, { sandbox: {}, toolProfile: 'full', taskProtocol: 1, agentFactors: { D: false, E: false } });
+    const app = new Application(temp(), undefined, undefined, { sandbox: {} });
     try {
-      const run = app.createRun({ objective: 'Read-only execution', workspace, binding, permissions: ['read', 'exec'] });
+      const run = app.createRun({ objective: 'Read-only execution', workspace, binding, permissions: ['read', 'exec'], card: fullToolCard });
       const output = await app.coordinator.tools.execute(run.id, 'process.exec', { program: process.execPath, args: ['-e', `try{require('node:fs').writeFileSync('denied','bad');console.log('WRITTEN')}catch{console.log('DENIED')}`] }, AbortSignal.timeout(30000)) as { stdout: string; exitCode: number; stderr: string };
       expect(output.exitCode, output.stderr).toBe(0);
       expect(output.stdout.trim()).toBe('DENIED');

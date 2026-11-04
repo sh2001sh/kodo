@@ -5,7 +5,7 @@ import type { ServerResponse } from 'node:http';
 import { Application } from '../src/application/index.js';
 import { ResponsesProvider } from '../src/providers/responses.js';
 import { mockServer } from './http-server.js';
-import { temp } from './helpers.js';
+import { fullToolCard, temp } from './helpers.js';
 
 afterEach(() => { delete process.env.KODO_RESPONSES_TEST_KEY; });
 const binding = (baseURL: string) => ({ limits: { context: 256_000, output: 8192 }, baseURL, model: 'test-model', apiKeyEnv: 'KODO_RESPONSES_TEST_KEY', protocol: 'responses' as const });
@@ -46,9 +46,9 @@ describe('Responses SDK adapter', () => {
     });
     const root = temp();
     const seen: string[] = [];
-    const app = new Application(path.join(root, 'state'), new ResponsesProvider(), (_id, text) => seen.push(text), { toolProfile: 'full', taskProtocol: 2 });
+    const app = new Application(path.join(root, 'state'), new ResponsesProvider(), (_id, text) => seen.push(text));
     try {
-      const run = app.createRun({ objective: 'create an artifact', workspace: root, binding: binding(url), permissions: ['read', 'write'] });
+      const run = app.createRun({ objective: 'create an artifact', workspace: root, binding: binding(url), permissions: ['read', 'write'], card: fullToolCard });
       const result = await app.run(run.id);
       expect(result.status).toBe('completed');
       expect(requests).toHaveLength(2);

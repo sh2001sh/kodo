@@ -6,10 +6,6 @@ import { failedStepStreak, identicalStreak } from '../src/runtime/progress-advis
 import { acquireWriteLock } from '../src/tools/write-locks.js';
 import { answer, call, calls, fixture, scripted } from './helpers.js';
 
-function protocol(app: Application, runId: string): void {
-  const session = app.store.session(app.store.run(runId).sessionId);
-  app.store.putSession({ ...session, taskProtocol: 2 });
-}
 function child(app: Application, runId: string): string {
   return (app.coordinator.mailbox.execute(app.store.run(runId), crypto.randomUUID(), 'spawn_agent', { objective: 'Synthetic independent task', permissions: ['read'] }) as { id: string }).id;
 }
@@ -18,7 +14,6 @@ describe('event-driven task waits', () => {
   it('renews internal deadlines without another model request, then wakes on completion', async () => {
     let peer = '';
     const { app, runId } = fixture(scripted(async () => calls(call('wait_for_events', { run_ids: [peer] })), answer('Accepted the completed task.')));
-    protocol(app, runId);
     peer = child(app, runId);
     expect((await app.coordinator.wake(runId)).status).toBe('waiting');
     const wait = app.store.wait(app.store.run(runId).waitId!);
@@ -43,7 +38,6 @@ describe('event-driven task waits', () => {
       app.store.updateRun(peer, { status: 'completed' });
       return answer();
     }));
-    protocol(app, runId);
     peer = child(app, runId);
     expect((await app.coordinator.wake(runId)).status).toBe('waiting');
     const wait = app.store.wait(app.store.run(runId).waitId!);
@@ -56,7 +50,6 @@ describe('event-driven task waits', () => {
 
   it('keeps completion deferrals event-driven across storage restart', async () => {
     const { app, root, runId } = fixture(scripted(answer('Early completion candidate.')));
-    protocol(app, runId);
     const peer = child(app, runId);
     expect((await app.coordinator.wake(runId)).status).toBe('waiting');
     const wait = app.store.wait(app.store.run(runId).waitId!);
@@ -77,7 +70,6 @@ describe('event-driven task waits', () => {
 describe('resource queues retain one tool invocation', () => {
   it('does not spend the execution timeout while waiting for a path lock', async () => {
     const { app, runId, root } = fixture(scripted(calls(call('file.apply_patch', { path: 'result.txt', content: 'saved', expectedHash: null })), answer()), undefined, { lockDirectory: false });
-    protocol(app, runId);
     const session = app.store.session(app.store.run(runId).sessionId);
     app.store.putSession({ ...session, budget: { ...session.budget, toolTimeoutMs: 100 } });
     const release = await acquireWriteLock(root, [], { directory: false });
@@ -100,7 +92,6 @@ describe('resource queues retain one tool invocation', () => {
 
   it('cancels a queued operation without creating an unknown write or releasing its owner', async () => {
     const { app, runId, root } = fixture(scripted(calls(call('file.apply_patch', { path: 'result.txt', content: 'saved', expectedHash: null }))), undefined, { lockDirectory: false });
-    protocol(app, runId);
     const release = await acquireWriteLock(root, [], { directory: false });
     let started!: () => void;
     const entered = new Promise<void>(resolve => { started = resolve; });
@@ -118,7 +109,6 @@ describe('resource queues retain one tool invocation', () => {
 
   it('stops resource waiting at the shared run deadline before effects start', async () => {
     const { app, runId, root } = fixture(scripted(calls(call('file.apply_patch', { path: 'result.txt', content: 'saved', expectedHash: null }))), undefined, { lockDirectory: false });
-    protocol(app, runId);
     const session = app.store.session(app.store.run(runId).sessionId);
     app.store.putSession({ ...session, budget: { ...session.budget, maxDurationMs: 300 } });
     const release = await acquireWriteLock(root, [], { directory: false });

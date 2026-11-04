@@ -19,7 +19,7 @@ function setup(card: Card, options: ApplicationOptions = {}, mainScope?: Run['sc
   const root = temp();
   mkdirSync(path.join(root, 'src', 'feature'), { recursive: true });
   writeFileSync(path.join(root, 'src', 'feature', 'entry.ts'), 'export const value = 1;\n');
-  const app = new Application(path.join(root, '.state'), { async complete() { return answer(); } }, undefined, { agentFactors: { D: false, E: false, A: false, B: false, C: true }, ...options });
+  const app = new Application(path.join(root, '.state'), { async complete() { return answer(); } }, undefined, options);
   apps.push(app);
   app.registerCard(card);
   const parent = app.createRun({ objective: 'Deliver the feature', workspace: root, binding, permissions: ['read', 'write', 'exec'], card, ...(mainScope ? { scope: mainScope } : {}) });

@@ -9,7 +9,7 @@ import { answer, binding, scripted, temp } from './helpers.js';
 const apps: Application[] = [];
 afterEach(async () => { for (const app of apps.splice(0)) await app.shutdown(); });
 function setup(options: ApplicationOptions = {}, provider: Provider = scripted(), directory = path.join(temp(), '.state')) {
-  const app = new Application(directory, provider, undefined, { compaction: false, instructions: { global: false }, ...options, agentFactors: { D: false, E: false, B: false, ...options.agentFactors } });
+  const app = new Application(directory, provider, undefined, { compaction: false, instructions: { global: false }, ...options });
   apps.push(app);
   return { app, root: path.dirname(directory), directory };
 }

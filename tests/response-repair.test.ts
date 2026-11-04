@@ -22,7 +22,7 @@ describe('response repair', () => {
       async request => { offered.push(request.tools.map(tool => tool.name)); return calls(call('file_search', { path: '.', query: 'timeout' }, 'wire')); },
       async request => { offered.push(request.tools.map(tool => tool.name)); return calls(call('file.apply_patch', { path: 'REPORT.md', expectedHash: null, content: 'report\n' }, 'save')); },
       async () => answer('Saved REPORT.md.'),
-    ), undefined, { agentFactors: { D: false, E: false, B: false } });
+    ));
     try {
       const run = app.createRun({ objective: 'Save REPORT.md and reply.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxTokens: 200_000, maxModelCalls: 3 } });
       const final = await app.run(run.id);
@@ -43,7 +43,7 @@ describe('response repair', () => {
       calls(call('file.read', { path: 'DELIVERY.md' }, 'read-before-edit')),
       calls(call('file.apply_patch', { path: 'DELIVERY.md', expectedHash: null, content: 'report\n' }, 'stale')),
       async request => { conflict = request.messages.findLast(message => message.role === 'tool')!.content; return answer('Reported the conflict.'); },
-    ), undefined, { agentFactors: { D: false, E: false, B: false } });
+    ));
     try {
       const run = app.createRun({ objective: 'Save DELIVERY.md and reply.', workspace: root, binding, permissions: ['read', 'write'] });
       await app.run(run.id);

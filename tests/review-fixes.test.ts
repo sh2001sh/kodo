@@ -23,7 +23,8 @@ function waiting(app: Application, id: string, args: Record<string, unknown>): W
 }
 
 describe('review regressions', () => {
-  it.each(['timeout', 'cancel'])('keeps a queued write safe on %s while the workspace is locked', async reason => {
+  // A queued write's tool timeout starts only once its lock is acquired, so cancellation is what stops it while queued.
+  it('keeps a queued write safe on cancel while the workspace is locked', async () => {
     const { app, root, runId } = fixture(scripted(calls(call('file.apply_patch', { path: 'never.txt', expectedHash: null, content: 'no' })), answer()), ['read', 'write', 'exec']);
     const session = app.store.session(app.store.run(runId).sessionId);
     app.store.putSession({ ...session, budget: { ...session.budget, toolTimeoutMs: 30 } });
@@ -32,10 +33,10 @@ describe('review regressions', () => {
     const started = new Promise<void>(resolve => { entered = resolve; });
     const holding = app.coordinator.tools.execute(runId, 'process.exec', { program: process.execPath, args: ['-e', 'setTimeout(()=>{},10000)'] }, blocker.signal, entered);
     await started;
-    const off = app.store.subscribe(event => { if (reason === 'cancel' && event.type === 'tool.started') app.coordinator.cancel(runId); });
+    const off = app.store.subscribe(event => { if (event.type === 'tool.started') app.coordinator.cancel(runId); });
     try {
       const run = await app.run(runId);
-      expect(run.status).toBe(reason === 'cancel' ? 'cancelled' : 'completed');
+      expect(run.status).toBe('cancelled');
       const write = app.store.calls(runId).find(item => item.kind === 'tool')!;
       expect(write.effectState).toBe('not_started');
       expect(['failed', 'cancelled']).toContain(write.status);

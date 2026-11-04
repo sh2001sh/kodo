@@ -24,7 +24,7 @@ describe('opt-in project memory', () => {
         expect(request.messages.some(message => message.role === 'user' && message.content.includes('kind="project-instructions"') && message.content.includes(content))).toBe(true);
         return answer('saved');
       },
-    ), undefined, { agentFactors: { D: false, E: false, B: false }, memory: true, exploration: false, instructions: { global: false } });
+    ), undefined, { memory: true, exploration: false, instructions: { global: false } });
     try {
       const run = app.createRun({ workspace, objective: 'Record the project decision.', binding, permissions: ['read', 'write'] });
       const result = await app.run(run.id);

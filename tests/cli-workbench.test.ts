@@ -78,16 +78,16 @@ describe('built CLI authoring, cases and workbench', () => {
       expect(JSON.stringify(body.tools)).not.toContain('knowledge_read');
       sendStream(response, [delta({ content: 'Inspected the task.' }), delta({}, 'stop')]);
     });
-    // Explicit host capabilities remain available in the compact profile. E is off
-    // because this fixture checks direct lead access to persisted web/LSP bindings.
-    const run = await cli(['run', 'Inspect the project.', '--data-dir', data, '--workspace', root, '--model', 'test-model', '--base-url', url, '--max-context-tokens', '256000', '--max-output-tokens', '8192', '--agent-factors', 'A,B,C', '--webfetch', '--web-hosts', 'example.org', '--lsp-config', config, '--json'], { KODO_API_KEY: 'fixture' });
+    // Explicit host capabilities remain directly available to the main run of the default card.
+    const run = await cli(['run', 'Inspect the project.', '--data-dir', data, '--workspace', root, '--model', 'test-model', '--base-url', url, '--max-context-tokens', '256000', '--max-output-tokens', '8192', '--webfetch', '--web-hosts', 'example.org', '--lsp-config', config, '--json'], { KODO_API_KEY: 'fixture' });
     expect(run.code, `${run.err}\n${run.out}`).toBe(0);
     const events = run.out.trim().split(/\r?\n/).map(line => JSON.parse(line) as { runId: string; type: string });
     const runId = events.find(event => event.type === 'run.completed')!.runId;
     const saved = new Store(data);
     try {
       const source = saved.run(runId);
-      expect(saved.session(source.sessionId).toolProfile).toBe('compact-v2');
+      expect(saved.session(source.sessionId)).not.toHaveProperty('toolProfile');
+      expect(source.card.id).toMatch(/^builtin\/general-simple-web(?:-lsp)+$/u);
       expect(source.card.tools).toEqual(expect.arrayContaining(['web.fetch', 'lsp.hover']));
     } finally { saved.close(); }
     // The source config can change; persisted approved configuration remains pinned.

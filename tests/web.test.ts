@@ -11,9 +11,9 @@ import { answer, binding } from './helpers.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function setup(extra: Partial<LocalServerOptions> = {}, exploration?: boolean, toolProfile: 'compact-v1' | 'full' = 'compact-v1') {
+async function setup(extra: Partial<LocalServerOptions> = {}, exploration?: boolean) {
   const root = mkdtempSync(path.join(tmpdir(), 'kodo-web-')); const workspace = path.join(root, 'workspace'); mkdirSync(workspace);
-  const app = new Application(path.join(root, 'data'), { async complete() { return answer('结果 <script>alert(1)</script>'); } }, undefined, { exploration, toolProfile });
+  const app = new Application(path.join(root, 'data'), { async complete() { return answer('结果 <script>alert(1)</script>'); } }, undefined, { exploration });
   const options: LocalServerOptions = { workspace, binding, permissions: ['read'], card: { id: 'test/web', version: '1.0.0', name: 'Web test', digest: 'web-test', prompt: 'Complete the task.', tools: [] }, ...extra };
   let server = await createLocalServer(app, options);
   cleanups.push(async () => { await server.close(); await app.shutdown(); rmSync(root, { recursive: true, force: true }); });
@@ -68,26 +68,22 @@ describe('loopback web workbench', () => {
     await web.app.run(continuation.runId);
   });
   it.each([
-    { exploration: undefined, toolProfile: 'compact-v1' as const },
-    { exploration: false, toolProfile: 'compact-v1' as const },
-    { exploration: undefined, toolProfile: 'full' as const },
-    { exploration: false, toolProfile: 'full' as const },
-  ])('executes and continues the application default card through HTTP (%j)', async ({ exploration, toolProfile }) => {
-    const web = await setup({ card: undefined }, exploration, toolProfile);
+    { exploration: undefined },
+    { exploration: false },
+  ])('executes and continues the application default card through HTTP (%j)', async ({ exploration }) => {
+    const web = await setup({ card: undefined }, exploration);
     const created = await web.post('/api/runs', { objective: 'Use the default agent' });
     expect(created.status).toBe(202);
     const { runId } = await created.json() as { runId: string };
     const run = web.app.store.run(runId);
     expect(run.card.digest).toBe(web.app.defaultCard.digest);
-    expect(web.app.store.session(run.sessionId).toolProfile).toBe(toolProfile);
-    expect(run.card.tools.includes('knowledge.read')).toBe(toolProfile === 'full' && exploration !== false);
+    expect(run.card.tools.includes('knowledge.read')).toBe(false);
     await vi.waitFor(() => { expect(web.app.store.run(runId).status).toBe('completed'); });
     await web.restart();
     const continued = await web.post('/api/runs/' + runId + '/input', { content: 'Continue the default agent' }, 'default_followup_123');
     expect(continued.status).toBe(202);
     const next = await continued.json() as { runId: string };
     expect(web.app.store.run(next.runId).card.digest).toBe(run.card.digest);
-    expect(web.app.store.session(web.app.store.run(next.runId).sessionId).toolProfile).toBe(toolProfile);
     await vi.waitFor(() => { expect(web.app.store.run(next.runId).status).toBe('completed'); });
     const foreign = web.app.createRun({ objective: 'Different host contract', workspace: web.workspace, binding, card: { ...run.card, id: 'test/foreign', digest: 'foreign-card' } });
     expect((await web.post('/api/runs/' + foreign.id + '/cancel', {}, 'foreign_cancel_123')).status).toBe(403);

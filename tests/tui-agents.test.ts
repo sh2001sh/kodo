@@ -19,10 +19,9 @@ afterEach(async () => {
   }
 });
 
-function setup(toolProfile?: 'full') {
+function setup() {
   const complete = vi.fn(async () => answer('Synthetic fixture answer.'));
-  // Exercise Application defaults unless a compatibility case requests full tools.
-  const { app, root, runId } = fixture({ complete }, ['read', 'write'], { toolProfile, taskProtocol: toolProfile === 'full' ? 1 : undefined });
+  const { app, root, runId } = fixture({ complete }, ['read', 'write']);
   const context: AgentCommandContext = {
     app, workspace: root, runId, registry: new PackageRegistry(path.join(root, '.packages')),
     startTask: vi.fn(async () => {}), wake: vi.fn(),

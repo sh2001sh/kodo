@@ -24,7 +24,7 @@ describe('persistent run-owned todo tools', () => {
   it('persists complete lists through restart and isolates runs with optimistic concurrency', async () => {
     const root = temp();
     const state = path.join(root, '.state');
-    const first = new Application(state, undefined, undefined, { agentFactors: { D: false, E: false, B: false } });
+    const first = new Application(state, undefined);
     const run = first.createRun({ objective: 'plan', workspace: root, binding });
     const [read, write] = todoTools(first.store);
     const args = { expectedRevision: 0, items: [{ id: 'inspect', content: 'Inspect source', status: 'in_progress' }] };
@@ -34,7 +34,7 @@ describe('persistent run-owned todo tools', () => {
     const other = first.createRun({ objective: 'other', workspace: root, binding });
     expect(await read!.execute(context(first, other.id), {})).toMatchObject({ revision: 0, items: [] });
     await first.shutdown();
-    const second = new Application(state, undefined, undefined, { agentFactors: { D: false, E: false, B: false } });
+    const second = new Application(state, undefined);
     try {
       expect(await todoTools(second.store)[0]!.execute(context(second, run.id), {})).toMatchObject({ revision: 1, items: args.items });
       const recovered = await todoTools(second.store)[1]!.recover!({ run: second.store.run(run.id), call: {} as never, request: { id: 'w', name: 'todo.write', arguments: JSON.stringify(args) }, signal: new AbortController().signal });

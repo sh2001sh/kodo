@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Application } from '../src/application/index.js';
-import { compactDefaultCard, defaultCard, leanDefaultCard, parseCard, simpleDefaultCard, legacySimpleDefaultCard } from '../src/agents/card.js';
+import { parseCard, simpleDefaultCard } from '../src/agents/card.js';
 import { builtinToolNames } from '../src/tools/index.js';
-import { fixture } from './helpers.js';
+import { fixture, fullToolCard } from './helpers.js';
 
 function operation(app: Application, runId: string, name: string, args: Record<string, unknown>): Record<string, unknown> {
   return app.store.transaction(() => {
@@ -15,11 +15,9 @@ function caught(action: () => unknown): unknown {
   try { void action(); return undefined; } catch (error) { return error; }
 }
 
-const spawn = { toolProfile: 'compact-v2' as const, taskProtocol: 3 as const };
-
 describe('spawn shared-workspace default path', () => {
   it('creates children in the session workspace without an execution descriptor', () => {
-    const { app, root, runId } = fixture(undefined, ['read', 'write', 'exec'], spawn);
+    const { app, root, runId } = fixture(undefined, ['read', 'write', 'exec']);
     const session = app.store.session(app.store.run(runId).sessionId);
     const result = operation(app, runId, 'spawn_agent', { objective: 'Change one module', scope: { write: ['src/module-a'] } });
     expect(result).not.toHaveProperty('execution');
@@ -31,13 +29,13 @@ describe('spawn shared-workspace default path', () => {
   });
 
   it('rejects the removed isolated execution option at the tool schema', () => {
-    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], spawn);
+    const { app, runId } = fixture(undefined, ['read', 'write', 'exec']);
     expect(caught(() => operation(app, runId, 'spawn_agent', { objective: 'Change one module', scope: { write: ['src/module-a'] }, execution: 'isolated' })))
       .toMatchObject({ code: 'TOOL_ARGUMENTS', message: expect.stringMatching(/arguments do not match the spawn_agent schema/) });
   });
 
   it('keeps the shared write-conflict admission semantics from the kernel fix', () => {
-    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], spawn);
+    const { app, runId } = fixture(undefined, ['read', 'write', 'exec']);
     const holder = operation(app, runId, 'spawn_agent', { objective: 'Hold a slice', scope: { write: ['src/shared'] } });
     expect(caught(() => operation(app, runId, 'spawn_agent', { objective: 'Overlap the slice', scope: { write: ['src/shared/other.ts'] } })))
       .toMatchObject({ code: 'WRITE_SCOPE_CONFLICT', message: expect.stringContaining('overlaps child') });
@@ -48,17 +46,15 @@ describe('spawn shared-workspace default path', () => {
 
 describe('card tool surface after the delivery-tool removal', () => {
   it('default cards no longer declare workspace.commit or workspace.integrate', () => {
-    for (const card of [compactDefaultCard, legacySimpleDefaultCard, simpleDefaultCard, leanDefaultCard, defaultCard]) {
+    for (const card of [simpleDefaultCard, fullToolCard]) {
       expect(card.tools).not.toContain('workspace.commit');
       expect(card.tools).not.toContain('workspace.integrate');
     }
-    expect(compactDefaultCard.version).toBe('1.2.0');
-    expect(legacySimpleDefaultCard.version).toBe('1.2.0');
     expect(simpleDefaultCard.version).toBe('1.4.0');
   });
 
   it('fails fast for a card that still declares a removed delivery tool', () => {
-    const toolNames = [...defaultCard.tools];
+    const toolNames = [...fullToolCard.tools];
     expect(caught(() => parseCard(`---
 schema_version: 2
 id: legacy/isolated-writer
@@ -71,12 +67,12 @@ capabilities:
 Write files in the checkout.
 `, { toolNames }))).toMatchObject({ code: 'CARD_SCHEMA' });
     const { app } = fixture();
-    expect(caught(() => app.registerCard({ ...defaultCard, id: 'legacy/registered', tools: [...defaultCard.tools, 'workspace.integrate'] })))
+    expect(caught(() => app.registerCard({ ...fullToolCard, id: 'legacy/registered', tools: [...fullToolCard.tools, 'workspace.integrate'] })))
       .toMatchObject({ code: expect.stringMatching(/CARD_SCHEMA|CARD_UNAVAILABLE|CAPABILITY_CHANGED/) });
   });
 
   it('removed delivery tools are no longer executable or advertised', async () => {
-    const { app, runId } = fixture(undefined, ['read', 'write', 'exec'], spawn);
+    const { app, runId } = fixture(undefined, ['read', 'write', 'exec']);
     const run = app.store.run(runId);
     const session = app.store.session(run.sessionId);
     const names = app.coordinator.tools.specs(run.card.tools, session).map(spec => spec.name);

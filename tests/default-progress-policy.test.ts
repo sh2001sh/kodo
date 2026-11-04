@@ -1,17 +1,21 @@
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { legacySimpleDefaultCard, simpleDefaultCard } from '../src/agents/card.js';
+import { parseCard, serializeCard, simpleDefaultCard } from '../src/agents/card.js';
+import { hostToolNames } from '../src/tools/catalog.js';
 import { Application } from '../src/application/index.js';
 import type { Message } from '../src/runtime/types.js';
 import { answer, binding, call, calls, scripted, temp } from './helpers.js';
 
+/** A saved session's earlier simple card: same identity and method, without progress advice. */
+const savedSimpleCard = parseCard(serializeCard({ ...simpleDefaultCard, version: '1.2.0', nudges: undefined }), { toolNames: hostToolNames });
+
 describe('versioned default progress policy', () => {
-  it('keeps the frozen simple card version and enables advice only in the new version', () => {
-    expect(legacySimpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.2.0' });
-    expect(legacySimpleDefaultCard.nudges).toBeUndefined();
-    expect(simpleDefaultCard).toMatchObject({ id: legacySimpleDefaultCard.id, version: '1.4.0', nudges: true, tools: legacySimpleDefaultCard.tools, prompt: legacySimpleDefaultCard.prompt });
-    expect(simpleDefaultCard.digest).not.toBe(legacySimpleDefaultCard.digest);
+  it('enables advice through the default card version, not a changed identity or method', () => {
+    expect(simpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.4.0', nudges: true });
+    expect(savedSimpleCard.nudges).toBeUndefined();
+    expect(simpleDefaultCard).toMatchObject({ id: savedSimpleCard.id, tools: savedSimpleCard.tools, prompt: savedSimpleCard.prompt });
+    expect(simpleDefaultCard.digest).not.toBe(savedSimpleCard.digest);
   });
 
   it.each([false, true])('delivers progress advice through the actual default coordinator (memory=%s)', async memory => {
@@ -36,15 +40,15 @@ describe('versioned default progress policy', () => {
 
   it('reopens old sessions without rewriting their card while new sessions use the new policy', async () => {
     const root = temp(), directory = path.join(root, '.state');
-    const original = new Application(directory, scripted(answer()), undefined, { instructions: { global: false }, agentFactors: { A: false } });
-    const oldRun = original.createRun({ objective: 'Continue a saved session.', workspace: root, binding, card: legacySimpleDefaultCard });
+    const original = new Application(directory, scripted(answer()), undefined, { instructions: { global: false } });
+    const oldRun = original.createRun({ objective: 'Continue a saved session.', workspace: root, binding, card: savedSimpleCard });
     await original.shutdown();
-    const upgraded = new Application(directory, scripted(answer()), undefined, { instructions: { global: false }, agentFactors: { A: false } });
+    const upgraded = new Application(directory, scripted(answer()), undefined, { instructions: { global: false } });
     try {
       const current = upgraded.createRun({ objective: 'Use the default policy.', workspace: root, binding });
       expect(current.card).toEqual(simpleDefaultCard);
-      expect(upgraded.store.run(oldRun.id).card).toEqual(legacySimpleDefaultCard);
-      expect(upgraded.store.card(legacySimpleDefaultCard.id, '1.2.0')).toEqual(legacySimpleDefaultCard);
+      expect(upgraded.store.run(oldRun.id).card).toEqual(savedSimpleCard);
+      expect(upgraded.store.card(savedSimpleCard.id, '1.2.0')).toEqual(savedSimpleCard);
       const result = await upgraded.run(oldRun.id);
       expect(result.status, result.error).toBe('completed');
       expect(upgraded.store.run(oldRun.id).card.nudges).toBeUndefined();

@@ -202,7 +202,7 @@ describe('tool write locking', () => {
   it('records a takeover event and writes once a dead holder lock is replaced', async () => {
     const root = temp();
     const directory = path.join(temp(), 'locks');
-    const app = new Application(path.join(root, '.state'), scripted(calls(call('file.apply_patch', { path: 'out.txt', expectedHash: null, content: 'written' })), answer()), undefined, { agentFactors: { D: false, E: false, B: false }, lockDirectory: directory });
+    const app = new Application(path.join(root, '.state'), scripted(calls(call('file.apply_patch', { path: 'out.txt', expectedHash: null, content: 'written' })), answer()), undefined, { lockDirectory: directory });
     try {
       const created = app.createRun({ objective: 'Write the file.', workspace: root, binding, permissions: ['read', 'write'] });
       const workspace = app.store.session(created.sessionId).workspace;

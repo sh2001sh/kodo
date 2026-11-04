@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
-import { answer, binding, scripted, temp } from './helpers.js';
+import { answer, binding, fullToolCard, scripted, temp } from './helpers.js';
 
 const active: Application[] = [];
 afterEach(async () => { while (active.length) await active.pop()!.shutdown(); });
@@ -85,8 +85,8 @@ describe('agent card host integration', () => {
   });
 
   it('stores contract revisions as distinct immutable artifacts', () => {
-    const { root, app } = setup({ toolProfile: 'full', taskProtocol: 2 });
-    const run = app.createRun({ objective: 'Record a contract', workspace: root, binding, permissions: ['read', 'write'] });
+    const { root, app } = setup();
+    const run = app.createRun({ objective: 'Record a contract', workspace: root, binding, permissions: ['read', 'write'], card: fullToolCard });
     const write = (content: string) => app.coordinator.tools.executeAtomic(run.id, 'artifact.write', { name: 'behavior', kind: 'contract', content }, new AbortController().signal) as { id: string };
     const before = write('Input is a path.');
     const after = write('Input is a path; an absent path returns an error.');

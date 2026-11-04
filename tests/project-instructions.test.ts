@@ -15,7 +15,7 @@ const write = (root: string, file: string, text: string): void => {
 const discover = (root: string, directories: string[] = [], maxBytes = 16 * 1024) => discoverInstructions({ workspace: root, directories, includeRoot: true, global: false, loaded: new Set(), maxBytes });
 const kinds = (messages: Message[]) => messages.map(message => attachmentKind(message) ?? message.role);
 function app(root: string, provider: Provider, global: string | false = false): Application {
-  const created = new Application(path.join(root, '.state'), provider, undefined, { instructions: { global }, agentFactors: { D: false, E: false, B: false } });
+  const created = new Application(path.join(root, '.state'), provider, undefined, { instructions: { global } });
   return created;
 }
 

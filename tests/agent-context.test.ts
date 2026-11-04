@@ -1,136 +1,75 @@
 import { describe, expect, it } from 'vitest';
-import { cpSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { defaultCard } from '../src/agents/card.js';
+import { simpleDefaultCard as defaultCard } from '../src/agents/card.js';
 import { spawnAgentSpec } from '../src/messaging/spawn-spec.js';
-import { followUpContext, initialContext, rebuildSummaryPrefix } from '../src/runtime/context.js';
+import { followUpContext, initialContext, rebuildSummaryPrefix, sharedKernelRules } from '../src/runtime/context.js';
 import { attachment, attachmentKind } from '../src/runtime/attachments.js';
-import { normalizeAgentFactors } from '../src/runtime/agent-factors.js';
+import { mainGuidance } from '../src/runtime/main-guidance.js';
 import { splitContextLayers } from '../src/runtime/context-inspection.js';
 import { initialInstructions, instructionMessage, prepareInstructionContext, refreshInstructions } from '../src/runtime/instruction-layer.js';
 import { estimateTextTokens } from '../src/runtime/context-tokens.js';
 import { withEnvironment } from '../src/runtime/state-frame.js';
-import { answer, binding, fixture, temp } from './helpers.js';
-import { Application } from '../src/application/index.js';
+import { answer, fixture, temp } from './helpers.js';
 import type { Provider } from '../src/runtime/types.js';
 import type { Message } from '../src/runtime/types.js';
 
 const instructionMessageTokens = (message?: Message): number => message ? estimateTextTokens(JSON.stringify(message)) : 0;
 
-describe('agent context factors', () => {
-  it('keeps the complete R0 provider request byte-identical to a persisted legacy session', async () => {
-    const root = temp(), state = path.join(root, 'seed');
-    writeFileSync(path.join(root, 'AGENTS.md'), 'Use the project formatter and preserve public names.');
-    const off = { A: false, B: false, C: false, D: false, E: false };
-    const seed = new Application(state, undefined, undefined, { taskProtocol: 1, toolProfile: 'full', agentFactors: off, exploration: false, instructions: { global: false } });
-    const run = seed.createRun({ objective: 'Read the project and summarize.', workspace: root, binding, permissions: ['read', 'write'] });
-    await seed.shutdown();
-    const requests: Parameters<Provider['complete']>[0][] = [];
-    for (const legacy of [false, true]) {
-      const directory = path.join(root, legacy ? 'legacy' : 'R0');
-      cpSync(state, directory, { recursive: true });
-      const app = new Application(directory, { async complete(request) { requests.push(structuredClone(request)); return answer(); } }, undefined, { agentFactors: off, exploration: false, instructions: { global: false } });
-      try {
-        if (legacy) {
-          const session = app.store.session(run.sessionId);
-          delete session.agentFactors;
-          app.store.putSession(session);
-          const rules = initialInstructions(root, { global: false, capacityBytes: 16_384 });
-          app.store.updateRun(run.id, { contextRef: app.store.blob(initialContext(root, session.permissions, run.card, run.objective, run, instructionMessage(rules.chain))) });
-        }
-        expect((await app.run(run.id)).status).toBe('completed');
-      } finally { await app.shutdown(); }
-    }
-    expect(requests).toHaveLength(2);
-    expect(JSON.stringify(requests[0])).toBe(JSON.stringify(requests[1]));
-    expect(requests[0]!.tools.find(tool => tool.name === 'spawn_agent')!.parameters.properties).not.toHaveProperty('agent');
-    expect(requests[0]!.tools.find(tool => tool.name === 'artifact.write')!.parameters.properties).not.toHaveProperty('kind');
-    expect(requests[0]!.tools.some(tool => tool.name === 'agent.derive')).toBe(false);
-  });
-
-  it('preserves the legacy prompt bytes with all factors disabled and changes independent clauses', () => {
-    const baseline = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' });
-    const off = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { A: false, B: false, C: false } });
-    expect(JSON.stringify(off)).toBe(JSON.stringify(baseline));
-    expect(normalizeAgentFactors()).toEqual({ A: false, B: false, C: false, D: false, E: false });
-    const b = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { B: true } });
-    expect(b[0]!.content).toContain('Start each request with a brief plan of the steps and their dependencies.');
-    expect(b[0]!.content).toContain('You are the team lead.');
-    expect(b[0]!.content).toContain('After acceptance, finish');
-    expect(b[0]!.content).toContain('Keep one main phase in_progress');
-    expect(b[0]!.content).toContain('Have each owner deliver the implementation and actual check-call references together.');
-    // 1d: the base main text carries the fresh/fork guidance; no removed collaboration tool is named.
-    expect(b[0]!.content).toContain('fork_of continues a settled child with its exact context');
-    for (const removed of ['followup_task', 'send_message', 'Use explore', 'todoId', 'executor main or agent', 'do small tasks directly', 'three or more files', 'Use spawn_agent only to change']) expect(b[0]!.content).not.toContain(removed);
-    expect(b.slice(2)).toEqual(baseline.slice(2));
-    // Factor C is an independent paragraph of the assembled (task protocol >= 2) policy.
-    const structured = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { taskProtocol: 2 });
-    const c = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, undefined, { factors: { C: true }, taskProtocol: 2 });
-    expect(structured[0]!.content).not.toContain('inherit your card and permissions');
-    expect(c[0]!.content).toContain('Delegate whole independent outcomes to children that inherit your card and permissions; they may only narrow them.');
-    expect(c[0]!.content).toContain('Use a fresh child for independent black-box review.');
-    expect(c[0]!.content).not.toContain('named input slots');
-    expect(c.slice(1)).toEqual(structured.slice(1));
+describe('agent context', () => {
+  it('assembles every default main policy paragraph without rewriting the card method', () => {
+    const main = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' });
+    expect(main[0]!.content!.startsWith(`${sharedKernelRules} ${mainGuidance} Workspace: workspace.`)).toBe(true);
+    expect(main[0]!.content).toContain('Delegate whole independent outcomes to children that inherit your card and permissions; they may only narrow them.');
+    expect(main[0]!.content).toContain('Use a fresh child for independent black-box review.');
+    // The factor-B text rewrite and the removed collaboration tools are gone from the main prompt.
+    for (const removed of ['You are the team lead', 'named input slots', 'followup_task', 'send_message', 'Use explore', 'todoId', 'executor main or agent', 'do small tasks directly', 'three or more files', 'Use spawn_agent only to change']) expect(main[0]!.content).not.toContain(removed);
+    expect(main[1]!.content).toBe(`Agent method configuration (subordinate to host rules and user task):
+${defaultCard.prompt}`);
   });
 
   it('keeps team-lead responsibilities out of child prompts', () => {
-    const context = initialContext('workspace', ['read'], defaultCard, 'Find the parser entry point.', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true, B: true, C: true } });
+    const context = initialContext('workspace', ['read'], defaultCard, 'Find the parser entry point.', { id: 'child', parentId: 'main' });
     const text = context.map(message => message.content).join('\n');
     expect(text).toContain('You cannot spawn children, cancel runs or ask the user');
     expect(text).not.toContain('Start each request with a brief plan');
     expect(text).not.toContain('You are the team lead');
     expect(text).not.toContain('Delegate substantive investigation');
+    expect(text).not.toContain(mainGuidance);
     expect(text).not.toContain('followup_task');
   });
 
-  it.each([
-    { A: false, B: true, C: false },
-    { A: true, B: true, C: true },
-    { A: true, B: false, C: true },
-  ])('delivers consistent role and dispatch guidance across main follow-ups with %j', async factors => {
+  it('delivers consistent role and dispatch guidance across main follow-ups', async () => {
     const requests: Parameters<Provider['complete']>[0][] = [];
     const { app, runId } = fixture({ async complete(request) {
       requests.push(structuredClone(request));
       return answer('Acknowledged the current task.');
-    } }, undefined, { agentFactors: factors });
+    } });
     await app.run(runId);
     const next = app.submitInput(runId, 'Explain the next project phase.');
     await app.run(next.id);
     expect(requests).toHaveLength(2);
     for (const request of requests) {
-      expect(request.messages[0]!.content!.includes('You are the team lead.')).toBe(factors.B);
+      expect(request.messages[0]!.content).toContain(mainGuidance);
+      expect(request.messages[0]!.content).not.toContain('You are the team lead.');
       const spawn = request.tools.find(tool => tool.name === 'spawn_agent')!;
-      // 1d: the spawn description no longer varies with agent factors.
       expect(spawn.description.startsWith(spawnAgentSpec.description)).toBe(true);
       for (const removed of ['Choose delegation', 'explore', 'followup_task', 'continue your independent work']) expect(spawn.description).not.toContain(removed);
-      if (factors.B) expect(request.messages[0]!.content).toContain('Have each owner deliver the implementation and actual check-call references together');
-      // The roster selectors are gone for every card and factor combination.
+      // The roster selectors are gone.
       expect(Object.hasOwn(spawn.parameters.properties as object, 'agent')).toBe(false);
       expect(Object.hasOwn(spawn.parameters.properties as object, 'slots')).toBe(false);
       expect(request.tools.some(tool => tool.name === 'file.patch')).toBe(true);
     }
   });
 
-  it('keeps B/C-only project instruction bytes identical to R0', () => {
-    const { app, root, runId } = fixture(undefined, undefined, { agentFactors: { A: false, B: false, C: false }, instructions: { global: false } });
-    writeFileSync(path.join(root, 'AGENTS.md'), 'Use the project formatter.');
-    const run = app.store.run(runId), session = app.store.session(run.sessionId);
-    const baseline = prepareInstructionContext(app.store, run, session, { global: false });
-    for (const factors of [{ B: true }, { C: true }]) {
-      const candidate = prepareInstructionContext(app.store, run, { ...session, agentFactors: factors }, { global: false });
-      expect(candidate.messages.slice(2)).toEqual(baseline.messages.slice(2));
-      expect(candidate.instructions).toEqual(baseline.instructions);
-    }
-  });
-
   it('orders L3 project instructions ahead of the environment without a roster layer', () => {
-    const messages = withEnvironment(initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, attachment('project-instructions', 'rules'), { factors: { A: true } }), attachment('environment', 'env'));
+    const messages = withEnvironment(initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' }, attachment('project-instructions', 'rules')), attachment('environment', 'env'));
     expect(messages.map(attachmentKind)).toEqual([undefined, undefined, 'project-instructions', 'environment', undefined]);
     const layers = splitContextLayers(messages);
     expect(layers.L2).toHaveLength(1);
     expect(layers.L2[0]!.content).toContain('Agent method configuration');
     expect(layers.L5).toEqual([{ role: 'user', content: 'objective' }]);
-    const child = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'child', parentId: 'main' }, undefined, { factors: { A: true } });
+    const child = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'child', parentId: 'main' });
     expect(child.some(message => attachmentKind(message) === 'agents')).toBe(false);
   });
 

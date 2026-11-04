@@ -60,7 +60,7 @@ describe('host-approved child models and file scopes', () => {
       seen.push({ model: request.binding.model, output: request.maxOutputTokens });
       return answer('child complete');
     });
-    const app = new Application(path.join(root, '.state'), provider, undefined, { agentFactors: { D: false, E: false, B: false }, modelBindings: { selected: { ...binding, model: limits.model, limits: { context: limits.context, output: limits.output } } } });
+    const app = new Application(path.join(root, '.state'), provider, undefined, { modelBindings: { selected: { ...binding, model: limits.model, limits: { context: limits.context, output: limits.output } } } });
     try {
       const parent = app.createRun({ objective: 'Main', workspace: root, binding });
       const childId = spawn(app.coordinator.mailbox, parent, { model_binding: 'selected' });
@@ -76,7 +76,7 @@ describe('host-approved child models and file scopes', () => {
       expect(request.maxOutputTokens).toBe(800);
       return answer('capped child complete');
     });
-    const app = new Application(path.join(root, '.state'), provider, undefined, { agentFactors: { D: false, E: false, B: false }, modelBindings: { large: { ...binding, model: 'large', limits: { context: 512_000, output: 16_384 } } } });
+    const app = new Application(path.join(root, '.state'), provider, undefined, { modelBindings: { large: { ...binding, model: 'large', limits: { context: 512_000, output: 16_384 } } } });
     try {
       const parent = app.createRun({ objective: 'Main', workspace: root, binding, budget: { maxOutputTokens: 800 } });
       const childId = spawn(app.coordinator.mailbox, parent, { model_binding: 'large' });
@@ -101,7 +101,7 @@ describe('host-approved child models and file scopes', () => {
       expect(request.messages.some(message => message.role === 'assistant' && message.content === largeResult)).toBe(true);
       return answer('continued with the same model and context');
     });
-    const app = new Application(path.join(root, '.state'), provider, undefined, { agentFactors: { D: false, E: false, B: false }, modelBindings: { small: { ...binding, model: 'small-continuation', limits: { context: 10_000, output: 1000 } } } });
+    const app = new Application(path.join(root, '.state'), provider, undefined, { modelBindings: { small: { ...binding, model: 'small-continuation', limits: { context: 10_000, output: 1000 } } } });
     try {
       const card = app.parseCard(`---
 schema_version: 1
@@ -213,7 +213,7 @@ Read the host value using custom.child and report its evidence.
   it('persists fresh child tool contracts and executes a custom tool through the child loop', async () => {
     const root = temp();
     let executions = 0;
-    const app = new Application(path.join(root, '.state'), scripted(calls(call('custom.child', {})), answer('custom child complete')), undefined, { agentFactors: { D: false, E: false, B: false }, tools: [customTool('1.0.0', context => { executions++; return { runId: context.run.id, value: 'child evidence' }; })] });
+    const app = new Application(path.join(root, '.state'), scripted(calls(call('custom.child', {})), answer('custom child complete')), undefined, { tools: [customTool('1.0.0', context => { executions++; return { runId: context.run.id, value: 'child evidence' }; })] });
     try {
       const parent = app.createRun({ objective: 'Main with a custom card', workspace: root, binding, card: childCard(app) });
       const childId = spawn(app.coordinator.mailbox, parent);
@@ -229,7 +229,7 @@ Read the host value using custom.child and report its evidence.
   it.each(['1.0.0', '2.0.0'])('preserves predecessor contracts across restoration with host tool version %s', async version => {
     const root = temp();
     const directory = path.join(root, '.state');
-    const original = new Application(directory, scripted(calls(call('custom.child', {})), answer('original complete')), undefined, { agentFactors: { D: false, E: false, B: false }, tools: [customTool('1.0.0', () => 'original value')] });
+    const original = new Application(directory, scripted(calls(call('custom.child', {})), answer('original complete')), undefined, { tools: [customTool('1.0.0', () => 'original value')] });
     let parentId: string;
     let childId: string;
     let originalBindings: Run['toolBindings'];
@@ -247,7 +247,7 @@ Read the host value using custom.child and report its evidence.
     let requests = 0;
     const delegate = scripted(calls(call('custom.child', {})), answer('continued complete'));
     const provider: Provider = { complete(...args) { requests++; return delegate.complete(...args); } };
-    const restored = new Application(directory, provider, undefined, { agentFactors: { D: false, E: false, B: false }, tools: [customTool(version, () => { executions++; return 'continued value'; })] });
+    const restored = new Application(directory, provider, undefined, { tools: [customTool(version, () => { executions++; return 'continued value'; })] });
     try {
       const continuationId = spawn(restored.coordinator.mailbox, restored.store.run(parentId!), { fork_of: childId! });
       const continuation = restored.store.run(continuationId);
