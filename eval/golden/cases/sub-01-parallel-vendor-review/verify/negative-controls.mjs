@@ -18,6 +18,8 @@ const MUTATIONS = [
   ['cloudway marked as meeting all', { comparison: swapRow('云途 Cloudway（', '否（数据驻留不满足）', '是') }],
   ['xingheng marked as failing', { comparison: swapRow('星衡科技（', '| 是 |', '| 否（周期） |') }],
   ['recommends lanqiao', { comparison: text => text.replace('推荐星衡科技：它是', '推荐蓝桥数智：它是') }],
+  ['recommends bold cloudway', { comparison: text => text.replace('推荐星衡科技：它是', '推荐**云途 Cloudway**：它是') }],
+  ['explains exclusions but recommends nobody', { comparison: text => text.replace('推荐星衡科技：它是', '按“任一项不满足即不予推荐”排除蓝桥数智：它是').replace(/星衡/gu, '某家') }],
   ['duplicate vendor row', { comparison: text => text.replace('| 远帆信息（', '| 星衡科技备选 | 116 | 14 | 99.95% | 境内 | 是 |\n| 远帆信息（') }],
   ['review drops a vendor section', { review: text => text.replace(/## 远帆信息[\s\S]*?(?=## 云途)/u, '') }],
   ['review without quotes', { review: text => text.replace(/“[^”]*”/gu, '原文') }],

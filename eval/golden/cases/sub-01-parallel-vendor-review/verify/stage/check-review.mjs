@@ -79,7 +79,8 @@ else {
   else {
     const section = recommendation.split(/^##\s/mu)[0];
     if (!section.includes('星衡')) problems.push('推荐 section does not recommend 星衡科技');
-    if (/推荐[^。\n]{0,12}(蓝桥|远帆|云途|Cloudway)/u.test(section)) problems.push('推荐 section recommends a vendor that fails a hard requirement');
+    // A positive recommendation names the vendor right after 推荐; "不予推荐…蓝桥" explains an exclusion.
+    if (/(?<![不予])推荐[：:]?\s*\**\s*(蓝桥|远帆|云途|Cloudway)/u.test(section)) problems.push('推荐 section recommends a vendor that fails a hard requirement');
   }
 }
 
