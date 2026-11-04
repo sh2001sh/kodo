@@ -11,8 +11,8 @@
 | 1b | 隔离检出与集成删除（`execution-*`，约 1,050 行源码） | **已完成并合并** | [批次 1b 记录](kodo-phase1-batch1b-20261103.md)；merge `03edea1`；两次候选矩阵 24/27、21/27（基线 22/27），无新增违规 |
 | 1c | 名册、路由、留存、派生、预设与角色卡删除 | **已完成并合并** | [批次 1c 记录](kodo-phase1-batch1c-20261103.md)；merge `0e50fbd`；矩阵 21/27，report-01 的掉格在 1b 代码上同时段复现（归因后不计），token/耗时匹配格中位数 0.88 / 0.96 |
 | 1d | 协作工具精简（spawn/wait/inspect/cancel/ask_user 保留，fork 只追加），todo 改为纯清单 | **已完成并合并** | [批次 1d 记录](kodo-phase1-batch1d-20261104.md)；merge `1eb0e45`；对同时段 1c 对照：无新增违规，token/耗时中位数 1.00/1.09，data-03 扩样 5/12 对 8/12（p≈0.4） |
-| 1e | 工具档位 / A–E 因素 / 任务协议收敛为一套；方法阶段 P1–P4 删除 | **实施中**（worktree `phase1/batch1e`；默认请求逐字节快照 `tests/default-request-invariants.test.ts` 已提交） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
-| 1f | 提示词审计 + 默认身份改为通用工作助手 | 待开始（地图已就绪） | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) |
+| 1e | 工具档位 / A–E 因素 / 任务协议收敛为一套；方法阶段 P1–P4 删除 | **已完成并合并** | [批次 1e 记录](kodo-phase1-batch1e-20261104.md)；merge `348a97c`；默认请求逐字节不变（护栏测试）；对 1d：20/27 对 19/27，token/耗时中位数 0.83/0.86 |
+| 1f | 提示词审计 + 默认身份改为通用工作助手 | **实施中** | [1e/1f 收敛地图](kodo-phase1-batch1e-1f-map-20261103.md) §5 |
 
 ## 阶段 1 门槛口径（1a 之后修正）
 
@@ -34,8 +34,8 @@ A 相对基线的 +38% 与 B 的 −2.6% 差 0.89σ）。因此后续批次的�
 
 ## 当前工作区状态
 
-- main：1d 已合并（`1eb0e45`）。
-- worktree：`.kodo/tmp/p1e-worktree`（branch `phase1/batch1e`，1e 实施中）；`p1a`–`p1d` 四个已合并分支的 worktree 可清理；
+- main：1e 已合并（`348a97c`）。
+- worktree：`p1a`–`p1e` 五个已合并分支的 worktree 可清理（强制删除需用户确认）；
   `.kodo/tmp/pre1a-worktree`（`e839a68`，只用于 sub-01 基线）。
 - 评测证据：`baseline-20261103`、`phase1a-*`、`phase1b-*`、`phase1c-*`（含两次 report-01 复测）、`phase1b-attrib-report01-*`（1b 代码归因）、
   `sub01-baseline-pre1a-*`。
