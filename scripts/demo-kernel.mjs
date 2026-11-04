@@ -125,7 +125,7 @@ try {
   expect(values.scripted || (binding.model && (process.env.KODO_API_KEY || process.env.OPENAI_API_KEY)), 'real mode requires KODO_MODEL and KODO_API_KEY (or OPENAI_API_KEY); no real-provider success is claimed');
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(workspace, inputFile), `Evidence identifier: ${marker}\n`, { encoding: 'utf8', flag: 'wx' });
-  app = values.scripted ? new Application(dataDir, scriptedProvider(), undefined, { agentFactors: { B: false, D: false, E: false } }) : new Application(dataDir);
+  app = values.scripted ? new Application(dataDir, scriptedProvider()) : new Application(dataDir);
   unsubscribe = app.store.subscribe(event => { if (['run.completed', 'run.failed', 'run.waiting', 'wait.settled', 'decision.updated'].includes(event.type)) console.log(JSON.stringify({ event: event.type, runId: event.runId, ...event.data })); });
   stage = 'create main';
   main = app.createRun({ workspace, binding, card, permissions: ['read', 'write'], budget: { maxTokens: 200_000, maxModelCalls: 30, maxToolCalls: 60, maxOutputTokens: 2048, maxContextChars: 64_000, maxConcurrentModels: 1, maxChildren: 2 },
