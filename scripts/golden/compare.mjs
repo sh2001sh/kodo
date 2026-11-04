@@ -34,6 +34,12 @@ export const COMPARE_SCHEMA_VERSION = 1;
 /** Stage-1 regression ceiling for mean cost and mean wall time (§8). */
 export const REGRESSION_LIMIT_PCT = 10;
 const LIMIT_RATIO = 1 + REGRESSION_LIMIT_PCT / 100;
+/**
+ * Tail cost: P90 of candidate-cell / baseline-case-median token ratios. Same-code
+ * matrix pairs measured 1.3–1.9 (one runaway cell pushed a pair to 3.7), so 2.0
+ * flags a fatter tail than repeated runs of unchanged code produce.
+ */
+export const TAIL_LIMIT_RATIO = 2;
 const EPSILON = 1e-9;
 const MAX_LISTED = 25;
 
@@ -620,6 +626,17 @@ function recheckEvidence(rechecks) {
   return byCase;
 }
 
+function judgeTailRatio(ratios, comparable) {
+  const id = 'costTail';
+  const name = `P90 cost ratio to the baseline case median <= ${TAIL_LIMIT_RATIO.toFixed(2)}`;
+  if (!comparable) return { id, name, status: 'undetermined', detail: { reason: 'baseline and candidate use different cost bases' } };
+  if (!ratios.length) return { id, name, status: 'undetermined', detail: { reason: 'no candidate cell has an eligible baseline case' } };
+  const sorted = [...ratios].sort((left, right) => left - right);
+  const p90 = sorted[Math.min(sorted.length - 1, Math.ceil(0.9 * sorted.length) - 1)];
+  return { id, name, status: p90 <= TAIL_LIMIT_RATIO + EPSILON ? 'passed' : 'failed',
+    detail: { ratio: round(p90), limit: TAIL_LIMIT_RATIO, matchedCells: ratios.length, max: round(sorted.at(-1)), reason: 'P90 of candidate cost over the baseline case median; catches runaway cells the median hides' } };
+}
+
 /** A recheck needs at least this many scored runs before it can clear a regression. */
 export const MIN_RECHECK_RUNS = 3;
 
@@ -688,6 +705,7 @@ function judgeGate({ completeness, cases, violations, means, costBasisComparable
   criteria.push(costBasisComparable
     ? judgeMedianRatio({ id: 'costRegression', name: costName, baseline: means.baseline.meanCost, candidate: means.candidate.meanCost, ratios: ratios.cost, kind: 'cost' })
     : { id: 'costRegression', name: costName, status: 'undetermined', detail: { reason: 'baseline and candidate use different cost bases' } });
+  criteria.push(judgeTailRatio(ratios.cost, costBasisComparable));
   criteria.push(judgeMedianRatio({ id: 'wallRegression', name: `median wallMs ratio to the baseline case median <= ${LIMIT_RATIO.toFixed(2)}`, baseline: means.baseline.meanWallMs, candidate: means.candidate.meanWallMs, ratios: ratios.wall, kind: 'wall' }));
 
   const failed = criteria.filter(entry => entry.status === 'failed');
@@ -820,6 +838,8 @@ export function renderText(report) {
     const detail = criterion.id === 'passRateNotBelow'
       ? `regressed cases: ${criterion.detail.regressedCases.map(entry => `${entry.caseId} ${entry.baseline}→${entry.candidate}${entry.recheck ? ` (recheck ${entry.recheck}, pooled ${entry.pooled})` : ''}`).join(', ') || 'none'}` +
         (criterion.detail.clearedByRecheck?.length ? `; cleared by recheck: ${criterion.detail.clearedByRecheck.map(entry => `${entry.caseId} ${entry.candidate}, recheck ${entry.recheck}, pooled ${entry.pooled}`).join(', ')}` : '')
+      : criterion.id === 'costTail'
+        ? (isFiniteNumber(criterion.detail.ratio) ? `P90 ratio ${formatValue(criterion.detail.ratio, 3)} (max ${formatValue(criterion.detail.max, 3)}) over ${criterion.detail.matchedCells} cells` : criterion.detail.reason)
       : criterion.id === 'noNewRuleViolations'
         ? `added: ${criterion.detail.added.map(entry => `${entry.key} ${entry.ruleId}`).join(', ') || 'none'}` +
           (criterion.detail.clearedByRecheck?.length ? `; cleared by recheck: ${criterion.detail.clearedByRecheck.map(entry => `${entry.key} ${entry.ruleId} (${entry.recheck})`).join(', ')}` : '')

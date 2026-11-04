@@ -500,3 +500,17 @@ test('a recheck that reproduces the violation, is too short, or is human-pending
   const pending = recheckOf('/runs/recheck', [makeReport({ repeat: 1 }), makeReport({ repeat: 2 }), makeReport({ repeat: 3, humanPending: true })]);
   assert.ok(compareGolden(baseline, candidate, { rechecks: [pending] }).gate.triggered.includes('noNewRuleViolations'));
 });
+
+test('a fat cost tail fails the P90 criterion even when the median holds', () => {
+  const tokens = value => ({ totalTokens: value, cost: { basis: 'tokens', value, certain: true } });
+  const cases = ['case-a', 'case-b', 'case-c', 'case-d'];
+  const baseline = evidence('/runs/baseline', cases.flatMap(caseId => [1, 2, 3].map(repeat => makeReport({ caseId, repeat, metrics: tokens(1_000) }))));
+  const runaway = evidence('/runs/candidate', cases.flatMap((caseId, index) => [1, 2, 3].map(repeat => makeReport({ caseId, repeat, metrics: tokens(index < 2 && repeat === 3 ? 4_000 : 1_000) }))));
+  const report = compareGolden(baseline, runaway);
+  const tail = report.gate.criteria.find(entry => entry.id === 'costTail');
+  assert.equal(report.gate.criteria.find(entry => entry.id === 'costRegression').status, 'passed');
+  assert.equal(tail.status, 'failed');
+  assert.equal(tail.detail.ratio, 4);
+  assert.match(renderText(report), /P90 ratio 4 \(max 4\) over 12 cells/u);
+  assert.equal(compareGolden(baseline, baseline).gate.criteria.find(entry => entry.id === 'costTail').status, 'passed');
+});
