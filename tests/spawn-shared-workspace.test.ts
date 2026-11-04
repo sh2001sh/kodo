@@ -50,7 +50,7 @@ describe('card tool surface after the delivery-tool removal', () => {
       expect(card.tools).not.toContain('workspace.commit');
       expect(card.tools).not.toContain('workspace.integrate');
     }
-    expect(simpleDefaultCard.version).toBe('1.4.0');
+    expect(simpleDefaultCard.version).toBe('2.0.0');
   });
 
   it('fails fast for a card that still declares a removed delivery tool', () => {

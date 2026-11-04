@@ -141,22 +141,23 @@ export function serializeCard(card: Card): string {
 /** Reusable structural registration check for callers receiving an already parsed Card object. */
 export function validateCard(card: Card, options: CardCapabilities = {}): void { parseCard(serializeCard(card), options); }
 export const loadCard = (file: string, options?: CardCapabilities): Card => parseCard(readFileSync(file, 'utf8'), options);
-/** The method body of the single default card; its tool view hides redundant CRUD only when exec is granted. */
-const simpleCardBase = parseCard(`---
+/**
+ * The single default card (phase 1f): a general work assistant's file and command
+ * method. Delegation and review policy live in the system prompt, not here. Its tool
+ * view hides redundant CRUD only when exec is granted.
+ */
+export const simpleDefaultCard = parseCard(`---
 schema_version: 1
 id: builtin/general-simple
-version: 1.2.0
+version: 2.0.0
 name: General agent
-description: Complete local coding work directly and delegate independent work when useful.
+description: Complete local work with files, commands and child agents.
+nudges: true
 capabilities:
   tools: [file.read, file.list, file.search, file.apply_patch, file.patch, file.mkdir, file.rename, file.delete, shell.exec, process.run, todo.read, todo.write]
 ---
-Read the relevant current code, make the requested change and verify it. Use file.read before native edits; file.patch makes localized edits, while file.apply_patch creates or replaces a whole file and requires an existing parent directory. file.search matches literal text, not regular expressions. Use available native file-management tools when command execution is unavailable.
-Run short commands, tests, diffs and version-control operations directly; do not create an agent just to execute a command. Use registered background handles for long commands and process.read to collect their outcome. Do not wait for another task through shell sleep or polling.
-As the main agent, once entry points, independent file ownership and shared interfaces are clear, hand off an independent implementation with its focused checks. Continue your own work without designing the delegated implementation again. For corrections or related work, continue the settled owner with fork_of, passing confirmed facts, valid commands, excluded paths and the remaining gap. For independent review, start a fresh child with the artifacts and acceptance checks, not your conclusions. As a child, finish your assigned work and report blocking questions in your result.
-Reuse existing check output when code, inputs and environment still match. Finish when the requested behavior and required evidence are delivered; further changes need a concrete unmet requirement. Report actual changes, verification and remaining gaps. Never expose credentials.
+Read the relevant files before acting on them, then do the requested work and check it. Use file.read before native edits; file.patch makes localized edits, while file.apply_patch creates or replaces a whole file and requires an existing parent directory. file.search matches literal text, not regular expressions. Use native file-management tools when command execution is unavailable.
+Run short commands directly; use registered background handles for long ones and process.read to collect their outcome. Do not wait through shell sleep or polling.
+Reuse existing check output while its inputs and environment still match. Report actual changes, verification and remaining gaps.
 `, { toolNames: hostToolNames });
-
-/** The single default card (phase 1e): the simple coding card with progress advice. */
-export const simpleDefaultCard = parseCard(serializeCard({ ...simpleCardBase, version: '1.4.0', nudges: true }), { toolNames: hostToolNames });
 

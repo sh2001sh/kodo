@@ -3,6 +3,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { Application } from '../src/application/index.js';
+import { simpleDefaultCard } from '../src/agents/card.js';
+import { initialContext } from '../src/runtime/context.js';
+import { childRole, mainRole, systemRules } from '../src/runtime/system-prompt.js';
 import type { Provider } from '../src/runtime/types.js';
 
 type ModelRequest = Parameters<Provider['complete']>[0];
@@ -45,5 +48,24 @@ describe('default request invariants', () => {
       if (process.env.KODO_UPDATE_DEFAULT_REQUEST === '1' || !existsSync(fixtureFile)) writeFileSync(fixtureFile, `${JSON.stringify(snapshot, null, 2)}\n`);
       expect(snapshot).toEqual(JSON.parse(readFileSync(fixtureFile, 'utf8')));
     } finally { await app.shutdown(); }
+  });
+});
+
+describe('system prompt identity (phase 1f)', () => {
+  it('opens every run with the same general-assistant rules and no retired experiment wording', () => {
+    const card = simpleDefaultCard;
+    const main = initialContext('/one', ['read'], card, 'Task one.', { id: 'run-a' })[0]!.content!;
+    const other = initialContext('/two', ['read', 'write', 'exec'], card, 'Task two.', { id: 'run-b', finalResponse: 'optional', scope: { write: ['out'] } })[0]!.content!;
+    const child = initialContext('/one', ['read'], card, 'Child task.', { id: 'run-c', parentId: 'run-a' })[0]!.content!;
+    for (const text of [main, other, child]) expect(text.startsWith(`${systemRules} `)).toBe(true);
+    expect(systemRules).toContain('You are Kodo, a general work assistant.');
+    expect(main).toContain(mainRole);
+    expect(child).toContain(childRole);
+    expect(child).not.toContain(mainRole);
+    for (const retired of ['send_message', 'followup_task', 'explore', 'task graph', 'team lead', 'coding agent', 'local task agent', 'KODO_RUN_OUTPUT_DIR', 'Workers check modules', 'todoId', 'dependsOn']) {
+      expect(main).not.toContain(retired);
+      expect(child).not.toContain(retired);
+    }
+    expect(card.prompt).not.toMatch(/fork_of|fresh child|coding work/u);
   });
 });
