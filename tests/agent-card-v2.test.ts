@@ -64,8 +64,8 @@ describe('agent card schema v2', () => {
 
 describe('legacy cards and the single default identity', () => {
   it('keeps the single default card a v1 representation without roster tools', () => {
-    expect(simpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.4.0' });
-    expect(simpleDefaultCard.digest).toBe('1cf0999761c7721d283dcfc7ee9ec158a3178ffa792be40adc4f0c58f19c3006');
+    expect(simpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '2.0.0' });
+    expect(simpleDefaultCard.digest).toBe('9661e8756e67488cfa17843c23b960e5dd38f0ce11fac91f6227667b018c37ea');
     expect(simpleDefaultCard).not.toHaveProperty('schemaVersion');
     expect(simpleDefaultCard).not.toHaveProperty('members');
     // The deleted roster/routing tools cannot be referenced by the builtin card.

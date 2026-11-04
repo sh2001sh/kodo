@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { Application } from '../src/application/index.js';
 import { initialContext } from '../src/runtime/context.js';
-import { mainGuidance, reviewGuidance } from '../src/runtime/main-guidance.js';
+import { mainRole } from '../src/runtime/system-prompt.js';
 import { simpleDefaultCard } from '../src/agents/card.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
 import { answer, binding, fullToolCard, scripted, temp } from './helpers.js';
@@ -15,11 +15,8 @@ describe('fresh-child review guidance', () => {
       const context = initialContext('workspace', ['read'], simpleDefaultCard, 'objective', identity);
       for (const message of context) expect(message.content ?? '').not.toMatch(forbidden);
     }
-    expect(mainGuidance).not.toMatch(forbidden);
-    expect(mainGuidance).toContain('fresh');
-    expect(mainGuidance).toContain(reviewGuidance);
-    expect(reviewGuidance).toContain('fresh child');
-    expect(reviewGuidance).toContain('not the implementer');
+    expect(mainRole).not.toMatch(forbidden);
+    expect(mainRole).toContain('start a fresh child with the artifacts and acceptance checks, not your conclusions');
   });
 
   it('exposes exactly the five collaboration operations plus task, and update_progress as a native tool', async () => {

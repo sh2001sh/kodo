@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { simpleDefaultCard as defaultCard } from '../src/agents/card.js';
 import { spawnAgentSpec } from '../src/messaging/spawn-spec.js';
-import { followUpContext, initialContext, rebuildSummaryPrefix, sharedKernelRules } from '../src/runtime/context.js';
+import { followUpContext, initialContext, rebuildSummaryPrefix } from '../src/runtime/context.js';
 import { attachment, attachmentKind } from '../src/runtime/attachments.js';
-import { mainGuidance } from '../src/runtime/main-guidance.js';
+import { mainRole, systemRules } from '../src/runtime/system-prompt.js';
 import { splitContextLayers } from '../src/runtime/context-inspection.js';
 import { initialInstructions, instructionMessage, prepareInstructionContext, refreshInstructions } from '../src/runtime/instruction-layer.js';
 import { estimateTextTokens } from '../src/runtime/context-tokens.js';
@@ -19,9 +19,8 @@ const instructionMessageTokens = (message?: Message): number => message ? estima
 describe('agent context', () => {
   it('assembles every default main policy paragraph without rewriting the card method', () => {
     const main = initialContext('workspace', ['read'], defaultCard, 'objective', { id: 'main' });
-    expect(main[0]!.content!.startsWith(`${sharedKernelRules} ${mainGuidance} Workspace: workspace.`)).toBe(true);
-    expect(main[0]!.content).toContain('Delegate whole independent outcomes to children that inherit your card and permissions; they may only narrow them.');
-    expect(main[0]!.content).toContain('Use a fresh child for independent black-box review.');
+    expect(main[0]!.content!.startsWith(`${systemRules} ${mainRole} Workspace: workspace.`)).toBe(true);
+    expect(main[0]!.content).toContain('For independent review, start a fresh child with the artifacts and acceptance checks, not your conclusions.');
     // The factor-B text rewrite and the removed collaboration tools are gone from the main prompt.
     for (const removed of ['You are the team lead', 'named input slots', 'followup_task', 'send_message', 'Use explore', 'todoId', 'executor main or agent', 'do small tasks directly', 'three or more files', 'Use spawn_agent only to change']) expect(main[0]!.content).not.toContain(removed);
     expect(main[1]!.content).toBe(`Agent method configuration (subordinate to host rules and user task):
@@ -35,7 +34,7 @@ ${defaultCard.prompt}`);
     expect(text).not.toContain('Start each request with a brief plan');
     expect(text).not.toContain('You are the team lead');
     expect(text).not.toContain('Delegate substantive investigation');
-    expect(text).not.toContain(mainGuidance);
+    expect(text).not.toContain(mainRole);
     expect(text).not.toContain('followup_task');
   });
 
@@ -50,7 +49,7 @@ ${defaultCard.prompt}`);
     await app.run(next.id);
     expect(requests).toHaveLength(2);
     for (const request of requests) {
-      expect(request.messages[0]!.content).toContain(mainGuidance);
+      expect(request.messages[0]!.content).toContain(mainRole);
       expect(request.messages[0]!.content).not.toContain('You are the team lead.');
       const spawn = request.tools.find(tool => tool.name === 'spawn_agent')!;
       expect(spawn.description.startsWith(spawnAgentSpec.description)).toBe(true);

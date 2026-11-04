@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Application } from '../src/application/index.js';
 import { simpleDefaultCard } from '../src/agents/card.js';
-import { mainGuidance } from '../src/runtime/main-guidance.js';
+import { mainRole } from '../src/runtime/system-prompt.js';
 import { roleAllows } from '../src/runtime/role-view.js';
 import { toolSpecs } from '../src/runtime/step-host.js';
 import type { Permission } from '../src/runtime/types.js';
@@ -104,13 +104,12 @@ describe('complete coding loop with the default card', () => {
 
   it('keeps the single default identity and complete-loop main guidance', () => {
     expect(simpleDefaultCard.id).toBe('builtin/general-simple');
-    expect(simpleDefaultCard.version).toBe('1.4.0');
+    expect(simpleDefaultCard.version).toBe('2.0.0');
     expect(roleAllows({ card: simpleDefaultCard }, { permissions: ['read', 'write', 'exec'] }, 'shell.exec')).toBe(true);
-    expect(mainGuidance).toContain('Do not create a child solely to run a command');
-    expect(mainGuidance).not.toContain('Command and specialist tools are assigned');
-    // 1d: the todo paragraph is a plain checklist.
-    expect(mainGuidance).toContain('Independent items may be in_progress together.');
-    for (const removed of ['keep only one item in_progress', 'dependsOn', 'todoId']) expect(mainGuidance).not.toContain(removed);
+    expect(mainRole).toContain('Run ordinary commands, diffs and tests directly');
+    // The todo list is plain planning guidance.
+    expect(mainRole).toContain('keep a concise todo list; it guides the work and proves nothing');
+    for (const removed of ['keep only one item in_progress', 'dependsOn', 'todoId', 'Command and specialist tools are assigned']) expect(mainRole).not.toContain(removed);
   });
 
   it('persists the default tool view across reopening', async () => {

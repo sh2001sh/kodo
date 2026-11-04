@@ -194,7 +194,7 @@ describe('verified recovery of uncertain effects', () => {
     const { app, root, runId } = fixture({ async complete(request) {
       const identity = request.messages[0]?.content ?? '';
       const childContinuation = app.store.listRuns().find(run => run.continuationOf === originalChildId)!;
-      if (identity.includes('You are a child.')) {
+      if (identity.includes('You are a child agent.')) {
         expect(identity).toContain(`Run ID: ${childContinuation.id}`);
         return answer('verified recovered child evidence');
       }

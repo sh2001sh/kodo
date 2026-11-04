@@ -160,7 +160,7 @@ describe('input, decisions and durable lifecycle', () => {
     const complete: Provider['complete'] = async request => {
       count++;
       const identity = request.messages[0]!.content!;
-      return identity.includes('You are a child.') ? calls(call('file.list', { path: '.' }, `list-${count}`)) : answer('main can still respond');
+      return identity.includes('You are a child agent.') ? calls(call('file.list', { path: '.' }, `list-${count}`)) : answer('main can still respond');
     };
     const { app, runId } = fixture({ complete });
     const main = app.store.run(runId);

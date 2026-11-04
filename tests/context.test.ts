@@ -50,7 +50,7 @@ describe('bounded durable context', () => {
     const main = initialContext('/workspace/one', ['read'], card, 'Inspect one', { id: 'main-one' });
     const other = initialContext('/workspace/two', ['read', 'write'], card, 'Inspect two', { id: 'main-two' });
     const child = initialContext('/workspace/one', ['read'], card, 'Inspect child', { id: 'child-one', parentId: 'main-one' });
-    const sharedRules = main[0]!.content!.slice(0, main[0]!.content!.indexOf('You are the main agent.'));
+    const sharedRules = main[0]!.content!.slice(0, main[0]!.content!.indexOf('You are the main agent:'));
     expect(sharedRules.length).toBeGreaterThan(500);
     for (const context of [main, other, child]) {
       expect(context[0]!.content!.startsWith(sharedRules)).toBe(true);
@@ -59,10 +59,10 @@ describe('bounded durable context', () => {
       expect(context[1]).toEqual({ role: 'system', content: `Agent method configuration (subordinate to host rules and user task):\n${card.prompt}` });
       expect(context).toHaveLength(3);
     }
-    expect(main[0]!.content).toContain('Only you can spawn/cancel children and ask the user.');
+    expect(main[0]!.content).toContain('only you can spawn or cancel children and ask the user');
     expect(child[0]!.content).toContain('You cannot spawn children, cancel runs or ask the user;');
     expect(child[0]!.content).toContain('Main run ID: main-one.');
-    expect(main[0]!.content).toContain('Workspace: /workspace/one. Permissions: read. Run ID: main-one.');
+    expect(main[0]!.content).toContain('Workspace: /workspace/one. Permissions: read. Run ID: main-one. Final text:');
     expect(other[0]!.content).toContain('Workspace: /workspace/two. Permissions: read, write. Run ID: main-two.');
   });
 

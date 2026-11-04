@@ -75,8 +75,8 @@ Report the captured output.
     const main = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(runId).contextRef));
     const sub = JSON.stringify(app.store.readBlob<Message[]>(app.store.run(spawn()).contextRef));
     // Delegation guidance is main-only; the removed explore workflow is no longer advertised.
-    expect(main).toContain('Delegate independent work when parallel execution');
-    expect(sub).not.toContain('Delegate independent work when parallel execution');
+    expect(main).toContain('Delegate an independent outcome to a child');
+    expect(sub).not.toContain('Delegate an independent outcome to a child');
     expect(main).not.toContain('Use explore for read-only investigation');
   });
 

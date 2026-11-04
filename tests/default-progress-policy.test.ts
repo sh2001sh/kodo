@@ -12,7 +12,7 @@ const savedSimpleCard = parseCard(serializeCard({ ...simpleDefaultCard, version:
 
 describe('versioned default progress policy', () => {
   it('enables advice through the default card version, not a changed identity or method', () => {
-    expect(simpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '1.4.0', nudges: true });
+    expect(simpleDefaultCard).toMatchObject({ id: 'builtin/general-simple', version: '2.0.0', nudges: true });
     expect(savedSimpleCard.nudges).toBeUndefined();
     expect(simpleDefaultCard).toMatchObject({ id: savedSimpleCard.id, tools: savedSimpleCard.tools, prompt: savedSimpleCard.prompt });
     expect(simpleDefaultCard.digest).not.toBe(savedSimpleCard.digest);
@@ -28,7 +28,7 @@ describe('versioned default progress policy', () => {
     ), undefined, { instructions: { global: false }, memory });
     try {
       const run = app.createRun({ objective: 'Inspect the file and report the line structure without editing it.', workspace: root, binding, permissions: ['read', 'write'], budget: { maxModelCalls: 20, maxTokens: 1_000_000 } });
-      expect(run.card).toMatchObject({ version: '1.4.0', nudges: true });
+      expect(run.card).toMatchObject({ version: '2.0.0', nudges: true });
       const final = await app.run(run.id);
       expect(final.status, final.error).toBe('completed');
       const notices = app.store.events(run.id, { types: ['progress.write_nudged'] });

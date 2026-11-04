@@ -64,7 +64,7 @@ describe('built CLI end to end', () => {
     try {
       const run = app.store.listRuns()[0]!;
       for (const field of ['toolProfile', 'taskProtocol', 'agentFactors']) expect(app.store.session(run.sessionId)).not.toHaveProperty(field);
-      expect(run.card).toMatchObject({ id: 'builtin/general-simple', version: '1.4.0' });
+      expect(run.card).toMatchObject({ id: 'builtin/general-simple', version: '2.0.0' });
     } finally { await app.shutdown(); }
   });
 
