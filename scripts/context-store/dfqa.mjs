@@ -150,6 +150,7 @@ async function trial({ task, arm, directory, cli, credentials }) {
   writeWorkspace(workspace, task.pages);
   let relay;
   let binding = dryBinding(cli.model, WINDOW_TOKENS, OUTPUT_TOKENS);
+  if (cli.run) mkdirSync(path.join(directory, 'wire'), { recursive: true });
   if (cli.run) ({ relay, binding } = await relayBinding({ directory: path.join(directory, 'wire'), credentials, model: cli.model, maxCalls: 80, maxTokens: 6_000_000, maxOutputTokens: OUTPUT_TOKENS, contextTokens: 1_048_576 }));
   const app = new Application(path.join(directory, 'state'), cli.run ? new ModelProvider() : dryProvider(task.questions), undefined, { instructions: { global: false } });
   const started = Date.now();
