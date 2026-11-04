@@ -14,7 +14,7 @@
 //           file.read/search over the still-present workspace).
 // A context-store change is judged by running `open` on its branch: accuracy
 // >= 90% of `open` on the reference and phase-2 input <= 2x `closed` (§2.5).
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
@@ -201,7 +201,7 @@ async function main() {
     const sum = key => rows.reduce((total, row) => total + key(row), 0);
     return [arm, { trials: rows.length, accuracy: rows.length ? Number((sum(row => row.score.passed) / sum(row => row.score.total)).toFixed(4)) : null, meanPhase2Input: rows.length ? Math.round(sum(row => row.phase2.input) / rows.length) : null, meanPhase2Calls: rows.length ? Number((sum(row => row.phase2.calls) / rows.length).toFixed(2)) : null, failed: results.filter(row => row.arm === arm && !row.score).length }];
   }));
-  await writeJson(path.join(out, 'summary.json'), { generatedAt: new Date().toISOString(), mode: cli.run ? 'paid' : 'dry', model: cli.model, seedTokens: task.tokens, windowTokens: WINDOW_TOKENS, summary, results: results.map(({ answer: _answer, ...row }) => row) }, credentials?.key);
+  await writeJson(path.join(out, 'summary.json'), { generatedAt: new Date().toISOString(), mode: cli.run ? 'paid' : 'dry', model: cli.model, seedTokens: task.tokens, windowTokens: WINDOW_TOKENS, summary, results: results.map(row => ({ ...row, answer: undefined })) }, credentials?.key);
   console.log(JSON.stringify({ out, summary }, null, 2));
 }
 
