@@ -36,10 +36,14 @@ export class EvalIntegrationPlugin implements IntegrationPlugin {
 
   async initialize(runtime: RuntimeCore): Promise<void> {
     this.runtime = runtime;
-    // TODO: Get Store from runtime or configuration
-    // For now, create a temporary store (this needs proper integration)
-    // CaseRunStore expects a Store instance, not a string path
-    throw new Error('EvalIntegrationPlugin needs proper Store integration - TODO');
+
+    // Verify that Store is provided
+    if (!runtime.store) {
+      throw new Error('EvalIntegrationPlugin requires a Store instance. Pass store to createRuntime({ store }).');
+    }
+
+    // Initialize CaseRunStore with the Store from runtime
+    this.store = new CaseRunStore(runtime.store);
   }
 
   getInterface() {

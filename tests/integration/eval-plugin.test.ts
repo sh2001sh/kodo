@@ -1,6 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRuntime } from '../../src/factory.js';
 import { EvalIntegrationPlugin } from '../../src/integrations/eval-plugin.js';
+import { Store } from '../../src/storage/index.js';
 import type { ModelBinding, Provider } from '../../src/core/types.js';
 
 // Test helpers
@@ -23,21 +27,51 @@ const binding: ModelBinding = {
 };
 
 describe('EvalIntegrationPlugin', () => {
-  it('initializes and exposes eval API interface structure', async () => {
+  let testDir: string;
+  let store: Store;
+
+  beforeEach(() => {
+    testDir = mkdtempSync(join(tmpdir(), 'kodo-test-'));
+    store = new Store(testDir);
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('initializes with Store and exposes eval API interface', async () => {
     const plugin = new EvalIntegrationPlugin();
 
-    // Note: This test will throw until Store integration is implemented
-    // For now, we just test that the plugin can be instantiated
     expect(plugin.name).toBe('eval');
     expect(plugin.version).toBe('0.1.0');
 
-    // Test getInterface before initialize (should work)
-    const iface = plugin.getInterface();
-    expect(iface.api).toBeDefined();
-    expect(iface.cli).toBeDefined();
+    // Create runtime with store
+    const { registry } = await createRuntime({
+      provider: scripted(),
+      binding,
+      store,
+      integrations: [plugin],
+    });
 
-    // Skip actual initialization until Store integration is done
-    // await createRuntime({ provider: scripted(), binding, integrations: [plugin] });
+    // Verify plugin is registered
+    const evalIntegration = registry.integration('eval');
+    expect(evalIntegration).toBeDefined();
+    expect(evalIntegration.api).toBeDefined();
+    expect(evalIntegration.cli).toBeDefined();
+  });
+
+  it('throws error when initialized without Store', async () => {
+    const plugin = new EvalIntegrationPlugin();
+
+    // Should throw because Store is required
+    await expect(
+      createRuntime({
+        provider: scripted(),
+        binding,
+        integrations: [plugin],
+      })
+    ).rejects.toThrow('EvalIntegrationPlugin requires a Store instance');
   });
 
   it('exposes CLI commands', async () => {
@@ -57,11 +91,13 @@ describe('EvalIntegrationPlugin', () => {
   });
 
   it.skip('can freeze a case definition', async () => {
-    // Skipped until Store integration is complete
+    // Skipped: needs full CaseRunStore integration and case execution
     const plugin = new EvalIntegrationPlugin();
+
     const { registry } = await createRuntime({
       provider: scripted(),
       binding,
+      store,
       integrations: [plugin],
     });
 
