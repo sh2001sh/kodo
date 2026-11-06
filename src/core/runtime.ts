@@ -1,6 +1,8 @@
 import { errorText, KodoError } from '../runtime/types.js';
 import type { CapabilityPlugin } from '../plugins/capability.js';
-import type { ToolPlugin } from '../plugins/tool.js';
+import type { ToolBoundary, ToolPlugin } from '../plugins/tool.js';
+import type { Store } from '../storage/index.js';
+import { PluginEvents } from './events.js';
 import { RunTable } from './run.js';
 import { SessionTable } from './session.js';
 import { ToolDispatcher } from './tool-dispatch.js';
@@ -13,6 +15,10 @@ export interface RuntimeCoreOptions {
   maxOutputTokens?: number;
   /** Streamed assistant text. */
   onText?: (runId: string, text: string) => void;
+  /** Shared durable store for plugins (history, recovery, messaging). The core itself never reads it. */
+  store?: Store;
+  /** Layer 2 execution boundary wrapped around every tool call. */
+  boundary?: ToolBoundary;
 }
 
 /**
@@ -22,10 +28,15 @@ export interface RuntimeCoreOptions {
 export class RuntimeCore {
   readonly sessions = new SessionTable();
   readonly runs = new RunTable();
-  private readonly dispatcher = new ToolDispatcher();
+  readonly events = new PluginEvents();
+  readonly store?: Store;
+  private readonly dispatcher: ToolDispatcher;
   private readonly capabilities: CapabilityPlugin[] = [];
   private readonly active = new Map<string, { controller: AbortController; promise: Promise<CoreRun> }>();
-  constructor(readonly provider: Provider, readonly defaultBinding: ModelBinding, private readonly options: RuntimeCoreOptions = {}) {}
+  constructor(readonly provider: Provider, readonly defaultBinding: ModelBinding, private readonly options: RuntimeCoreOptions = {}) {
+    this.store = options.store;
+    this.dispatcher = new ToolDispatcher(options.boundary);
+  }
 
   registerCapability(plugin: CapabilityPlugin): void { this.capabilities.push(plugin); }
   registerTools(plugin: ToolPlugin): void { this.dispatcher.add(plugin); }
@@ -74,8 +85,14 @@ export class RuntimeCore {
         signal.throwIfAborted();
         let run = this.runs.get(runId);
         if (run.step >= maxSteps) throw new KodoError('STEP_LIMIT', `run exceeded ${maxSteps} model rounds`);
-        let messages = run.messages;
-        for (const cap of this.capabilities) messages = (await cap.hooks?.beforeModelCall?.(run, messages)) ?? messages;
+        let view: Message[] | undefined;
+        for (const cap of this.capabilities) {
+          const change = await cap.hooks?.beforeModelCall?.(run, view ?? run.messages);
+          if (change?.inject?.length) run = this.runs.update(runId, { messages: [...run.messages, ...change.inject] });
+          if (change?.view) view = change.view;
+          else if (change?.inject?.length && view) view = [...view, ...change.inject];
+        }
+        const messages = view ?? run.messages;
         const session = this.sessions.get(run.sessionId);
         const response = await this.provider.complete({
           binding: session.binding, messages, tools: this.dispatcher.specs(),

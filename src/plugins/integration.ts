@@ -24,6 +24,8 @@ export interface IntegrationPlugin {
   readonly kind?: 'integration';
   readonly name: string;
   readonly version?: string;
+  /** Names of plugins (of any kind) that must initialise before this one. */
+  readonly dependsOn?: readonly string[];
   /** Receives the core it will drive; keep the reference for `getInterface`. */
   initialize(runtime: RuntimeCore): Promise<void> | void;
   /** Called after `initialize`; may be called more than once. */

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createRuntime } from '../src/factory.js';
 import { PluginRegistry } from '../src/plugin-registry.js';
 import { RuntimeCore } from '../src/core/runtime.js';
-import type { CapabilityPlugin, IntegrationPlugin, ToolPlugin } from '../src/plugins/index.js';
+import type { CapabilityPlugin, IntegrationPlugin, ToolBoundary, ToolPlugin } from '../src/plugins/index.js';
 import type { Message } from '../src/runtime/types.js';
 import { answer, binding, call, calls, scripted } from './helpers.js';
 
@@ -54,7 +54,7 @@ describe('createRuntime', () => {
     const capability: CapabilityPlugin = {
       name: 'audit', version: '1.0.0',
       hooks: {
-        beforeModelCall: (run, messages) => { events.push(`model:${run.step}`); return [...messages, { role: 'user', content: 'injected' }]; },
+        beforeModelCall: (run, messages) => { events.push(`model:${run.step}`); return { view: [...messages, { role: 'user', content: 'injected' }] }; },
         afterToolResult: (_run, toolCall) => { events.push(`tool:${toolCall.name}:${toolCall.status}`); },
         beforeCompletion: () => { events.push('complete?'); if (!denied) { denied = true; return { deny: 'verify first' }; } },
       },
@@ -109,6 +109,61 @@ describe('createRuntime', () => {
     const api = registry.integration('embed').api as { ask: (prompt: string) => Promise<{ result?: string }> };
     expect((await api.ask('meaning?')).result).toBe('42');
     expect(() => registry.integration('other')).toThrow(/PLUGIN_NOT_FOUND|not initialised/);
+  });
+});
+
+describe('phase2a interface needs', () => {
+  it('keeps injected messages in the transcript and combines them with a view', async () => {
+    const seen: Message[][] = [];
+    const notice: CapabilityPlugin = { name: 'notice', version: '1', hooks: { beforeModelCall: run => (run.step === 0 ? { inject: [{ role: 'user', content: 'notice' }] } : undefined) } };
+    const compact: CapabilityPlugin = { name: 'compact', version: '1', hooks: { beforeModelCall: (_run, messages) => ({ view: messages.slice(-1) }) } };
+    const provider = scripted(async request => { seen.push(request.messages); return answer(); });
+    const { runtime } = await createRuntime({ provider, binding, capabilities: [notice, compact] });
+    const run = await runtime.run('task');
+    expect(seen[0]).toEqual([{ role: 'user', content: 'notice' }]);
+    expect(run.messages.map(m => m.content)).toEqual(['task', 'notice', 'done']);
+  });
+
+  it('routes every tool call through the boundary with policy fields and markEffectStarted', async () => {
+    const log: string[] = [];
+    const writer: ToolPlugin = {
+      name: 'writer',
+      tools: [{ name: 'write', description: 'w', parameters: {}, permission: 'write', effect: 'write' }, { name: 'hidden', description: 'h', parameters: {}, available: false }],
+      execute: (_name, _args, context) => { context.markEffectStarted(); log.push('executed'); return 'ok'; },
+    };
+    const boundary: ToolBoundary = {
+      async execute(boundaryCall, invoke) {
+        log.push(`boundary:${boundaryCall.definition.name}:${boundaryCall.definition.effect}`);
+        if (boundaryCall.definition.name === 'hidden') throw new Error('denied');
+        return await invoke({ ...boundaryCall.context, markEffectStarted: () => { log.push('effect started'); } });
+      },
+    };
+    const results: string[] = [];
+    const provider = scripted(calls(call('write', {}, 'a'), call('hidden', {}, 'b')), async request => { results.push(...request.messages.filter(m => m.role === 'tool').map(m => m.content)); return answer(); });
+    const { runtime } = await createRuntime({ provider, binding, tools: [writer], boundary });
+    expect(runtime.toolSpecs).toEqual([{ name: 'write', description: 'w', parameters: {} }]);
+    await runtime.run('go');
+    expect(log).toEqual(['boundary:write:write', 'effect started', 'executed', 'boundary:hidden:undefined']);
+    expect(results).toEqual(['"ok"', JSON.stringify({ error: 'INTERNAL: Error: denied' })]);
+  });
+
+  it('orders initialisation by dependsOn and rejects missing or cyclic dependencies', async () => {
+    const log: string[] = [];
+    const plugin = (name: string, dependsOn: string[] = []): CapabilityPlugin => ({ name, version: '1', dependsOn, initialize: () => { log.push(name); } });
+    const tools: ToolPlugin = { ...echo(), dependsOn: ['compaction'], initialize: () => { log.push('echo-tools'); } };
+    await createRuntime({ provider: scripted(), binding, capabilities: [plugin('compaction', ['history']), plugin('history')], tools: [tools] });
+    expect(log).toEqual(['history', 'compaction', 'echo-tools']);
+    await expect(createRuntime({ provider: scripted(), binding, capabilities: [plugin('recovery', ['file-tools'])] })).rejects.toThrow(/depends on file-tools/);
+    await expect(createRuntime({ provider: scripted(), binding, capabilities: [plugin('a', ['b']), plugin('b', ['a'])] })).rejects.toThrow(/cycle among a, b/);
+  });
+
+  it('shares the store and delivers plugin events', async () => {
+    const store = {} as never;
+    const received: unknown[] = [];
+    const listener: CapabilityPlugin = { name: 'listener', version: '1', initialize: runtime => { expect(runtime.store).toBe(store); runtime.events.on('task.graph_built', payload => { received.push(payload); }); } };
+    const { runtime } = await createRuntime({ provider: scripted(), binding, store, capabilities: [listener] });
+    await runtime.events.emit('task.graph_built', { nodes: 2 });
+    expect(received).toEqual([{ nodes: 2 }]);
   });
 });
 
