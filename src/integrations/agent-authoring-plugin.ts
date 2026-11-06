@@ -24,6 +24,12 @@ import type { PackageDeclaration } from '../packages/schema.js';
  * Dependencies:
  * - Store (optional for create, required for save/save-config)
  * - Provider (optional for create with template, required for model extraction)
+ *
+ * Default allowedTools (recommended, using clear Phase 2b names):
+ * - file.read, file.write, file.edit, file.search
+ * - shell.exec, background.read, spawn_agent, ask_user
+ *
+ * See docs/kodo-tool-names-final.md for the complete tool name table.
  */
 export class AgentAuthoringPlugin implements IntegrationPlugin {
   readonly kind = 'integration' as const;
@@ -84,7 +90,7 @@ export class AgentAuthoringPlugin implements IntegrationPlugin {
    * const draft = await api.create({
    *   description: 'Extract key points from long documents',
    *   id: 'myorg/document-summarizer',
-   *   allowedTools: ['file.read', 'file.list'],
+   *   allowedTools: ['file.read', 'file.search', 'background.read'],
    *   template: true, // or provide model for extraction
    * });
    * ```
