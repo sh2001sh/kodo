@@ -496,36 +496,71 @@ phase3-integration-test-plan.md 定义了 18 个测试用例，但未运行。
 
 ### 现状
 
-Phase 2b 正在执行工具删减：24 个 → 10 个模型可见工具（仅限默认读权限）。
+Phase 2b 已完成工具删减：24 个 → 10 个模型可见工具。
+
+**最终的 10 个工具**：
+- `file.read`, `file.write`, `file.edit`, `file.search`
+- `shell.exec`, `background.read`, `context.snapshot`, `history.search`
+- `spawn_agent`, `ask_user`
 
 ### 影响
 
-- **CliIntegrationPlugin.listTools()**: 会自动返回最终的 10 个工具（无需改动）
-- **文档和测试**: 当前引用旧工具名的需要迁移
-- **用户代码**: 依赖工具名的脚本和文档需更新
+- **CliIntegrationPlugin.listTools()**: 自动返回最终的 10 个工具（无需改动）
+- **文档和代码示例**: 工具名引用已更新（见下方迁移表）
+- **用户代码**: 依赖旧工具名的脚本需更新
 
 ### 当前位置
 
-- AgentAuthoringPlugin: JSDoc 已更新为新别名（file.write, file.edit, file.search, background.read, context.snapshot）
-- phase3-implementation-summary.md: 已记录工具名表
-- 测试: 当前不依赖具体工具名
+**已更新**：
+- ✅ AgentAuthoringPlugin: JSDoc allowedTools（第 28-32 行）
+- ✅ phase3-implementation-summary.md: AgentAuthoringPlugin 描述
+
+**无需改动**：
+- CliIntegrationPlugin: listTools() 自动返回当前工具集
+- EvalIntegrationPlugin: 不依赖工具名
+- WebIntegrationPlugin/TuiIntegrationPlugin: 占位符不涉及工具
+
+### 工具名迁移表
+
+| 用途 | 旧名称 | 新名称 | 状态 |
+|---|---|---|---|
+| 文件读 | `file.read` | `file.read` | ✅ 无变 |
+| 文件写 | `file.apply_patch` | `file.write` | ⚠️ 迁移 |
+| 文件编辑 | `file.replace` | `file.edit` | ⚠️ 迁移 |
+| 文件搜索 | `file.search_replace` | `file.search` | ⚠️ 迁移 |
+| 后台读 | `background.summarize` | `background.read` | ⚠️ 迁移 |
+| 上下文快照 | `context.truncate` | `context.snapshot` | ⚠️ 迁移 |
+| 历史搜索 | *(新增)* | `history.search` | ✨ 新增 |
+| Shell 执行 | *(新增)* | `shell.exec` | ✨ 新增 |
+| 生成 Agent | `spawn_child` | `spawn_agent` | ⚠️ 迁移 |
+| 获取用户输入 | `ask_human` | `ask_user` | ⚠️ 迁移 |
+| 任务分析 | `task.analysis` | *(删除)* | ❌ 移除 |
+| *(其他 14 个工具)* | *(各种名称)* | *(删除)* | ❌ 移除 |
 
 ### 迁移清单
 
-**Phase 2b 完成后**：
-- [ ] 文档中的工具名引用更新为公开别名
-- [ ] 示例代码中的工具调用更新
-- [ ] 用户指南编写工具迁移说明
-- [ ] 弃用警告：旧工具名在 1.0 版本移除
+**立即可做**：
+- [ ] 更新用户文档中的工具名示例
+- [ ] 更新默认代理卡（若涉及工具名）
+
+**Phase 3 完成后**：
+- [ ] 创建 `docs/tool-migration-guide.md`
+  - 旧工具名 → 新名称映射
+  - 模型端点迁移步骤
+  - 弃用时间表
+
+**长期**：
+- [ ] 1.0 版本发布时移除旧工具名支持
+- [ ] CLI 弃用警告：使用旧名称输出 DEPRECATED 消息
 
 ### 推荐方案
 
-创建 `docs/tool-migration-guide.md` 说明：
-- 旧工具名 → 新别名的映射
-- 内部工具名保持稳定（兼容性）
-- 模型端点迁移步骤
+**保持内部兼容性**：
+- 模型端口和内部名保持稳定（file.apply_patch 等）
+- 公开 API 和文档使用新别名
+- 逐步迁移，无需一次性重写所有调用
 
 ---
 
-**更新时间**：2026-11-06 13:15  
+**更新时间**：2026-11-06 13:20  
 **分支**：claude/phase3-integration-cleanup-e86094

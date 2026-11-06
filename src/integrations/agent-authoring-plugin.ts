@@ -25,11 +25,12 @@ import type { PackageDeclaration } from '../packages/schema.js';
  * - Store (optional for create, required for save/save-config)
  * - Provider (optional for create with template, required for model extraction)
  *
- * Default allowedTools (recommended, using clear Phase 2b names):
+ * Default allowedTools (recommended, using final Phase 2b names):
  * - file.read, file.write, file.edit, file.search
- * - shell.exec, background.read, spawn_agent, ask_user
+ * - shell.exec, background.read, context.snapshot, history.search
+ * - spawn_agent, ask_user
  *
- * See docs/kodo-tool-names-final.md for the complete tool name table.
+ * See phase3-implementation-summary.md for the complete tool name table.
  */
 export class AgentAuthoringPlugin implements IntegrationPlugin {
   readonly kind = 'integration' as const;

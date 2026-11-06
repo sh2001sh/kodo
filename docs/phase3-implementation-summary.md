@@ -1,8 +1,8 @@
 # Phase 3 实际实施摘要
 
-**更新时间**：2026-11-06 12:55  
+**更新时间**：2026-11-06 13:20  
 **分支**：claude/phase3-integration-cleanup-e86094  
-**最新提交**：a1ac28f
+**最新提交**：33578ec（CLI 完整命令集）
 
 ---
 
@@ -79,8 +79,8 @@
 **设计特点**：
 - 包装 `src/agents/authoring.ts` 和 `src/agents/configuration-save.ts`
 - Store 按需验证（灵活性）
-- 文档引用 Phase 2b 工具名（file.read, file.write, file.edit, file.search, background.read）
-- 默认 allowedTools 推荐：8 个核心工具
+- 文档引用最终工具名（file.read, file.write, file.edit, file.search, background.read, context.snapshot, history.search, shell.exec, spawn_agent, ask_user）
+- 默认 allowedTools 推荐：10 个工具（完整集合）
 
 ---
 
