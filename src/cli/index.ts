@@ -80,12 +80,12 @@ function parseSpawnScope(raw: string): FileScope {
   return value as FileScope;
 }
 
-async function main(): Promise<void> {
-  if (process.argv[2] === 'config') { const { configCommand } = await import('./config.js'); await configCommand(process.argv.slice(3)); return; }
-  if (process.argv[2] === 'package') { const { packageCommand } = await import('./packages.js'); await packageCommand(process.argv.slice(3)); return; }
-  if (process.argv[2] === 'case') { const { caseCommand } = await import('../cases/cli.js'); await caseCommand(process.argv.slice(3)); return; }
-  if (process.argv[2] === 'serve') { const { serveCommand } = await import('./serve.js'); await serveCommand(process.argv.slice(3)); return; }
-  const args = process.argv.slice(2);
+export async function runCli(argv: string[]): Promise<void> {
+  if (argv[0] === 'config') { const { configCommand } = await import('./config.js'); await configCommand(argv.slice(1)); return; }
+  if (argv[0] === 'package') { const { packageCommand } = await import('./packages.js'); await packageCommand(argv.slice(1)); return; }
+  if (argv[0] === 'case') { const { caseCommand } = await import('../cases/cli.js'); await caseCommand(argv.slice(1)); return; }
+  if (argv[0] === 'serve') { const { serveCommand } = await import('./serve.js'); await serveCommand(argv.slice(1)); return; }
+  const args = argv;
   // parseArgs otherwise treats a negative step as a new option; accept the documented --to -1 spelling.
   for (let index = 0; index < args.length - 1; index++) if (args[index] === '--to' && /^-\d+$/.test(args[index + 1]!)) args.splice(index, 2, `--to=${args[index + 1]}`);
   const { values, positionals } = (() => { try { return parseArgs({ args, allowPositionals: true, options: {
@@ -460,3 +460,7 @@ async function main(): Promise<void> {
   }
 }
 main().catch(error => { console.error(terminalText(errorText(error))); process.exitCode = error instanceof KodoError && error.code === 'CANCELLED' ? 130 : 1; });
+
+async function main(): Promise<void> {
+  return runCli(process.argv.slice(2));
+}

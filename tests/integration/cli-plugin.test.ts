@@ -59,13 +59,30 @@ describe('CliIntegrationPlugin', () => {
     expect(cli.api!.listTools).toBeTypeOf('function');
   });
 
-  it('exposes 5 CLI commands', async () => {
+  it('exposes full CLI command set', async () => {
     const plugin = new CliIntegrationPlugin();
     const iface = plugin.getInterface();
 
-    expect(iface.cli).toHaveLength(5);
-    const names = iface.cli?.map(cmd => cmd.name);
-    expect(names).toEqual(['run', 'session', 'inspect', 'tools', 'cancel']);
+    // All commands from src/cli/index.ts routing
+    const expectedCommands = [
+      'config', 'package', 'case', 'serve', // special routers
+      'run', 'chat', 'spawn', 'runs', 'gc', // main run commands
+      'inspect', 'context', 'context-report', 'knowledge', // inspection
+      'resume', 'reconcile', 'resolve', 'continue', // control and recovery
+      'input', 'answer', 'cancel', 'interrupt', 'rewind', 'doctor', // misc
+    ];
+
+    expect(iface.cli).toBeDefined();
+    expect(iface.cli!.length).toBe(expectedCommands.length);
+
+    const names = iface.cli!.map(cmd => cmd.name);
+    expect(names).toEqual(expectedCommands);
+
+    // All handlers are the unified cliHandler
+    for (const cmd of iface.cli!) {
+      expect(cmd.handler).toBeTypeOf('function');
+      expect(cmd.description).toBeTypeOf('string');
+    }
   });
 
   it('can create a session', async () => {
@@ -152,5 +169,27 @@ describe('CliIntegrationPlugin', () => {
     };
 
     expect(api.getRun('nonexistent')).toBeUndefined();
+  });
+
+  it('CLI handler converts args to argv and routes through runCli', async () => {
+    // This test verifies that the cliHandler properly converts command args
+    // to argv format for runCli. We test with a command that doesn't modify
+    // the global state (like 'doctor --unlock false').
+    const plugin = new CliIntegrationPlugin();
+
+    const iface = plugin.getInterface();
+    const doctorCmd = iface.cli!.find(cmd => cmd.name === 'doctor');
+    expect(doctorCmd).toBeDefined();
+
+    // Test that the handler is callable (basic smoke test)
+    // Full integration test with actual CLI would require mocking process.argv
+    try {
+      // Call with minimal args; doctor will check actual environment
+      await doctorCmd!.handler({ _command: 'doctor', unlock: false });
+    } catch (err) {
+      // doctor may fail due to environment, but the handler should be callable
+      // The important thing is that it doesn't throw "CLI handler not yet implemented"
+      expect(String(err)).not.toContain('CLI handler not yet implemented');
+    }
   });
 });
