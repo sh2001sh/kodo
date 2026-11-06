@@ -3,6 +3,7 @@ import { createRuntime } from '../src/factory.js';
 import { PluginRegistry } from '../src/plugin-registry.js';
 import { RuntimeCore } from '../src/core/runtime.js';
 import type { CapabilityPlugin, IntegrationPlugin, ToolBoundary, ToolPlugin } from '../src/plugins/index.js';
+import { IsolationBoundary } from '../src/isolation/tool-boundary.js';
 import type { Message } from '../src/runtime/types.js';
 import { answer, binding, call, calls, scripted } from './helpers.js';
 
@@ -109,6 +110,102 @@ describe('createRuntime', () => {
     const api = registry.integration('embed').api as { ask: (prompt: string) => Promise<{ result?: string }> };
     expect((await api.ask('meaning?')).result).toBe('42');
     expect(() => registry.integration('other')).toThrow(/PLUGIN_NOT_FOUND|not initialised/);
+  });
+});
+
+describe('IsolationBoundary', () => {
+  it('allows a read and refuses a write missing its permission', async () => {
+    const log: string[] = [];
+    const echo: ToolPlugin = {
+      name: 'echo',
+      tools: [{ name: 'read', description: 'r', parameters: {}, permission: 'read', effect: 'read' }, { name: 'write', description: 'w', parameters: {}, permission: 'write', effect: 'write' }],
+      execute: name => { log.push(name); return 'ok'; },
+    };
+    const boundary = new IsolationBoundary({ workspace: () => '/workspace', permissions: () => ['read'] });
+    // Two turns: read (allowed) then write (denied) in the same run.
+    const provider = scripted(calls(call('read', {}), call('write', {})), answer('done'));
+    const { runtime } = await createRuntime({ provider, binding, tools: [echo], boundary });
+    const run = await runtime.run('use read then write');
+    expect(log).toEqual(['read']);
+    expect(run.messages.some(m => m.role === 'tool' && m.content.includes('TOOL_DENIED: write requires write permission'))).toBe(true);
+    expect(run.status).toBe('completed');
+  });
+
+  it('takes a write lock and refuses a write while an unresolved effect overlaps its roots', async () => {
+    const log: string[] = [];
+    const echo: ToolPlugin = {
+      name: 'echo',
+      tools: [{ name: 'write', description: 'w', parameters: {}, effect: 'write', writeScope: args => [(args as { path: string }).path] }],
+      execute: (_name, args) => { log.push((args as { path: string }).path); return 'ok'; },
+    };
+    let overlap: string[] = [];
+    const boundary = new IsolationBoundary({
+      workspace: () => '/workspace',
+      unresolvedEffects: (_context, roots) => overlap.length && overlap.some(root => roots.includes(root)) ? ['call-123'] : [],
+      lockDirectory: false,
+      lockTimeoutMs: 1000,
+    });
+    const provider = scripted(calls(call('read', {})), answer('done'));
+    const { runtime } = await createRuntime({ provider, binding, tools: [echo], boundary });
+    overlap = [];
+    const provider2 = scripted(calls(call('write', { path: 'a' })), answer());
+    const runtime2 = await (await createRuntime({ provider: provider2, binding, tools: [echo], boundary: new IsolationBoundary({ workspace: () => '/workspace', unresolvedEffects: () => ['call-999'], lockDirectory: false, lockTimeoutMs: 1000 }) })).runtime;
+    const write1 = await runtime2.run('write a');
+    expect(log).toEqual(['file-a']);
+    expect((write1.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('"ok"');
+    overlap = ['a'];
+    const write2 = await runtime.run('write a again');
+    expect(log).toEqual(['file-a']);
+    expect((write2.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('UNKNOWN_WRITE: an unresolved effect (call-123) may have changed paths this write touches');
+    overlap = ['b'];
+    const write3 = await runtime.run('write a when b unresolved');
+    expect(log).toEqual(['file-a', 'file-a']);
+    expect((write3.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('"ok"');
+  });
+
+  it('calls markEffectStarted from the boundary and reconciles an uncertain write', async () => {
+    const log: string[] = [];
+    const writer: ToolPlugin = {
+      name: 'writer',
+      tools: [{ name: 'write', description: 'w', parameters: {}, effect: 'write' }],
+      execute: (_name, _args, context) => { context.markEffectStarted(); log.push('executed'); throw new Error('uncertain'); },
+    };
+    let reconcileCall = 0;
+    const boundary = new IsolationBoundary({
+      workspace: () => '/workspace',
+      lockDirectory: false,
+      reconcile: { observesAll: false },
+      onEvent: (_context, type) => { if (type === 'tool.effect_started') log.push('effect started'); if (type === 'tool.reconciled') { log.push('reconciled'); reconcileCall++; } },
+    });
+    const provider = scripted(calls(call('write', {})), answer());
+    const { runtime } = await createRuntime({ provider, binding, tools: [writer], boundary });
+    const run = await runtime.run('write');
+    expect(log).toEqual(['effect started', 'executed', 'reconciled']);
+    expect(reconcileCall).toBe(1);
+    expect((run.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('UNKNOWN_WRITE');
+    expect((run.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('the effect may be partial');
+  });
+
+  it('asks for consent and refuses the write when the handler returns false', async () => {
+    const log: string[] = [];
+    const writer: ToolPlugin = {
+      name: 'writer',
+      tools: [{ name: 'write', description: 'w', parameters: {}, effect: 'write' }],
+      execute: () => { log.push('executed'); return 'ok'; },
+    };
+    let consent = true;
+    const make = () => new IsolationBoundary({
+      workspace: () => '/workspace',
+      lockDirectory: false,
+      approve: async (request: { name: string; effect: string }) => { log.push(`approve:${request.name}:${request.effect}`); return consent; },
+    });
+    const run1 = await (await createRuntime({ provider: scripted(calls(call('write', {})), answer()), binding, tools: [writer], boundary: make() })).runtime.run('write 1');
+    expect(log).toEqual(['approve:write:write', 'executed']);
+    expect((run1.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('"ok"');
+    consent = false;
+    const run2 = await (await createRuntime({ provider: scripted(calls(call('write', {})), answer()), binding, tools: [writer], boundary: make() })).runtime.run('write 2');
+    expect(log).toEqual(['approve:write:write', 'executed', 'approve:write:write']);
+    expect((run2.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('TOOL_APPROVAL_DENIED: not started: the user did not approve this tool call');
   });
 });
 
