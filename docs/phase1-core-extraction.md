@@ -15,9 +15,12 @@
 | `src/plugins/{capability,tool,integration}.ts` | 103 | 三种插件接口，带 JSDoc |
 | `src/plugin-registry.ts` | 76 | 注册、按序初始化、逆序清理、初始化失败回滚 |
 | `src/factory.ts` | 49 | `RuntimeConfig` + `createRuntime()` |
-| `tests/core-plugins.test.ts` | — | 10 个测试 |
+| `src/core/events.ts` | 18 | 插件之间的命名事件 |
+| `tests/core-plugins.test.ts` | — | 14 个测试 |
 
-核心（`src/core/`）共 223 行，低于 300 行目标。
+核心（`src/core/`）共 265 行，低于 300 行目标。
+
+后续根据 Phase 2a 的需求（见共享笔记 `phase1-reply-to-2a.md`）补充了：`beforeModelCall` 的 `{ inject, view }` 返回值、`runtime.store`、`ToolPolicy`（沿用 `ToolRegistration` 字段）、`markEffectStarted`、`ToolBoundary`（Layer 2 执行边界接口）、`dependsOn` 依赖排序，以及 `runtime.events` 插件事件（`src/core/events.ts`）。
 
 ## 与设计文档的差异
 
@@ -34,7 +37,7 @@
 
 验证结果（`npm run check` 通过，`npm run build` 通过）：
 
-- 新测试：10/10 通过。
+- 新测试：14/14 通过。
 - 全量：1951 通过、8 失败、13 跳过。8 个失败在 main checkout（`4338ebf`）同样复现，与本次改动无关：
   - `tests/tui-view.test.tsx` 7 个（文件补全/外部编辑器相关断言）。
   - `tests/windows-verification-compat.test.ts` 1 个（`EPERM` 创建 symlink，Windows 权限问题）。

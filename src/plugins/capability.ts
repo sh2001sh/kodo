@@ -1,6 +1,9 @@
 import type { RuntimeCore } from '../core/runtime.js';
 import type { CoreRun, CoreToolCall, Message } from '../core/types.js';
 
+/** What a `beforeModelCall` hook may change; see the hook. */
+export interface ModelCallChange { inject?: Message[]; view?: Message[] }
+
 /**
  * A Capability plugin adds optional behaviour (history, compaction, recovery, analysis)
  * around the core loop. It never owns the loop: it observes and, where a hook allows,
@@ -13,6 +16,8 @@ export interface CapabilityPlugin {
   readonly kind?: 'capability';
   readonly name: string;
   readonly version: string;
+  /** Names of plugins (of any kind) that must initialise before this one. */
+  readonly dependsOn?: readonly string[];
   /** Called once by the registry before any run starts. */
   initialize?(runtime: RuntimeCore): Promise<void> | void;
   hooks?: CapabilityHooks;
@@ -22,11 +27,15 @@ export interface CapabilityPlugin {
 
 export interface CapabilityHooks {
   /**
-   * Before each model request. Return a replacement message list to change what the
-   * model sees for this request only (for example a compacted view); the run's own
-   * transcript is not rewritten. Return nothing to leave it as is.
+   * Before each model request. `messages` is what the model will see, after earlier
+   * plugins' changes. Return:
+   * - `{ inject }` to append messages (notices, mailbox, background output) to the run's
+   *   transcript; they are kept and seen by every later request and by later plugins;
+   * - `{ view }` to replace what the model sees for this request only (a compacted view);
+   *   the transcript is not rewritten;
+   * - both, or nothing.
    */
-  beforeModelCall?(run: CoreRun, messages: Message[]): Promise<Message[] | void> | Message[] | void;
+  beforeModelCall?(run: CoreRun, messages: Message[]): Promise<ModelCallChange | void> | ModelCallChange | void;
   /** After each tool call settles, successful or not. */
   afterToolResult?(run: CoreRun, call: CoreToolCall): Promise<void> | void;
   /**
@@ -37,3 +46,5 @@ export interface CapabilityHooks {
   /** After the run is marked failed. */
   onRunFailed?(run: CoreRun, error: unknown): Promise<void> | void;
 }
+// Plugin-specific notifications (for example task-analysis's graph) are not core hooks:
+// use `runtime.events.on(name, ...)` / `runtime.events.emit(name, payload)`.

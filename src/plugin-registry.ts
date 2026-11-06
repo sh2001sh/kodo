@@ -12,8 +12,9 @@ type Entry =
 /**
  * Holds the plugins chosen for one runtime and owns their lifecycle.
  *
- * Plugins initialise in the order capabilities, tools, integrations (registration order
- * within each kind), so integrations see a fully equipped core. Cleanup runs in reverse.
+ * Plugins initialise after everything in their `dependsOn`; otherwise in the order
+ * capabilities, tools, integrations, then registration order. A missing dependency or a
+ * cycle fails `initialize` before any plugin starts. Cleanup runs in reverse.
  * If any `initialize` throws, the plugins already initialised are cleaned up and the
  * error is rethrown, leaving no half-started runtime.
  */
@@ -27,11 +28,11 @@ export class PluginRegistry {
 
   async initialize(runtime: RuntimeCore): Promise<void> {
     if (this.initialized) throw new KodoError('REGISTRY_INITIALIZED', 'plugins are already initialised');
+    const ordered = this.order();
     const done: Entry[] = [];
     this.initialized = done;
-    const order = ['capability', 'tool', 'integration'] as const;
     try {
-      for (const kind of order) for (const entry of this.entries.filter(item => item.kind === kind)) {
+      for (const entry of ordered) {
         await entry.plugin.initialize?.(runtime);
         done.push(entry);
         if (entry.kind === 'capability') runtime.registerCapability(entry.plugin);
@@ -65,6 +66,22 @@ export class PluginRegistry {
   listAvailable(): { capabilities: string[]; tools: string[]; integrations: string[] } {
     const names = (kind: Entry['kind']): string[] => this.entries.filter(entry => entry.kind === kind).map(entry => entry.plugin.name);
     return { capabilities: names('capability'), tools: names('tool'), integrations: names('integration') };
+  }
+
+  /** Dependency order; ties keep kind order, then registration order. */
+  private order(): Entry[] {
+    const rank = { capability: 0, tool: 1, integration: 2 };
+    const pending = [...this.entries].sort((a, b) => rank[a.kind] - rank[b.kind]);
+    for (const entry of pending) for (const name of entry.plugin.dependsOn ?? []) {
+      if (!pending.some(item => item.plugin.name === name)) throw new KodoError('PLUGIN_DEPENDENCY', `${entry.plugin.name} depends on ${name}, which is not registered`);
+    }
+    const ordered: Entry[] = [];
+    while (pending.length) {
+      const index = pending.findIndex(entry => (entry.plugin.dependsOn ?? []).every(name => ordered.some(item => item.plugin.name === name)));
+      if (index < 0) throw new KodoError('PLUGIN_DEPENDENCY', `dependency cycle among ${pending.map(entry => entry.plugin.name).join(', ')}`);
+      ordered.push(...pending.splice(index, 1));
+    }
+    return ordered;
   }
 
   private add(entry: Entry): this {
