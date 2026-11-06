@@ -492,5 +492,40 @@ phase3-integration-test-plan.md 定义了 18 个测试用例，但未运行。
 
 ---
 
-**更新时间**：2026-11-06 12:56  
+## 6. 工具名变更（BREAKING CHANGE）
+
+### 现状
+
+Phase 2b 正在执行工具删减：24 个 → 10 个模型可见工具（仅限默认读权限）。
+
+### 影响
+
+- **CliIntegrationPlugin.listTools()**: 会自动返回最终的 10 个工具（无需改动）
+- **文档和测试**: 当前引用旧工具名的需要迁移
+- **用户代码**: 依赖工具名的脚本和文档需更新
+
+### 当前位置
+
+- AgentAuthoringPlugin: JSDoc 已更新为新别名（file.write, file.edit, file.search, background.read, context.snapshot）
+- phase3-implementation-summary.md: 已记录工具名表
+- 测试: 当前不依赖具体工具名
+
+### 迁移清单
+
+**Phase 2b 完成后**：
+- [ ] 文档中的工具名引用更新为公开别名
+- [ ] 示例代码中的工具调用更新
+- [ ] 用户指南编写工具迁移说明
+- [ ] 弃用警告：旧工具名在 1.0 版本移除
+
+### 推荐方案
+
+创建 `docs/tool-migration-guide.md` 说明：
+- 旧工具名 → 新别名的映射
+- 内部工具名保持稳定（兼容性）
+- 模型端点迁移步骤
+
+---
+
+**更新时间**：2026-11-06 13:15  
 **分支**：claude/phase3-integration-cleanup-e86094
