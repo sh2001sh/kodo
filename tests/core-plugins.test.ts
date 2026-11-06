@@ -1,0 +1,295 @@
+import { describe, expect, it } from 'vitest';
+import { createRuntime } from '../src/factory.js';
+import { PluginRegistry } from '../src/plugin-registry.js';
+import { RuntimeCore } from '../src/core/runtime.js';
+import type { CapabilityPlugin, IntegrationPlugin, ToolBoundary, ToolPlugin } from '../src/plugins/index.js';
+import { IsolationBoundary } from '../src/isolation/tool-boundary.js';
+import type { Message } from '../src/runtime/types.js';
+import { answer, binding, call, calls, scripted } from './helpers.js';
+
+const echo = (log: string[] = []): ToolPlugin => ({
+  name: 'echo-tools',
+  tools: [{ name: 'echo', description: 'Echo the text', parameters: { type: 'object', properties: { text: { type: 'string' } } } }],
+  initialize: () => { log.push('init echo'); },
+  execute: (_name, args) => ({ echoed: (args as { text: string }).text }),
+  cleanup: () => { log.push('cleanup echo'); },
+});
+
+describe('createRuntime', () => {
+  it('runs a bare model loop with no plugins', async () => {
+    const { runtime, shutdown } = await createRuntime({ provider: scripted(answer('hello')), binding });
+    const run = await runtime.run('hi');
+    expect(run).toMatchObject({ status: 'completed', result: 'hello', step: 1, usage: { input: 60, output: 20 } });
+    expect(runtime.toolSpecs).toEqual([]);
+    await shutdown();
+  });
+
+  it('dispatches tool calls to the owning plugin and feeds results back', async () => {
+    const seen: Message[][] = [];
+    const provider = scripted(calls(call('echo', { text: 'ping' }, 'c1')), async request => { seen.push(request.messages); return answer('pong'); });
+    const { runtime, shutdown } = await createRuntime({ provider, binding, tools: [echo()] });
+    const run = await runtime.run('say ping', { system: 'be brief' });
+    expect(run.status).toBe('completed');
+    expect(seen[0]!.at(-1)).toEqual({ role: 'tool', tool_call_id: 'c1', content: JSON.stringify({ echoed: 'ping' }) });
+    expect(runtime.toolSpecs.map(tool => tool.name)).toEqual(['echo']);
+    await shutdown();
+  });
+
+  it('turns unknown tools, bad JSON and tool errors into tool results', async () => {
+    const failing: ToolPlugin = { name: 'boom', tools: [{ name: 'boom', description: '', parameters: {} }], execute: () => { throw new Error('exploded'); } };
+    const results: string[] = [];
+    const provider = scripted(
+      calls(call('missing', {}, 'a'), { id: 'b', name: 'boom', arguments: '{nope' }, call('boom', {}, 'c')),
+      async request => { results.push(...request.messages.filter(m => m.role === 'tool').map(m => m.content)); return answer(); },
+    );
+    const { runtime } = await createRuntime({ provider, binding, tools: [failing] });
+    expect((await runtime.run('go')).status).toBe('completed');
+    expect(results.map(text => (JSON.parse(text) as { error: string }).error)).toEqual([
+      'TOOL_NOT_FOUND: missing', 'INVALID_ARGUMENTS: tool arguments are not valid JSON', 'INTERNAL: Error: exploded',
+    ]);
+  });
+
+  it('calls capability hooks in order and lets beforeCompletion deny once', async () => {
+    const events: string[] = [];
+    let denied = false;
+    const capability: CapabilityPlugin = {
+      name: 'audit', version: '1.0.0',
+      hooks: {
+        beforeModelCall: (run, messages) => { events.push(`model:${run.step}`); return { view: [...messages, { role: 'user', content: 'injected' }] }; },
+        afterToolResult: (_run, toolCall) => { events.push(`tool:${toolCall.name}:${toolCall.status}`); },
+        beforeCompletion: () => { events.push('complete?'); if (!denied) { denied = true; return { deny: 'verify first' }; } },
+      },
+    };
+    const requests: Message[][] = [];
+    const record = (response: ReturnType<typeof answer>) => async (request: { messages: Message[] }) => { requests.push(request.messages); return response; };
+    const provider = scripted(record(calls(call('echo', { text: 'x' }))), record(answer('first')), record(answer('second')));
+    const { runtime } = await createRuntime({ provider, binding, capabilities: [capability], tools: [echo()] });
+    const run = await runtime.run('task');
+    expect(run).toMatchObject({ status: 'completed', result: 'second', step: 3 });
+    expect(events).toEqual(['model:0', 'tool:echo:succeeded', 'model:1', 'complete?', 'model:2', 'complete?']);
+    expect(requests[0]!.at(-1)).toEqual({ role: 'user', content: 'injected' });
+    // The hook changes the request only; the transcript keeps the deny notice, not the injection.
+    expect(run.messages.filter(m => m.role === 'user').map(m => m.content)).toEqual(['task', 'verify first']);
+  });
+
+  it('fails the run on provider errors and step limits, and notifies onRunFailed', async () => {
+    const failures: string[] = [];
+    const capability: CapabilityPlugin = { name: 'watch', version: '1', hooks: { onRunFailed: run => { failures.push(run.error!); } } };
+    const broken = { async complete(): Promise<never> { throw new Error('offline'); } };
+    const a = await createRuntime({ provider: broken, binding, capabilities: [capability] });
+    expect((await a.runtime.run('x')).status).toBe('failed');
+    const b = await createRuntime({ provider: scripted(calls(call('echo', { text: '1' })), calls(call('echo', { text: '2' }))), binding, tools: [echo()], capabilities: [capability], maxSteps: 2 });
+    expect((await b.runtime.run('loop')).error).toBe('STEP_LIMIT: run exceeded 2 model rounds');
+    expect(failures).toEqual(['INTERNAL: Error: offline', 'STEP_LIMIT: run exceeded 2 model rounds']);
+  });
+
+  it('cancels an in-flight run through the provider signal', async () => {
+    let started!: () => void;
+    const waiting = new Promise<void>(resolve => { started = resolve; });
+    const provider = scripted(async (_request, signal) => {
+      started();
+      return await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason)));
+    });
+    const { runtime } = await createRuntime({ provider, binding });
+    const run = runtime.startRun(runtime.createSession().id, 'wait');
+    const pending = runtime.advance(run.id);
+    expect(runtime.advance(run.id)).toBe(pending);
+    await waiting;
+    runtime.cancel(run.id);
+    expect((await pending).status).toBe('cancelled');
+  });
+
+  it('exposes integration entry points that drive the core', async () => {
+    let core: RuntimeCore | undefined;
+    const integration: IntegrationPlugin = {
+      name: 'embed',
+      initialize: runtime => { core = runtime; },
+      getInterface: () => ({ api: { ask: (prompt: string) => core!.run(prompt) } }),
+    };
+    const { registry } = await createRuntime({ provider: scripted(answer('42')), binding, integrations: [integration] });
+    const api = registry.integration('embed').api as { ask: (prompt: string) => Promise<{ result?: string }> };
+    expect((await api.ask('meaning?')).result).toBe('42');
+    expect(() => registry.integration('other')).toThrow(/PLUGIN_NOT_FOUND|not initialised/);
+  });
+});
+
+describe('IsolationBoundary', () => {
+  it('allows a read and refuses a write missing its permission', async () => {
+    const log: string[] = [];
+    const echo: ToolPlugin = {
+      name: 'echo',
+      tools: [{ name: 'read', description: 'r', parameters: {}, permission: 'read', effect: 'read' }, { name: 'write', description: 'w', parameters: {}, permission: 'write', effect: 'write' }],
+      execute: name => { log.push(name); return 'ok'; },
+    };
+    const boundary = new IsolationBoundary({ workspace: () => '/workspace', permissions: () => ['read'] });
+    // Two turns: read (allowed) then write (denied) in the same run.
+    const provider = scripted(calls(call('read', {}), call('write', {})), answer('done'));
+    const { runtime } = await createRuntime({ provider, binding, tools: [echo], boundary });
+    const run = await runtime.run('use read then write');
+    expect(log).toEqual(['read']);
+    expect(run.messages.some(m => m.role === 'tool' && m.content.includes('TOOL_DENIED: write requires write permission'))).toBe(true);
+    expect(run.status).toBe('completed');
+  });
+
+  it('takes a write lock and refuses a write while an unresolved effect overlaps its roots', async () => {
+    const log: string[] = [];
+    const echo: ToolPlugin = {
+      name: 'echo',
+      tools: [{ name: 'write', description: 'w', parameters: {}, effect: 'write', writeScope: args => [(args as { path: string }).path] }],
+      execute: (_name, args) => { log.push((args as { path: string }).path); return 'ok'; },
+    };
+    let overlap: string[] = [];
+    const boundary = new IsolationBoundary({
+      workspace: () => '/workspace',
+      unresolvedEffects: (_context, roots) => overlap.length && overlap.some(root => roots.includes(root)) ? ['call-123'] : [],
+      lockDirectory: false,
+      lockTimeoutMs: 1000,
+    });
+    const provider = scripted(calls(call('read', {})), answer('done'));
+    const { runtime } = await createRuntime({ provider, binding, tools: [echo], boundary });
+    overlap = [];
+    const provider2 = scripted(calls(call('write', { path: 'a' })), answer());
+    const runtime2 = await (await createRuntime({ provider: provider2, binding, tools: [echo], boundary: new IsolationBoundary({ workspace: () => '/workspace', unresolvedEffects: () => ['call-999'], lockDirectory: false, lockTimeoutMs: 1000 }) })).runtime;
+    const write1 = await runtime2.run('write a');
+    expect(log).toEqual(['file-a']);
+    expect((write1.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('"ok"');
+    overlap = ['a'];
+    const write2 = await runtime.run('write a again');
+    expect(log).toEqual(['file-a']);
+    expect((write2.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('UNKNOWN_WRITE: an unresolved effect (call-123) may have changed paths this write touches');
+    overlap = ['b'];
+    const write3 = await runtime.run('write a when b unresolved');
+    expect(log).toEqual(['file-a', 'file-a']);
+    expect((write3.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('"ok"');
+  });
+
+  it('calls markEffectStarted from the boundary and reconciles an uncertain write', async () => {
+    const log: string[] = [];
+    const writer: ToolPlugin = {
+      name: 'writer',
+      tools: [{ name: 'write', description: 'w', parameters: {}, effect: 'write' }],
+      execute: (_name, _args, context) => { context.markEffectStarted(); log.push('executed'); throw new Error('uncertain'); },
+    };
+    let reconcileCall = 0;
+    const boundary = new IsolationBoundary({
+      workspace: () => '/workspace',
+      lockDirectory: false,
+      reconcile: { observesAll: false },
+      onEvent: (_context, type) => { if (type === 'tool.effect_started') log.push('effect started'); if (type === 'tool.reconciled') { log.push('reconciled'); reconcileCall++; } },
+    });
+    const provider = scripted(calls(call('write', {})), answer());
+    const { runtime } = await createRuntime({ provider, binding, tools: [writer], boundary });
+    const run = await runtime.run('write');
+    expect(log).toEqual(['effect started', 'executed', 'reconciled']);
+    expect(reconcileCall).toBe(1);
+    expect((run.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('UNKNOWN_WRITE');
+    expect((run.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('the effect may be partial');
+  });
+
+  it('asks for consent and refuses the write when the handler returns false', async () => {
+    const log: string[] = [];
+    const writer: ToolPlugin = {
+      name: 'writer',
+      tools: [{ name: 'write', description: 'w', parameters: {}, effect: 'write' }],
+      execute: () => { log.push('executed'); return 'ok'; },
+    };
+    let consent = true;
+    const make = () => new IsolationBoundary({
+      workspace: () => '/workspace',
+      lockDirectory: false,
+      approve: async (request: { name: string; effect: string }) => { log.push(`approve:${request.name}:${request.effect}`); return consent; },
+    });
+    const run1 = await (await createRuntime({ provider: scripted(calls(call('write', {})), answer()), binding, tools: [writer], boundary: make() })).runtime.run('write 1');
+    expect(log).toEqual(['approve:write:write', 'executed']);
+    expect((run1.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('"ok"');
+    consent = false;
+    const run2 = await (await createRuntime({ provider: scripted(calls(call('write', {})), answer()), binding, tools: [writer], boundary: make() })).runtime.run('write 2');
+    expect(log).toEqual(['approve:write:write', 'executed', 'approve:write:write']);
+    expect((run2.messages.find(m => m.role === 'tool')?.content ?? '')).toContain('TOOL_APPROVAL_DENIED: not started: the user did not approve this tool call');
+  });
+});
+
+describe('phase2a interface needs', () => {
+  it('keeps injected messages in the transcript and combines them with a view', async () => {
+    const seen: Message[][] = [];
+    const notice: CapabilityPlugin = { name: 'notice', version: '1', hooks: { beforeModelCall: run => (run.step === 0 ? { inject: [{ role: 'user', content: 'notice' }] } : undefined) } };
+    const compact: CapabilityPlugin = { name: 'compact', version: '1', hooks: { beforeModelCall: (_run, messages) => ({ view: messages.slice(-1) }) } };
+    const provider = scripted(async request => { seen.push(request.messages); return answer(); });
+    const { runtime } = await createRuntime({ provider, binding, capabilities: [notice, compact] });
+    const run = await runtime.run('task');
+    expect(seen[0]).toEqual([{ role: 'user', content: 'notice' }]);
+    expect(run.messages.map(m => m.content)).toEqual(['task', 'notice', 'done']);
+  });
+
+  it('routes every tool call through the boundary with policy fields and markEffectStarted', async () => {
+    const log: string[] = [];
+    const writer: ToolPlugin = {
+      name: 'writer',
+      tools: [{ name: 'write', description: 'w', parameters: {}, permission: 'write', effect: 'write' }, { name: 'hidden', description: 'h', parameters: {}, available: false }],
+      execute: (_name, _args, context) => { context.markEffectStarted(); log.push('executed'); return 'ok'; },
+    };
+    const boundary: ToolBoundary = {
+      async execute(boundaryCall, invoke) {
+        log.push(`boundary:${boundaryCall.definition.name}:${boundaryCall.definition.effect}`);
+        if (boundaryCall.definition.name === 'hidden') throw new Error('denied');
+        return await invoke({ ...boundaryCall.context, markEffectStarted: () => { log.push('effect started'); } });
+      },
+    };
+    const results: string[] = [];
+    const provider = scripted(calls(call('write', {}, 'a'), call('hidden', {}, 'b')), async request => { results.push(...request.messages.filter(m => m.role === 'tool').map(m => m.content)); return answer(); });
+    const { runtime } = await createRuntime({ provider, binding, tools: [writer], boundary });
+    expect(runtime.toolSpecs).toEqual([{ name: 'write', description: 'w', parameters: {} }]);
+    await runtime.run('go');
+    expect(log).toEqual(['boundary:write:write', 'effect started', 'executed', 'boundary:hidden:undefined']);
+    expect(results).toEqual(['"ok"', JSON.stringify({ error: 'INTERNAL: Error: denied' })]);
+  });
+
+  it('orders initialisation by dependsOn and rejects missing or cyclic dependencies', async () => {
+    const log: string[] = [];
+    const plugin = (name: string, dependsOn: string[] = []): CapabilityPlugin => ({ name, version: '1', dependsOn, initialize: () => { log.push(name); } });
+    const tools: ToolPlugin = { ...echo(), dependsOn: ['compaction'], initialize: () => { log.push('echo-tools'); } };
+    await createRuntime({ provider: scripted(), binding, capabilities: [plugin('compaction', ['history']), plugin('history')], tools: [tools] });
+    expect(log).toEqual(['history', 'compaction', 'echo-tools']);
+    await expect(createRuntime({ provider: scripted(), binding, capabilities: [plugin('recovery', ['file-tools'])] })).rejects.toThrow(/depends on file-tools/);
+    await expect(createRuntime({ provider: scripted(), binding, capabilities: [plugin('a', ['b']), plugin('b', ['a'])] })).rejects.toThrow(/cycle among a, b/);
+  });
+
+  it('shares the store and delivers plugin events', async () => {
+    const store = {} as never;
+    const received: unknown[] = [];
+    const listener: CapabilityPlugin = { name: 'listener', version: '1', initialize: runtime => { expect(runtime.store).toBe(store); runtime.events.on('task.graph_built', payload => { received.push(payload); }); } };
+    const { runtime } = await createRuntime({ provider: scripted(), binding, store, capabilities: [listener] });
+    await runtime.events.emit('task.graph_built', { nodes: 2 });
+    expect(received).toEqual([{ nodes: 2 }]);
+  });
+});
+
+describe('PluginRegistry', () => {
+  it('initialises capabilities, tools, integrations in order and cleans up in reverse', async () => {
+    const log: string[] = [];
+    const capability: CapabilityPlugin = { name: 'cap', version: '1', initialize: () => { log.push('init cap'); }, cleanup: () => { log.push('cleanup cap'); } };
+    const integration: IntegrationPlugin = { name: 'int', initialize: () => { log.push('init int'); }, getInterface: () => ({}), cleanup: () => { log.push('cleanup int'); } };
+    const registry = new PluginRegistry().registerIntegration(integration).registerTools(echo(log)).registerCapability(capability);
+    expect(registry.listAvailable()).toEqual({ capabilities: ['cap'], tools: ['echo-tools'], integrations: ['int'] });
+    await registry.initialize(new RuntimeCore(scripted(), binding));
+    await registry.cleanup();
+    expect(log).toEqual(['init cap', 'init echo', 'init int', 'cleanup int', 'cleanup echo', 'cleanup cap']);
+  });
+
+  it('rejects duplicate plugins, duplicate tool names and late registration', async () => {
+    const registry = new PluginRegistry().registerTools(echo());
+    expect(() => registry.registerTools(echo())).toThrow(/already registered/);
+    await registry.initialize(new RuntimeCore(scripted(), binding));
+    expect(() => registry.registerCapability({ name: 'late', version: '1' })).toThrow(/before initialisation/);
+    const log: string[] = [];
+    await expect(createRuntime({ provider: scripted(), binding, tools: [echo(log), { ...echo(log), name: 'copy' }] })).rejects.toThrow(/provided by both echo-tools and copy/);
+    expect(log).toEqual(['init echo', 'init echo', 'cleanup echo', 'cleanup echo']);
+  });
+
+  it('rolls back already initialised plugins when one fails to initialise', async () => {
+    const log: string[] = [];
+    const bad: IntegrationPlugin = { name: 'bad', initialize: () => { throw new Error('no port'); }, getInterface: () => ({}) };
+    await expect(createRuntime({ provider: scripted(), binding, tools: [echo(log)], integrations: [bad] })).rejects.toThrow('no port');
+    expect(log).toEqual(['init echo', 'cleanup echo']);
+  });
+});
